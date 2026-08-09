@@ -74,25 +74,23 @@ The `oob` case is discharged by `RepInv.length`: the array really is
 `capacity` long, so a loop bounded by the capacity cannot leave it.
 
 checked by: `lake build` -/
-theorem resolve_slot {i : Nat} (R : RepInv s σ.glb)
+theorem resolve_slot {i : Nat} {x : Ident}
+    (hglb : σ.glb.get? (Schema.names s).storage = some (.arr (rowsOf s σ.glb)))
     (hlt : i < (rowsOf s σ.glb).length)
-    (hloc : σ.getLocal tmpI = some (.u32 (UInt32.ofNat i)))
+    (hloc : σ.getLocal x = some (.u32 (UInt32.ofNat i)))
     (hround : (UInt32.ofNat i).toNat = i) :
-    resolve σ (slot s tmpI)
+    resolve σ (slot s x)
       = .ok (.glb ⟨.glob (Schema.names s).storage, [.idx i]⟩) := by
-  have hglb : σ.glb.get? (Schema.names s).storage
-      = some (.arr (rowsOf s σ.glb)) := R.storage
   simp only [slot, resolve, evalIndex, hloc, hround, Store.readPath,
     Store.rootVal, hglb, Value.getPath, bind, Except.bind]
   rw [if_pos hlt]
   simp
 
 /-- Reading through a resolved slot gives the row the invariant names. -/
-theorem readLoc_slot {i : Nat} {row : Value} (R : RepInv s σ.glb)
+theorem readLoc_slot {i : Nat} {row : Value}
+    (hglb : σ.glb.get? (Schema.names s).storage = some (.arr (rowsOf s σ.glb)))
     (hrow : (rowsOf s σ.glb)[i]? = some row) :
     readLoc σ (.glb ⟨.glob (Schema.names s).storage, [.idx i]⟩) = .ok row := by
-  have hglb : σ.glb.get? (Schema.names s).storage
-      = some (.arr (rowsOf s σ.glb)) := R.storage
   simp only [readLoc, Store.readPath, Store.rootVal, hglb, Value.getPath,
     Value.getStep, hrow]
 
@@ -105,17 +103,15 @@ unnecessary for this template. -/
 
 /-- **A field of a slot resolves**, provided the row really has that field —
 which for the generated struct's fields is `RowOk`. -/
-theorem resolve_field {i : Nat} {row : Value} {f : Ident} {v : Value}
-    (R : RepInv s σ.glb)
+theorem resolve_field {i : Nat} {row : Value} {f : Ident} {v : Value} {x : Ident}
+    (hglb : σ.glb.get? (Schema.names s).storage = some (.arr (rowsOf s σ.glb)))
     (hlt : i < (rowsOf s σ.glb).length)
-    (hloc : σ.getLocal tmpI = some (.u32 (UInt32.ofNat i)))
+    (hloc : σ.getLocal x = some (.u32 (UInt32.ofNat i)))
     (hround : (UInt32.ofNat i).toNat = i)
     (hrow : (rowsOf s σ.glb)[i]? = some row)
     (hfld : row.getStep (.fld f) = some v) :
-    resolve σ (field s tmpI f)
+    resolve σ (field s x f)
       = .ok (.glb ⟨.glob (Schema.names s).storage, [.idx i, .fld f]⟩) := by
-  have hglb : σ.glb.get? (Schema.names s).storage
-      = some (.arr (rowsOf s σ.glb)) := R.storage
   have hstep : (Value.arr (rowsOf s σ.glb)).getStep (.idx i) = some row := by
     simp only [Value.getStep, hrow]
   have hpath : (Value.arr (rowsOf s σ.glb)).getPath [.idx i, .fld f] = some v := by
@@ -128,23 +124,21 @@ theorem resolve_field {i : Nat} {row : Value} {f : Ident} {v : Value}
           | none => none) = some v
     rw [hfld]
     rfl
-  simp only [field, resolve, resolve_slot R hlt hloc hround, bind, Except.bind,
+  simp only [field, resolve, resolve_slot hglb hlt hloc hround, bind, Except.bind,
     Store.readPath, Store.rootVal, hglb, List.cons_append, List.nil_append]
   rw [hpath]
 
 /-- **And reading it gives the field's value.**
 
 checked by: `lake build` -/
-theorem read_field {i : Nat} {row : Value} {f : Ident} {v : Value}
-    (R : RepInv s σ.glb)
+theorem read_field {i : Nat} {row : Value} {f : Ident} {v : Value} {x : Ident}
+    (hglb : σ.glb.get? (Schema.names s).storage = some (.arr (rowsOf s σ.glb)))
     (hlt : i < (rowsOf s σ.glb).length)
-    (hloc : σ.getLocal tmpI = some (.u32 (UInt32.ofNat i)))
+    (hloc : σ.getLocal x = some (.u32 (UInt32.ofNat i)))
     (hround : (UInt32.ofNat i).toNat = i)
     (hrow : (rowsOf s σ.glb)[i]? = some row)
     (hfld : row.getStep (.fld f) = some v) :
-    evalExpr σ (.rd (field s tmpI f)) = .ok v := by
-  have hglb : σ.glb.get? (Schema.names s).storage
-      = some (.arr (rowsOf s σ.glb)) := R.storage
+    evalExpr σ (.rd (field s x f)) = .ok v := by
   have hstep : (Value.arr (rowsOf s σ.glb)).getStep (.idx i) = some row := by
     simp only [Value.getStep, hrow]
   have hpath : (Value.arr (rowsOf s σ.glb)).getPath [.idx i, .fld f] = some v := by
@@ -157,7 +151,7 @@ theorem read_field {i : Nat} {row : Value} {f : Ident} {v : Value}
           | none => none) = some v
     rw [hfld]
     rfl
-  simp only [evalExpr, resolve_field R hlt hloc hround hrow hfld, bind,
+  simp only [evalExpr, resolve_field hglb hlt hloc hround hrow hfld, bind,
     Except.bind, readLoc, Store.readPath, Store.rootVal, hglb,
     List.cons_append, List.nil_append]
   rw [hpath]
@@ -304,8 +298,8 @@ theorem eval_guard {i : Nat} {row : Value} {fs : List (Ident × Value)}
     subst hstrct; simpa [Value.getStep] using hkfld
   have hkv : kv = k'.toValue := (toValue_ofValue hk').symm
   subst hkv
-  have hro := resolve_field R hlt hloc hround hrow hfo
-  have hrk := resolve_field R hlt hloc hround hrow hfk
+  have hro := resolve_field R.storage hlt hloc hround hrow hfo
+  have hrk := resolve_field R.storage hlt hloc hround hrow hfk
   have hlo := readLoc_field R hrow hfo
   have hlk := readLoc_field R hrow hfk
   have hrv : resolve σ (.var pk.name) = .ok (.lcl pk.name) := by
@@ -411,7 +405,7 @@ theorem exec_loopBody {p : Program} {callee} {pk : Schema.Field}
   cases hb : b && decide (k' = k) with
   | false => simp
   | true =>
-    simp only [evalExpr, resolve_slot R hlt hloc hround, bind, Except.bind]
+    simp only [evalExpr, resolve_slot R.storage hlt hloc hround, bind, Except.bind]
     simp
 
 /-- **The scan is a search.**
@@ -682,15 +676,14 @@ array. -/
 /-- **`p->f` resolves** when `p` holds a pointer to a slot of the storage
 array. -/
 theorem resolve_ptrField {i : Nat} {row : Value} {f : Ident} {v : Value}
-    {ptr : Ident} (R : RepInv s σ.glb)
+    {ptr : Ident}
+    (hglb : σ.glb.get? (Schema.names s).storage = some (.arr (rowsOf s σ.glb)))
     (hptr : σ.getLocal ptr
       = some (.ptr ⟨.glob (Schema.names s).storage, [.idx i]⟩))
     (hrow : (rowsOf s σ.glb)[i]? = some row)
     (hfld : row.getStep (.fld f) = some v) :
     resolve σ (ptrField ptr f)
       = .ok (.glb ⟨.glob (Schema.names s).storage, [.idx i, .fld f]⟩) := by
-  have hglb : σ.glb.get? (Schema.names s).storage
-      = some (.arr (rowsOf s σ.glb)) := R.storage
   have hstep : (Value.arr (rowsOf s σ.glb)).getStep (.idx i) = some row := by
     simp only [Value.getStep, hrow]
   have hpath : (Value.arr (rowsOf s σ.glb)).getPath [.idx i, .fld f] = some v := by
@@ -717,7 +710,7 @@ theorem read_ptrField {i : Nat} {row : Value} {f : Ident} {v : Value}
     (hrow : (rowsOf s σ.glb)[i]? = some row)
     (hfld : row.getStep (.fld f) = some v) :
     evalExpr σ (.rd (ptrField ptr f)) = .ok v := by
-  simp only [evalExpr, resolve_ptrField R hptr hrow hfld, bind, Except.bind]
+  simp only [evalExpr, resolve_ptrField R.storage hptr hrow hfld, bind, Except.bind]
   exact readLoc_field R hrow hfld
 
 /-! ## Writing a slot's field
@@ -736,7 +729,8 @@ path is rooted at a global and resolved.
 
 checked by: `lake build` -/
 theorem write_slotField {i : Nat} {row : Value} {fs : List (Ident × Value)}
-    {f : Ident} {w : Value} (R : RepInv s σ.glb)
+    {f : Ident} {w : Value}
+    (hglb : σ.glb.get? (Schema.names s).storage = some (.arr (rowsOf s σ.glb)))
     (hrow : (rowsOf s σ.glb)[i]? = some row)
     (hstrct : row = .strct fs)
     (hfld : (Env.get? fs f).isSome = true) :
@@ -744,10 +738,12 @@ theorem write_slotField {i : Nat} {row : Value} {fs : List (Ident × Value)}
             = .ok σ'
       ∧ rowsOf s σ'.glb
           = (rowsOf s σ.glb).set i (.strct (Env.set fs f w))
+      -- the storage stays bound, which is `RepInv`'s first clause and what
+      -- every later clause is stated against
+      ∧ σ'.glb.get? (Schema.names s).storage = some (.arr (rowsOf s σ'.glb))
       ∧ σ'.loc = σ.loc
-      ∧ σ'.hp = σ.hp := by
-  have hglb : σ.glb.get? (Schema.names s).storage
-      = some (.arr (rowsOf s σ.glb)) := R.storage
+      ∧ σ'.hp = σ.hp
+      ∧ σ'.next = σ.next := by
   have hlt : i < (rowsOf s σ.glb).length := by
     obtain ⟨h, _⟩ := List.getElem?_eq_some_iff.mp hrow; exact h
   subst hstrct
@@ -780,22 +776,31 @@ theorem write_slotField {i : Nat} {row : Value} {fs : List (Ident × Value)}
         rw [if_pos (by simp [hg])]]
     simp only [Value.setStep]
     rw [if_pos hlt]
-  refine ⟨σ.setRoot (.glob (Schema.names s).storage)
-            (.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w)))), ?_, ?_, ?_, ?_⟩
-  · simp only [writeLoc, Store.writePath, Store.rootVal, hglb, hset]
-  · have hget : (σ.glb.set (Schema.names s).storage
+  have hget : (σ.glb.set (Schema.names s).storage
         (Value.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w))))).get?
         (Schema.names s).storage
         = some (.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w)))) := by
       rw [Env.get?_set_self, hglb]; rfl
+  have hrows : rowsOf s (σ.glb.set (Schema.names s).storage
+        (Value.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w)))))
+      = (rowsOf s σ.glb).set i (.strct (Env.set fs f w)) := by
     show (match (σ.glb.set (Schema.names s).storage
             (Value.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w))))).get?
             (Schema.names s).storage with
           | some (.arr vs) => vs
           | _ => []) = _
     rw [hget]
-  · rfl
-  · rfl
+  refine ⟨σ.setRoot (.glob (Schema.names s).storage)
+            (.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w)))),
+          ?_, hrows, ?_, rfl, rfl, rfl⟩
+  · simp only [writeLoc, Store.writePath, Store.rootVal, hglb, hset]
+  · show (σ.glb.set (Schema.names s).storage
+        (Value.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w))))).get?
+        (Schema.names s).storage
+        = some (.arr (rowsOf s (σ.glb.set (Schema.names s).storage
+            (Value.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w)))))))
+    rw [hrows]
+    exact hget
 
 /-! ## Clearing occupancy
 
@@ -1086,65 +1091,46 @@ theorem eval_atGuard_null {ptr : Ident} (hloc : σ.getLocal ptr = some .null) :
   simp only [evalExpr, nullRow, read_local hloc, bind, Except.bind, evalBin,
     resolve, hloc, readLoc]
 
-/-! ## Still owed
+/-! ## What this file is for
 
-What this file does **not** prove, stated plainly so the gap is not mistaken
-for progress:
+Everything above is a bank: the resolve/read/write lemmas, the scan, and
+`exec_callFind`. `FindCorrect` and `NoTrapFind` are discharged here; the
+writers are discharged in `ArrayTableErase` and `ArrayTableInsert`, and both
+are built entirely from lemmas proved above.
 
-- `NoTrapInsert` and `NoTrapErase`, and with them `InsertRefines`,
-  `EraseRefines` and `RepInvPreserved`.
+Two notes on what the bank had to contain, because neither was obvious before
+the proofs demanded them.
 
-For `erase` the state content is now done: `repInv_clearOccupied` says the
-representation invariant survives clearing a slot's occupancy flag, all four
-clauses. What is left for `erase` is:
-
-**Every piece `erase` needs is now proved separately.** Its state content is
-`repInv_clearOccupied`, its abstraction content is `absOf_clearOccupied`, its
-first statement is `exec_callFind`, and the write it performs is
-`write_slotField` through `resolve_ptrField`. What is left is threading them
-together through the `if _at != NULL` and the two returns — the same shape as
-`exec_findBody`, with no ingredient still missing.
-
-The reading half of the writers is done: `resolve_ptrField` and
-`read_ptrField` handle `_at->f` for a pointer that came from `find`, which is
-what rules out `nullDeref` and `useAfterFree` — neither of which could arise
-for the index-rooted `g[_i].f` form, so they are genuinely new obligations.
+`resolve_ptrField` and `read_ptrField` handle `_at->f` for a pointer that came
+from `find`, which is what rules out `nullDeref` and `useAfterFree` — neither
+of which could arise for the index-rooted `g[_i].f` form, so they are
+genuinely new obligations, not restatements.
 
 `write_slotField` gives the write itself: a field update replaces exactly that
 slot and leaves the rest of the array, the frame and the heap alone. The frame
 content comes from `List.set`, not from any aliasing analysis, because the
-path is rooted at a global and already resolved.
+path is rooted at a global and already resolved. That is what lets `RepInv`'s
+`distinct` clause — the only global one — transfer slot by slot in both
+writers.
 
-What is left is that `RepInv` survives it. The invariant has four clauses and
-they are not equally hard:
+## Two findings about `FindCorrect` as originally stated
 
-- `storage` and `length` are immediate — `List.set` does not change length.
-- `rows` needs the written value to keep the row well formed. For `erase`
-  (writing `false` to the occupancy flag) that is trivial; for `insert` it
-  needs the written field to match its declared type.
-- `distinct` is the one with content. Clearing occupancy can only shrink the
-  occupied set, so `erase` preserves it for free. `insert` claiming a slot
-  writes a *key*, and preserving key-uniqueness is exactly what the
-  find-first-then-claim structure exists to guarantee — so that is where the
-  real argument lives, and it is the one place `insert` is harder than
-  `erase` rather than merely longer.
+Both were defects in the *statement*, discovered by trying to prove it, and
+both had to be fixed before it could be true. They are kept on record because
+"the proof found a bug in the specification" is the return this project is
+built to get.
 
-## Two findings about `FindCorrect` as currently stated
-
-Both are defects in the *statement*, discovered by trying to prove it, and
-both must be fixed before it can be true.
-
-**It describes the old API.** `ArrayTable.FindCorrect` says `find` returns
+**It described the old API.** `ArrayTable.FindCorrect` said `find` returns
 `.u32 (UInt32.ofNat i)` with `i ≤ capacity` and `i < capacity` meaning
-"present". `find` now returns a row pointer, or `NULL` when absent. The clause
-needs restating in those terms.
+"present". `find` returns a row pointer, or `NULL` when absent, so the clause
+was restated in those terms.
 
-**It is false as written.** It quantifies over *every* `Interface.Key`, with
+**It was false as written.** It quantified over *every* `Interface.Key`, with
 no constraint relating the key to the primary key's type. `evalBin .eq` is
 defined only on matching scalar constructors, so searching a `u64`-keyed table
 with a `.bool` key does not return "absent" — it raises `typeErr`. The
-statement needs `k.ty = pk.ty` as a hypothesis, which `eval_guard` above
-already carries. A clause that cannot be discharged is worth more than one
+statement needed `k.ty = pk.ty` as a hypothesis, which `eval_guard` above
+carries. A clause that cannot be discharged is worth more than one
 that looks discharged, and this one was hiding in plain sight until the
 comparison had to be evaluated. -/
 

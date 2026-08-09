@@ -15,6 +15,8 @@ import Amcc.Interface
 import Amcc.Templates.ArrayTable
 import Amcc.Templates.ArrayTableWf
 import Amcc.Templates.ArrayTableFind
+import Amcc.Templates.ArrayTableErase
+import Amcc.Templates.ArrayTableInsert
 import Amcc.Templates.Layout
 import Amcc.Templates.Pool
 import Amcc.Templates.ArrayTableChecks
@@ -68,6 +70,15 @@ that should fail does not.)
 - `Templates.ArrayTable`       — `genC`, `absOf`, and the milestone obligations
 - `Templates.ArrayTableWf`     — **proved**: `GenWellFormed` — every accepted
                                  schema generates a program `Wf.check` accepts
+- `Templates.ArrayTableFind`   — **proved**: `FindCorrect`, `NoTrapFind`, and
+                                 the resolve/read/write lemma bank the writers
+                                 are built from
+- `Templates.ArrayTableErase`  — **proved**: `EraseRefines`, `NoTrapErase`
+- `Templates.ArrayTableInsert` — **proved**: `InsertRefines`, `NoTrapInsert`,
+                                 `RepInvPreserved`, and with them
+                                 **`MilestoneTheorem`** — every well-formed
+                                 schema's generated table simulates the
+                                 abstract map
 - `Templates.ArrayTableChecks` — the generator exercised on concrete schemas
 
 ## Phase 4 — printing
@@ -83,6 +94,13 @@ sequences against the binary — the differential check of printer + compiler
 against `execStmt`.
 
 ## Still open
-`CSubset.Wf.TypeSound` (the bridge between Phase 1 and Phase 3) and
-`Templates.ArrayTable.MilestoneTheorem` (the simulation itself).
+`CSubset.Wf.TypeSound`. It turned out **not** to be on the critical path for
+Phase 3: every structural error the array table could raise is dischargeable
+from `RepInv` where it arises, so `MilestoneTheorem` is proved without it. It
+remains owed as the general bridge a template that cannot argue locally would
+need.
+
+`Codegen.Print` is unverified — see `docs/DIVERGENCE.md` §3. A closed
+`MilestoneTheorem` certifies the generated **AST**; the C text is covered by
+goldens and `scripts/smoke.sh` only.
 -/

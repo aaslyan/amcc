@@ -177,13 +177,13 @@ Every generated name is `s.name ++ suffix` for a literal suffix (associating
 `getterName` to expose that shape), so inequality of generated names reduces to
 inequality of suffixes under a cancelled shared prefix. -/
 
-private theorem append_cancel_left {s a b : String} (h : s ++ a = s ++ b) :
+theorem append_cancel_left {s a b : String} (h : s ++ a = s ++ b) :
     a = b := by
   have hd := congrArg String.toList h
   simp only [String.toList_append] at hd
   exact String.ext (List.append_cancel_left hd)
 
-private theorem append_ne {s a b : String} (h : a ≠ b) : s ++ a ≠ s ++ b :=
+theorem append_ne {s a b : String} (h : a ≠ b) : s ++ a ≠ s ++ b :=
   fun e => h (append_cancel_left e)
 
 private theorem append_inj {s a b : String} : s ++ a = s ++ b ↔ a = b :=
@@ -270,13 +270,13 @@ theorem pk_mem : pk ∈ s.fields := by
   have : pk ∈ s.fields.filter (fun f => f.reftype == .Pkey) := by rw [hfl]; simp
   exact (List.mem_filter.mp this).1
 
-private theorem pk_reftype : pk.reftype = .Pkey := by
+theorem pk_reftype : pk.reftype = .Pkey := by
   have : pk ∈ s.fields.filter (fun f => f.reftype == .Pkey) := by rw [hfl]; simp
   simpa [reftype_beq_iff] using (List.mem_filter.mp this).2
 
 /-- Every schema field is the primary key or a value field: `Reftype` has two
 constructors and the filter is a singleton. -/
-private theorem mem_pk_cons {f : Schema.Field} (hf : f ∈ s.fields) :
+theorem mem_pk_cons {f : Schema.Field} (hf : f ∈ s.fields) :
     f ∈ pk :: Schema.valFields s := by
   cases hr : f.reftype with
   | Pkey =>
@@ -291,18 +291,18 @@ private theorem mem_pk_cons {f : Schema.Field} (hf : f ∈ s.fields) :
 
 omit hfl
 
-private theorem val_mem {f : Schema.Field} (hf : f ∈ Schema.valFields s) :
+theorem val_mem {f : Schema.Field} (hf : f ∈ Schema.valFields s) :
     f ∈ s.fields ∧ f.reftype = .Val := by
   have := List.mem_filter.mp hf
   exact ⟨this.1, by simpa [reftype_beq_iff] using this.2⟩
 
-private theorem pw_val_names (F : Facts s) :
+theorem pw_val_names (F : Facts s) :
     ((Schema.valFields s).map Schema.Field.name).Pairwise (· ≠ ·) :=
   List.Pairwise.sublist (List.filter_sublist.map Schema.Field.name) F.pwNames
 
 include hfl
 
-private theorem pk_name_ne_val (F : Facts s) :
+theorem pk_name_ne_val (F : Facts s) :
     ∀ g ∈ Schema.valFields s, pk.name ≠ g.name := by
   intro g hg
   obtain ⟨hgmem, hgref⟩ := val_mem hg
@@ -313,7 +313,7 @@ private theorem pk_name_ne_val (F : Facts s) :
 
 /-- The names of `pk :: valFields`, pairwise distinct — the parameter list of
 the generated `insert`. -/
-private theorem pw_pkcons_names (F : Facts s) :
+theorem pw_pkcons_names (F : Facts s) :
     ((pk :: Schema.valFields s).map Schema.Field.name).Pairwise (· ≠ ·) := by
   rw [List.map_cons, List.pairwise_cons]
   refine ⟨?_, pw_val_names F⟩

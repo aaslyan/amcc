@@ -426,8 +426,10 @@ full *and* the key is absent, the operation reports failure and must have
 changed nothing. Without that clause a generator that quietly did nothing would
 satisfy the first clause vacuously. -/
 def InsertRefines (s : Schema) : Prop :=
-  ∀ (m m' : Mem) (k : Interface.Key) (vs : List Value) (b : Bool),
-    Schema.wf s = true → RepInv s m.glb →
+  ∀ (m m' : Mem) (pk : Schema.Field) (k : Interface.Key) (vs : List Value)
+    (b : Bool),
+    Schema.wf s = true → Schema.pkey? s = some pk → k.ty = pk.ty →
+    RepInv s m.glb →
     vs.length = (Schema.valFields s).length →
     call s m (Schema.names s).insert (k.toValue :: vs) = .ok (m', some (.bool b)) →
     (b = true  → absOf s m'.glb = Interface.Abs.insert (absOf s m.glb) k vs)
@@ -438,8 +440,9 @@ def InsertRefines (s : Schema) : Prop :=
 The `b = false` case needs no separate treatment: erasing an absent key is
 `Interface.Abs.erase_of_absent`, so both branches land on the same equation. -/
 def EraseRefines (s : Schema) : Prop :=
-  ∀ (m m' : Mem) (k : Interface.Key) (b : Bool),
-    Schema.wf s = true → RepInv s m.glb →
+  ∀ (m m' : Mem) (pk : Schema.Field) (k : Interface.Key) (b : Bool),
+    Schema.wf s = true → Schema.pkey? s = some pk → k.ty = pk.ty →
+    RepInv s m.glb →
     call s m (Schema.names s).erase [k.toValue] = .ok (m', some (.bool b)) →
     absOf s m'.glb = Interface.Abs.erase (absOf s m.glb) k
     ∧ (b = true ↔ (absOf s m.glb k).isSome)
@@ -447,8 +450,11 @@ def EraseRefines (s : Schema) : Prop :=
 /-- **The invariant survives.** Without this the other obligations only apply
 to the first operation, and the whole thing says nothing about a table in use. -/
 def RepInvPreserved (s : Schema) : Prop :=
-  ∀ (m m' : Mem) (k : Interface.Key) (vs : List Value) (r : Option Value),
-    Schema.wf s = true → RepInv s m.glb →
+  ∀ (m m' : Mem) (pk : Schema.Field) (k : Interface.Key) (vs : List Value)
+    (r : Option Value),
+    Schema.wf s = true → Schema.pkey? s = some pk → k.ty = pk.ty →
+    RepInv s m.glb →
+    vs.length = (Schema.valFields s).length →
     (call s m (Schema.names s).insert (k.toValue :: vs) = .ok (m', r) → RepInv s m'.glb)
     ∧ (call s m (Schema.names s).erase [k.toValue] = .ok (m', r) → RepInv s m'.glb)
 

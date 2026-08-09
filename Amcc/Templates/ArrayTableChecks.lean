@@ -29,8 +29,12 @@ layout the generator actually emits — a wrong field name, the occupancy flag i
 the wrong place, the value tuple in the wrong order — that theorem would fail.
 It is the one place the two halves of Phase 3 are forced to agree.
 
-**Not proved:** `MilestoneTheorem`. See the assessment at the bottom of this
-file.
+`MilestoneTheorem` is now **proved** (`Templates.ArrayTable.milestoneTheorem`,
+in `ArrayTableInsert.lean`), so these examples are no longer the only evidence
+that the template is right. They are kept because they check something the
+milestone does not: that the *concrete* schema in `Schema.Examples` computes,
+by kernel reduction, the answers the abstract statement predicts — which is
+what `scripts/smoke.sh` then replays against a real C compiler.
 -/
 
 set_option maxHeartbeats 8000000

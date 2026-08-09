@@ -34,7 +34,16 @@ against a real compiler by `scripts/smoke.sh`.
 - `findCorrect` — `find` returns a pointer exactly when `absOf` says the key is
   present, and returns the memory it was given. **Behavioural**, and the first
   theorem about what generated code computes.
-- `noTrapFind` — corollary.
+- `eraseRefines` / `insertRefines` — the writers refine `Abs.erase` /
+  `Abs.insert`, including that a failed insert changes nothing and only
+  happens on a full table.
+- `repInvPreserved` — both writers preserve the representation invariant, all
+  four clauses, including `distinct` (key uniqueness).
+- `noTrapFind` / `noTrapErase` / `noTrapInsert` — none of the three operations
+  can raise `oob`, `nullDeref`, `useAfterFree`, or any structural error.
+- **`milestoneTheorem`** — the conjunction: *every* well-formed schema's
+  generated table simulates the abstract map. One proof, quantified over
+  schemas.
 
 **Proved about the algorithms, as Lean models**
 
@@ -54,10 +63,21 @@ global.
 runtime loop bounds. Three partial operations, all proof obligations:
 out-of-range subscript, null dereference, use-after-free.
 
-**The measure that is not met.** There is no artifact certified end to end. The
-pool has a proved model and a tested implementation with **no formal link
-between them**; `MilestoneTheorem` is open. Everything above is real progress
-against that measure and none of it reaches it.
+**The measure, and what still misses it.** `MilestoneTheorem` is closed, so
+the array table is the first artifact certified end to end — schema in,
+C-subset AST out, with a machine-checked statement of what the emitted
+functions guarantee.
+
+Two gaps remain against the full measure, both recorded in
+`docs/DIVERGENCE.md` §3:
+
+- **The pretty-printer is unverified.** `MilestoneTheorem` certifies the
+  *AST*. `Codegen/Print.lean` turns that AST into C text and is covered only
+  by goldens and `scripts/smoke.sh`.
+- **The pool has a proved model and a tested implementation with no formal
+  link between them.** `Spec/Pool.lean` proves the algorithm; `Templates/Pool`
+  emits it; nothing connects the two the way `ArrayTableInsert` connects
+  `genC` to `absOf`.
 
 ---
 
@@ -83,12 +103,13 @@ against that measure and none of it reaches it.
 
 ## Deliberately deferred, with the reason
 
-- **The array table's remaining `Simulates` clauses** (`InsertRefines`,
-  `EraseRefines`, `RepInvPreserved`). Every ingredient for `erase` is proved;
-  only the assembly is left. Deferred because it would prove more about a
-  template already known to be provable, while the emitted surface stands
-  still. Resume when a *second* template needs the same argument, so the work
-  is shared.
+- ~~**The array table's remaining `Simulates` clauses**~~ — **done.**
+  `InsertRefines`, `EraseRefines` and `RepInvPreserved` are proved, and with
+  them `MilestoneTheorem`. The deferral was wrong on its own terms: assembling
+  them produced the reusable bank (`exec_assignFields`, `setFields`,
+  `repInv_update`, `repInv_setRow`, `absOf_setRow`) that a second template
+  would otherwise have had to invent, so the sharing argument favoured doing
+  it first, not later.
 - **`Stmt.alloc` / `Stmt.free` and the allocator oracle.** The store model
   supports them; no statement exposes them to generated code, so emitted pools
   are still fixed-capacity. This is the gap between `Spec/Pool.lean`'s

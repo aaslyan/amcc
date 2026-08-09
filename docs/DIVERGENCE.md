@@ -185,6 +185,34 @@ Stated plainly so the comparison is not read as parity.
 - **Scale**: the `amc` namespace alone generates ~54,000 lines across 130
   ctypes and 660 fields.
 
+### 3.1 The pretty-printer is unverified
+
+`MilestoneTheorem` (`Amcc/Templates/ArrayTableInsert.lean`) is closed: for
+every well-formed schema, the generated table simulates the abstract map. It
+certifies the **AST** — the `CSubset.Program` that `genC` builds — under
+`CSubset`'s semantics.
+
+`Amcc/Codegen/Print.lean` turns that AST into C text, and **nothing is proved
+about it.** It is covered by byte-for-byte goldens (`Codegen/PrintChecks.lean`)
+and by `scripts/smoke.sh`, which compiles the printed C with
+`cc -Wall -Wextra -Werror` and diffs its answers against the Lean semantics on
+the `ArrayTableChecks` call sequences. That is a differential test, not a
+proof: it covers the schemas and the call sequences it was given.
+
+So the honest statement of what AMCC currently certifies is *"the generated
+AST implements a map"*, plus *"the printer agrees with the semantics on the
+cases we ran"*. The gap between those two is the printer.
+
+**What would discharge it.** A formal semantics for the fragment of C the
+printer targets, and a theorem that `Print.program p` denotes what
+`execStmt p` computes. That is a substantially larger project than everything
+above it — it means committing to a C semantics — and the usual middle path is
+to shrink the trusted base rather than eliminate it: prove the printer
+*injective* and its output *reparseable* into the same AST, which turns "the
+printer is correct" into "the C compiler agrees with our reading of C". Per
+`docs/GOALS.md`, difficulty is not grounds for carving this out permanently.
+It is owed.
+
 ---
 
 ## The honest summary
