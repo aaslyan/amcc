@@ -861,6 +861,71 @@ theorem rowOk_set_occupied {fs : List (Ident × Value)} {pk : Schema.Field}
     exact h.keyTy pk' k' hpk' hrk
   vals := by rw [rowVals_set_occupied hneval]; exact h.vals
 
+/-- **The representation invariant survives an erase.**
+
+All four clauses, and they are not equally hard:
+
+- `storage` and `length` are immediate — `List.set` does not change length.
+- `rows` is `rowOk_set_occupied` applied pointwise.
+- `distinct` is **free**, and worth spelling out why: clearing a flag can only
+  *shrink* the occupied set, so any two occupied slots in the new array were
+  occupied in the old one, where the invariant already forced them equal. An
+  erase cannot create a key collision. This is the clause that will carry real
+  content for `insert`, which writes a key rather than clearing a flag.
+
+checked by: `lake build` -/
+theorem repInv_clearOccupied {glb glb' : Env} {i : Nat}
+    {fs : List (Ident × Value)} {pk : Schema.Field}
+    (R : RepInv s glb)
+    (hpk : Schema.pkey? s = some pk)
+    (hnepk : pk.name ≠ (Schema.names s).occupied)
+    (hneval : ∀ f ∈ Schema.valFields s, f.name ≠ (Schema.names s).occupied)
+    (hrow : (rowsOf s glb)[i]? = some (.strct fs))
+    (hocc : (Env.get? fs (Schema.names s).occupied).isSome = true)
+    (hrows : rowsOf s glb'
+      = (rowsOf s glb).set i (.strct (Env.set fs (Schema.names s).occupied (.bool false))))
+    (hstore : glb'.get? (Schema.names s).storage = some (.arr (rowsOf s glb'))) :
+    RepInv s glb' where
+  storage := hstore
+  length := by rw [hrows, List.length_set]; exact R.length
+  rows := by
+    intro r hr
+    rw [hrows] at hr
+    obtain ⟨j, hj, hjr⟩ := List.getElem_of_mem hr
+    have hget : ((rowsOf s glb).set i
+        (.strct (Env.set fs (Schema.names s).occupied (.bool false))))[j]? = some r := by
+      rw [List.getElem?_eq_getElem hj, hjr]
+    rw [List.getElem?_set] at hget
+    by_cases hij : i = j
+    · rw [if_pos hij] at hget
+      rw [List.length_set] at hj
+      rw [if_pos (show i < (rowsOf s glb).length by omega)] at hget
+      cases hget
+      exact rowOk_set_occupied hpk hnepk hneval hocc
+        (R.rows _ (List.mem_of_getElem? hrow))
+    · rw [if_neg hij] at hget
+      exact R.rows r (List.mem_of_getElem? hget)
+  distinct := by
+    intro i' j' ri rj hri hrj hoi hoj hk
+    -- a slot reported occupied in the new array cannot be the cleared one
+    have hne : ∀ t r, (rowsOf s glb')[t]? = some r → rowOccupied s r = true →
+        t ≠ i ∧ (rowsOf s glb)[t]? = some r := by
+      intro t r ht hot
+      rw [hrows, List.getElem?_set] at ht
+      by_cases hit : i = t
+      · rw [if_pos hit] at ht
+        by_cases hlt : i < (rowsOf s glb).length
+        · rw [if_pos hlt] at ht
+          cases ht
+          rw [rowOccupied_set_occupied hocc] at hot
+          exact absurd hot (by simp)
+        · rw [if_neg hlt] at ht; exact Option.noConfusion ht
+      · rw [if_neg hit] at ht
+        exact ⟨fun e => hit e.symm, ht⟩
+    obtain ⟨_, hri'⟩ := hne i' ri hri hoi
+    obtain ⟨_, hrj'⟩ := hne j' rj hrj hoj
+    exact R.distinct i' j' ri rj hri' hrj' hoi hoj hk
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
@@ -869,12 +934,19 @@ for progress:
 - `NoTrapInsert` and `NoTrapErase`, and with them `InsertRefines`,
   `EraseRefines` and `RepInvPreserved`.
 
-For `erase` the row-level content is now done: `rowOk_set_occupied` says a row
-stays well formed when its occupancy flag is written, because writing that
-flag disturbs neither the key nor the value fields. What is left for `erase`
-is lifting that from one row to the array (`RepInv`'s `rows` and `distinct`
-clauses, the latter free because clearing occupancy only shrinks the occupied
-set) and assembling the call, which follows `findCorrect`'s pattern.
+For `erase` the state content is now done: `repInv_clearOccupied` says the
+representation invariant survives clearing a slot's occupancy flag, all four
+clauses. What is left for `erase` is:
+
+- the `absOf` equation — that clearing slot `i`, which held key `k`, makes
+  `absOf` become `Abs.erase (absOf ·) k`. The `k` case needs `distinct` (slot
+  `i` was the *only* occupied slot with that key, so nothing else answers for
+  it); every other key case is untouched because no other slot moved.
+- assembling the call, which follows `findCorrect`'s pattern with one new
+  wrinkle: `erase` *calls* `find`, so it goes through `execAt`'s `.call` case —
+  frame save and restore, and writing the result into `_at`. `exec_findBody`
+  was deliberately stated for arbitrary `p` and `callee`, so it applies at the
+  inner call depth unchanged.
 
 The reading half of the writers is done: `resolve_ptrField` and
 `read_ptrField` handle `_at->f` for a pointer that came from `find`, which is
