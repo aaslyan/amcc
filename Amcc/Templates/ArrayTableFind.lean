@@ -1,4 +1,4 @@
-import Amcc.Templates.ArrayTable
+import Amcc.Templates.ArrayTableWf
 
 /-!
 # AMCC — `find`, proved against the semantics
@@ -553,15 +553,40 @@ theorem firstMatch_isSome_iff {glb : Env} {k : Interface.Key} (R : RepInv s glb)
         simp only [slotMatches, List.getElem?_eq_getElem hjlt, hjr] at hno
         exact absurd hp (by simpa using hno)
 
+/-! ## The function, end to end
+
+The loop is the interesting part; what remains is the prologue that builds the
+frame and the epilogue the loop falls through to. -/
+
+/-- The frame `find` runs against: the key parameter, then the zeroed loop
+variable. -/
+theorem buildFrame_find {m : Mem} {pk : Schema.Field} {k : Interface.Key} :
+    buildFrame m (findDef s pk) [k.toValue]
+      = .ok [(pk.name, k.toValue), (tmpI, .u32 0)] := by
+  rfl
+
+/-- `pkey?` returning a field is the singleton filter. -/
+theorem filter_of_pkey {pk : Schema.Field} (hpk : Schema.pkey? s = some pk) :
+    s.fields.filter (fun f => f.reftype == .Pkey) = [pk] := by
+  cases hf : s.fields.filter (fun f => f.reftype == .Pkey) with
+  | nil => rw [Schema.pkey?, hf] at hpk; exact Option.noConfusion hpk
+  | cons a tl =>
+    cases tl with
+    | nil => rw [Schema.pkey?, hf] at hpk; cases hpk; rfl
+    | cons b tl2 => rw [Schema.pkey?, hf] at hpk; exact Option.noConfusion hpk
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
 for progress:
 
-- `FindCorrect` itself: `forLoop_scan` covers the loop, but the function also
-  has a prologue (binding the parameter and zeroing `_i`) and an epilogue (the
-  `return NULL` the loop falls through to), and the result has to be related
-  to `absOf` rather than to `firstMatch`.
+- `FindCorrect` itself. Every *ingredient* is now proved — `buildFrame_find`
+  gives the prologue, `forLoop_scan` the loop, `firstMatch_isSome_iff` the link
+  to `absOf`, and the epilogue is one `evalExpr` on `NULL`. What remains is
+  assembling them through `callFun`, which means unfolding `lookupFun`,
+  `execStmt` at the call-depth budget, and `execAt` on `.seq`. That is
+  mechanical rather than conceptual, but it is not yet done, and saying it is
+  "nearly there" is not the same as it being checked.
 
 ## Two findings about `FindCorrect` as currently stated
 

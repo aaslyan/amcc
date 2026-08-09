@@ -191,7 +191,7 @@ private theorem append_inj {s a b : String} : s ++ a = s ++ b ↔ a = b :=
 
 /-- A name in the reserved leading-underscore namespace never equals one
 outside it — how the generated temporaries stay clear of every schema name. -/
-private theorem ne_of_reserved {a b : Ident}
+theorem ne_of_reserved {a b : Ident}
     (ha : Schema.isReservedName a = false) (hb : Schema.isReservedName b = true) :
     a ≠ b := fun e => by rw [e, hb] at ha; cases ha
 
@@ -266,7 +266,7 @@ variable {s : Schema} {pk : Schema.Field}
 
 include hfl
 
-private theorem pk_mem : pk ∈ s.fields := by
+theorem pk_mem : pk ∈ s.fields := by
   have : pk ∈ s.fields.filter (fun f => f.reftype == .Pkey) := by rw [hfl]; simp
   exact (List.mem_filter.mp this).1
 
