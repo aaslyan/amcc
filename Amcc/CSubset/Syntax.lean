@@ -302,12 +302,19 @@ inductive Expr where
   the pretty-printer never relies on C's implicit conversions. There is no
   cast at pointer type. -/
   | cast : ScalarTy → Expr → Expr
-  /-- `&l` — the *only* pointer constructor.
+  /-- `NULL`, at a stated pointee type.
+
+  Typed, because C is: the type is what lets `p != NULL` typecheck against a
+  `T *`. This is the syntax half of `Value.null` — without it the value
+  existed but no program could write one, which is why `find` used to return a
+  slot index and a sentinel instead of a pointer. -/
+  | null : Ty → Expr
+  /-- `&l` — one of the two pointer constructors.
 
   Well-formed only when `l` is rooted at a global or at a dereference
-  (obligation 7), which is what keeps every pointer global-rooted and
-  therefore non-dangling. Taking the address of an array element resolves its
-  index, so this shares the subscript trap and introduces no new one. -/
+  (obligation 7), which is what keeps no pointer from naming a frame. Taking
+  the address of an array element resolves its index, so this shares the
+  subscript trap and introduces no new one. -/
   | addr : LVal → Expr
   deriving DecidableEq, Repr, Inhabited, BEq
 

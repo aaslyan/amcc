@@ -5,12 +5,11 @@ import Amcc.CSubset.Value
 
 The specification a generated table is proved to implement.
 
-The project brief assumed this already existed in `verified-matching-engine` as
-`OrderMapLaws`. It does not — that repo's Lean engine uses concrete `List`-based
-books — so AMCC defines it here. That makes Phase 6 "introduce this abstraction
-into the engine, then instantiate it" rather than "instantiate an interface that
-is already there", which is more work than the brief assumed and is worth
-knowing before Phase 5.
+This is the half of the deliverable that is not C. A generated table is only
+useful to someone else if what it guarantees is written down in a form they can
+read and cite, and `MapLaws` is that form for a keyed table: three operations
+and the four equations relating them, stated in Lean and independent of any
+implementation.
 
 ## Shape
 
@@ -19,11 +18,11 @@ relating them. Bundling rather than using a type class is deliberate — a
 generated table is not a canonical instance of anything, and a schema produces
 a different one each time, so there is nothing for instance resolution to find.
 A template's correctness theorem produces a `MapLaws` value, and a consumer
-(the matching engine) takes one as a parameter.
+takes one as a parameter.
 
-Four laws, no more: they are exactly what a price-time-priority book needs of
-its order map, and each is discharged for `AbsTable` below in one line. Anything
-harder to prove would be a sign the interface, not the implementation, is wrong.
+Four laws, no more: they are what any keyed map must satisfy, and each is
+discharged for `AbsTable` below in one line. Anything harder to prove would be
+a sign the interface, not the implementation, is wrong.
 -/
 
 namespace Interface

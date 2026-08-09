@@ -259,7 +259,7 @@ Providers in priority order: **arena** (proved leaf) → **Lary** → **Tpool** 
 **L5 relational + access patterns** — tables, FKs, xref auto-maintenance,
 `cascdel`, and **cursors**. Cursors are a real gap today: `MapLaws` has *no
 traversal law at all*, so nothing proved so far says anything about ordered
-iteration — exactly what price-time priority needs.
+iteration — which any ordered access pattern needs.
 
 **L6 codegen** — extends to the new statement forms; `GenWellFormed` restated
 for the multi-table generator.
@@ -433,7 +433,7 @@ themselves — **but it does not hold for a FIFO `Llist`**, whose order is
 insertion order and therefore is not a function of the record set at all.
 A FIFO index needs an abstract state threaded through the operations rather
 than derived from `records`. That is a real extension of the interface, it is
-exactly what the matching engine's price-time priority needs, and it is now
+what any insertion-ordered access pattern needs, and it is now
 recorded as deferred rather than silently assumed to work.
 
 ## C types and structures

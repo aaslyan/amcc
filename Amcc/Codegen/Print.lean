@@ -84,6 +84,7 @@ def expr : Expr → String
   | .bin o a b   => s!"({expr a} {binOp o} {expr b})"
   | .cast t e    => s!"(({scalarTy t}){expr e})"
   | .addr l      => s!"(&{lval l})"
+  | .null _      => "NULL"
 
 def indent (n : Nat) : String := String.join (List.replicate n "  ")
 
@@ -135,7 +136,7 @@ def funDef (fd : FunDef) : String :=
 /-- One translation unit, in declaration order — which obligations 2 and 4
 made a topological order, so no forward declarations are needed. -/
 def program (p : Program) : String :=
-  "#include <stdint.h>\n#include <stdbool.h>\n\n"
+  "#include <stdint.h>\n#include <stdbool.h>\n#include <stddef.h>\n\n"
     ++ String.join (p.structs.map (fun sd => structDef sd ++ "\n"))
     ++ String.join (p.globals.map (fun g => globalDef g ++ "\n"))
     ++ String.intercalate "\n" (p.funs.map funDef)

@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-AMCC is a **verified schema-to-C generator** written in Lean 4 (Lake package, no external dependencies — no mathlib). A user writes a table schema; the generator emits a program in a restricted C subset together with a proof that the generated code implements a map interface. Companion repo: `verified-matching-engine` (the eventual consumer).
+**Read `docs/GOALS.md` first — it is canonical, and if anything here contradicts it, it wins.**
+
+AMCC is a **verified reimplementation of OpenACR's `amc`**, written in Lean 4 (Lake package, no external dependencies — no mathlib).
+
+**The goal: replicate OpenACR's `amc` with provable correctness.** amc turns a relational schema into data-structure code; AMCC does the same, and additionally emits — as Lean statements anyone can read, cite and build on — what the generated functions are guaranteed to do. The deliverable is not only C: it is C *plus explicit, machine-checked statements of its behaviour*, so a consumer can depend on the guarantee rather than on testing.
+
+AMCC is a general-purpose data-structure generator. It is not written for, aimed at, or scoped by any particular application.
+
+**The standing rule:** `amc`'s actual capability defines what to build; proof difficulty is an engineering problem to solve inside that target, **never** a reason to shrink it. Completeness of the reftype vocabulary is the goal, not a stretch goal. If the C subset cannot express something `amc` generates, the subset changes.
 
 Use the Lean toolchain pinned in `lean-toolchain` (`leanprover/lean4:v4.26.0`).
 
@@ -43,7 +51,7 @@ Two Props are *stated but unproved* — treat them as the open obligations, not 
 - `Wf.TypeSound` (`Amcc/CSubset/Wf.lean`) — well-formed programs can't raise `typeErr`/`unbound`/`depth`; the bridge Phase 3 consumes.
 - `ArrayTable.MilestoneTheorem` (`Amcc/Templates/ArrayTable.lean`) — every well-formed schema's generated table simulates the abstract map.
 
-**Scope caveat:** the project brief assumed an `OrderMapLaws` interface already existed in `verified-matching-engine`. It does not (that engine uses concrete `List`-based books), which is why `Interface.lean` defines `MapLaws` here and why Phase 6 is "introduce the abstraction, then instantiate" — more work than the brief assumed.
+**Reference point:** the target is `amc`'s generated API and reftype vocabulary (`~/openacr*/data/dmmeta/`). Generated functions should look like amc's, adapted to C — pointer-returning `Find` with `NULL` for absent, fields read through the pointer, amc's operation-name suffixes. Where AMCC differs from amc it should be because a proof demanded it, and the difference should be written down.
 
 ## Testing conventions
 

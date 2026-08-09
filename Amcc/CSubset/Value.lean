@@ -479,14 +479,18 @@ the structs *already* in the table. That is the obligation earning its keep —
 without it this function would need fuel. -/
 
 /-- The zero value at a storage type, given zero values for the structs
-declared so far. `none` at pointer type is deliberate and load-bearing: a
-non-null pointer has no zero, which is why a global may not contain one and why
-`LocalDef` carries an explicit initialiser. -/
+declared so far.
+
+Pointer type zeroes to `NULL`, which is what C guarantees for a pointer with
+static storage duration. This used to be `none` — there was no null pointer,
+so a pointer had no zero, so a global could not contain one. That restriction
+is gone, and with it the reason a list could not be rooted in a global head
+pointer. -/
 def zeroOfTy (tbl : List (Ident × Value)) : Ty → Option Value
   | .scalar .u32  => some (.u32 0)
   | .scalar .u64  => some (.u64 0)
   | .scalar .bool => some (.bool false)
-  | .ptr _        => none
+  | .ptr _        => some .null
   | .strct n      => Env.get? tbl n
   | .arr t n      => (zeroOfTy tbl t).map (fun v => .arr (List.replicate n v))
 

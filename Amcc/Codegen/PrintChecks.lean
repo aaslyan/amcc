@@ -44,6 +44,7 @@ example : Print.lit (.u64 0) = "0ull" := rfl
 private def ordersGolden : String :=
 "#include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 typedef struct {
   uint64_t id;
@@ -122,6 +123,7 @@ present-key branch rewrites nothing. checked by: `lake build` -/
 #guard Print.program (genC Schema.Examples.keysOnly)
     == "#include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 typedef struct {
   uint32_t k;

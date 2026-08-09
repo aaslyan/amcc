@@ -52,16 +52,24 @@ example : Wf.check pAddrLocal =
     ["& applied to a local-rooted lvalue: obligation 7 forbids taking the address of a frame",
      "ill-typed return expression"] := rfl
 
-/-- A global of pointer type. Zero-initialisation has no meaning for a
-non-null pointer, so this has to be rejected at check time rather than
-discovered by `initGlobals` at run time. -/
+/-- A global of pointer type is **accepted**, and zero-initialises to `NULL`.
+
+This used to be rejected: without a null pointer there was no zero value at
+pointer type, so `initGlobals` would have failed at run time. Now that `NULL`
+exists the rule is gone — which is what makes a global head pointer, and so an
+intrusive list rooted in one, expressible at all. -/
 def pPtrGlobal : Program where
   structs := []
   globals := [{ name := "g_p", ty := .ptr (.scalar .u64) }]
   funs := []
 
 /-- checked by: `lake build` -/
-example : Wf.check pPtrGlobal = ["global g_p: globals may not contain pointers"] := rfl
+example : Wf.check pPtrGlobal = [] := rfl
+
+/-- And it really does zero-initialise to `NULL`.
+
+checked by: `lake build` -/
+example : initGlobals pPtrGlobal = some [("g_p", .null)] := rfl
 
 /-- Obligation 4: a call to a function declared later. -/
 def pForwardCall : Program where

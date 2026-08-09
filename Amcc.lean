@@ -35,9 +35,9 @@ import Amcc.Codegen.PrintChecks
 
 Library root, and the **build closure**: a module not imported here is not
 proof-checked by `lake build`, so `lake build` succeeding is the whole
-verification signal. (The companion `verified-matching-engine` repo records an
-incident where dropping an import made a proof file silently stop being
-checked; this file is the place that can happen, so it is the place to look.)
+verification signal. (A dropped import is the one way a proof file can
+silently stop being checked, so this file is the place to look when something
+that should fail does not.)
 
 ## Phase 0 — the C subset's syntax
 - `CSubset.Syntax`   — the AST, and the eleven well-formedness obligations

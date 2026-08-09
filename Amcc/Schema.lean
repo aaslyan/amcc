@@ -197,8 +197,9 @@ def wf (s : Schema) : Bool := (check s).isEmpty
 
 namespace Examples
 
-/-- A price/quantity table keyed by order id — the shape the matching engine
-would want for its order map, at a capacity small enough to compute with. -/
+/-- A two-value table keyed by a `u64`, at a capacity small enough to compute
+with. Generic on purpose: it exercises a key plus more than one value field,
+which is the smallest shape that can get field order wrong. -/
 def orders : Schema where
   name     := "order"
   capacity := 4

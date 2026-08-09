@@ -186,6 +186,7 @@ def binTy : BinOp → Ty → Ty → Option Ty
 
 def inferExpr (c : Ctx) : Expr → Option Ty
   | .lit l => some (litTy l)
+  | .null t => some (.ptr t)
   | .rd l  =>
     match inferLVal c l with
     | some t => if isValTy t then some t else none
@@ -211,6 +212,7 @@ Lvalues contain no expressions — `Index` is a literal or a variable — so the
 is nothing to recurse into on the `rd` and `addr` branches. -/
 def addrChecks : Expr → List String
   | .lit _     => []
+  | .null _    => []
   | .rd _      => []
   | .un _ e    => addrChecks e
   | .cast _ e  => addrChecks e
@@ -328,8 +330,7 @@ def checkGlobals (structs : List StructDef) (globals : List GlobalDef) : List St
   distinct "global" (globals.map GlobalDef.name)
     ++ globals.flatMap (fun g =>
       (if Ty.sizesOk g.ty then [] else [s!"global {g.name}: bad array size"])
-        -- Zero-initialisation has no meaning for a non-null pointer.
-        ++ (if Ty.hasPtr g.ty then [s!"global {g.name}: globals may not contain pointers"] else [])
+        -- A global of pointer type is fine now: its zero value is NULL.
         ++ (Ty.allStructs g.ty).flatMap (fun n =>
             if (structs.map StructDef.name).contains n then []
             else [s!"global {g.name}: unknown struct {n}"]))
