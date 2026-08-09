@@ -51,6 +51,8 @@ Two Props are *stated but unproved* — treat them as the open obligations, not 
 - `Wf.TypeSound` (`Amcc/CSubset/Wf.lean`) — well-formed programs can't raise `typeErr`/`unbound`/`depth`; the bridge Phase 3 consumes.
 - `ArrayTable.MilestoneTheorem` (`Amcc/Templates/ArrayTable.lean`) — every well-formed schema's generated table simulates the abstract map.
 
+**Divergences from `amc` are recorded in `docs/DIVERGENCE.md`** — three where a proof obligation forced a different design (non-atomic `XrefMaybe`, runtime double-delete detection with a non-constructible sentinel, compatibility rules in a hand-written pass), and two where AMCC is weaker because of a subset restriction we have not lifted. Add to it whenever the generator departs from `amc`.
+
 **Reference point:** the target is `amc`'s generated API and reftype vocabulary (`~/openacr*/data/dmmeta/`). Generated functions should look like amc's, adapted to C — pointer-returning `Find` with `NULL` for absent, fields read through the pointer, amc's operation-name suffixes. Where AMCC differs from amc it should be because a proof demanded it, and the difference should be written down.
 
 ## Testing conventions
