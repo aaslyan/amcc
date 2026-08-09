@@ -16,6 +16,7 @@ import Amcc.Templates.ArrayTable
 import Amcc.Templates.ArrayTableWf
 import Amcc.Templates.ArrayTableFind
 import Amcc.Templates.Layout
+import Amcc.Templates.Pool
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Codegen.Print
 import Amcc.Codegen.PrintChecks
@@ -70,6 +71,9 @@ that should fail does not.)
 - `Templates.ArrayTableChecks` — the generator exercised on concrete schemas
 
 ## Phase 4 — printing
+- `Templates.Pool`      — the **pool template** over the ctype model: a
+                          free-list allocator (`Tpool`'s shape) emitted as C,
+                          with `Init`/`Alloc`/`Free`/`N`
 - `Codegen.Print`       — the pretty-printer to C text (trusted, unverified)
 - `Codegen.PrintChecks` — byte-for-byte golden tests of the printed output
 

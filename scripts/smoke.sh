@@ -18,4 +18,11 @@ cc -std=c11 -Wall -Wextra -Werror -o "$tmp/smoke" \
 
 "$tmp/smoke" > "$tmp/got.txt"
 diff scripts/orders_expected.txt "$tmp/got.txt"
-echo "smoke: OK — compiled C agrees with the Lean semantics"
+echo "smoke: table  OK — compiled C agrees with the Lean semantics"
+
+# The pool template, against the properties Spec/Pool.lean proves.
+lake exe amcc pool > "$tmp/pool.c"
+cc -std=c11 -Wall -Wextra -Werror -o "$tmp/pool" "$tmp/pool.c" scripts/pool_driver.c
+"$tmp/pool" > "$tmp/pool_got.txt"
+diff scripts/pool_expected.txt "$tmp/pool_got.txt"
+echo "smoke: pool   OK — allocation, reuse and exhaustion behave as proved"

@@ -26,10 +26,22 @@ def emit (s : Schema) : IO UInt32 := do
       IO.eprintln s!"  {e}"
     return 1
 
+/-- Emit a program built from the ctype model. -/
+def emitPool (d : Dmmeta.Db) : IO UInt32 := do
+  match Dmmeta.check d with
+  | [] =>
+    match Templates.Pool.genPool d with
+    | some p => IO.print (Codegen.Print.program p); return 0
+    | none   => IO.eprintln "schema declares no Inlary pool field"; return 1
+  | errs => do
+    for e in errs do IO.eprintln s!"  {e}"
+    return 1
+
 def main (args : List String) : IO UInt32 :=
   match args with
   | [] | ["orders"] => emit Schema.Examples.orders
   | ["tag"]         => emit Schema.Examples.keysOnly
+  | ["pool"]        => emitPool Dmmeta.Examples.boundedDb
   | _ => do
-    IO.eprintln "usage: amcc [orders|tag]"
+    IO.eprintln "usage: amcc [orders|tag|pool]"
     return 2

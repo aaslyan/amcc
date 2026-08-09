@@ -1078,8 +1078,8 @@ the two cases are what the two branches of the generated `if` correspond to. -/
 theorem eval_atGuard_ptr {ptr : Ident} {q : Path}
     (hloc : σ.getLocal ptr = some (.ptr q)) :
     evalExpr σ (.bin .ne (.rd (.var ptr)) (nullRow s)) = .ok (.bool true) := by
-  simp only [evalExpr, nullRow, read_local hloc, bind, Except.bind, evalBin,
-    resolve, hloc, readLoc]
+  simp only [evalExpr, nullRow, bind, Except.bind, evalBin, resolve, hloc,
+    readLoc]
 
 theorem eval_atGuard_null {ptr : Ident} (hloc : σ.getLocal ptr = some .null) :
     evalExpr σ (.bin .ne (.rd (.var ptr)) (nullRow s)) = .ok (.bool false) := by
