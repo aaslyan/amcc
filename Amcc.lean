@@ -1,0 +1,77 @@
+import Amcc.Spec.Algebra
+import Amcc.Spec.Pool
+import Amcc.Spec.Table
+import Amcc.CSubset.Syntax
+import Amcc.CSubset.Examples
+import Amcc.CSubset.Value
+import Amcc.CSubset.Eval
+import Amcc.CSubset.Wf
+import Amcc.CSubset.WfChecks
+import Amcc.CSubset.SmallStep
+import Amcc.CSubset.Sanity
+import Amcc.Schema
+import Amcc.Interface
+import Amcc.Templates.ArrayTable
+import Amcc.Templates.ArrayTableWf
+import Amcc.Templates.ArrayTableChecks
+import Amcc.Codegen.Print
+import Amcc.Codegen.PrintChecks
+
+/-!
+# AMCC — a verified schema-to-C generator
+
+## The algebra
+- `Spec.Algebra` — the axiomatic core, independent of everything else: the
+  postulated allocator contract, structured memory, the object store, access
+  patterns as views, and the relational promise derived from them.
+- `Spec.Pool`    — a free-list pool (OpenACR's `Tpool`/`Lary` shape) **proved**
+  to satisfy `ObjStoreLaws` over an arbitrary base provider, with `reserve`
+  for the two-phase insert, and a counterexample showing a *moving* pool
+  cannot satisfy the stability law.
+- `Spec.Table`   — the two joined: a concrete table over the pool, carrying a
+  `Count` index, **proved** to satisfy `TwoPhaseLaws`. The retrieval and
+  invisible-failure promises then follow from the generic theorems with no
+  further work, which is what having the interface is for.
+
+Library root, and the **build closure**: a module not imported here is not
+proof-checked by `lake build`, so `lake build` succeeding is the whole
+verification signal. (The companion `verified-matching-engine` repo records an
+incident where dropping an import made a proof file silently stop being
+checked; this file is the place that can happen, so it is the place to look.)
+
+## Phase 0 — the C subset's syntax
+- `CSubset.Syntax`   — the AST, and the eleven well-formedness obligations
+- `CSubset.Examples` — `trivialCell` and `tinyTable`, hand-written ASTs
+
+## Phase 1 — semantics
+- `CSubset.Value`     — values, access paths, stores, the frame lemmas
+- `CSubset.Eval`      — the executable big-step semantics (`execStmt`)
+- `CSubset.Wf`        — the decidable checker for the obligations
+- `CSubset.WfChecks`  — the checker exercised, positively and negatively
+- `CSubset.SmallStep` — the normative relation, determinism, and
+                        `execStmt_sound` / `exec_iff_steps`
+- `CSubset.Sanity`    — the phase's sanity theorems
+
+## Phase 2 — the schema DSL
+- `Schema` — the generator's input language, and its checker
+
+## Phase 3 — the array-table template
+- `Interface`                  — the abstract map (`MapLaws`) a table implements
+- `Templates.ArrayTable`       — `genC`, `absOf`, and the milestone obligations
+- `Templates.ArrayTableWf`     — **proved**: `GenWellFormed` — every accepted
+                                 schema generates a program `Wf.check` accepts
+- `Templates.ArrayTableChecks` — the generator exercised on concrete schemas
+
+## Phase 4 — printing
+- `Codegen.Print`       — the pretty-printer to C text (trusted, unverified)
+- `Codegen.PrintChecks` — byte-for-byte golden tests of the printed output
+
+`lake exe amcc` prints the generated C for an example schema;
+`scripts/smoke.sh` compiles it and replays the `ArrayTableChecks` call
+sequences against the binary — the differential check of printer + compiler
+against `execStmt`.
+
+## Still open
+`CSubset.Wf.TypeSound` (the bridge between Phase 1 and Phase 3) and
+`Templates.ArrayTable.MilestoneTheorem` (the simulation itself).
+-/

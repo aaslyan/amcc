@@ -1,0 +1,10 @@
+name = "Amcc"
+version = "0.1.0"
+defaultTargets = ["Amcc"]
+
+[[lean_lib]]
+name = "Amcc"
+
+[[lean_exe]]
+name = "amcc"
+root = "Main"
