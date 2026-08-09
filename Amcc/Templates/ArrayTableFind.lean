@@ -207,16 +207,24 @@ theorem toValue_ofValue {v : Value} {k : Interface.Key}
   | strct _ => exact Option.noConfusion h
   | arr _  => exact Option.noConfusion h
 
+/-- `==` and `decide (· = ·)` agree wherever `BEq` is lawful. The generated
+comparison produces the former; `absOf` is stated with the latter, because
+`decide` is the one that talks to propositional equality without a detour. -/
+private theorem beq_eq_decide' {α : Type _} [BEq α] [LawfulBEq α]
+    [DecidableEq α] (a b : α) : (a == b) = decide (a = b) := by
+  cases h : a == b
+  · simp [beq_eq_false_iff_ne.mp h]
+  · simp [eq_of_beq h]
+
 /-- **Comparing two keys of the same type is the key comparison.**
 
 At *different* types it is not an equation at all — `evalBin .eq` errors —
 which is why the type agreement is a hypothesis rather than something to be
 wished away. -/
 theorem evalBin_eq_keys {k k' : Interface.Key} (hty : k'.ty = k.ty) :
-    evalBin .eq k'.toValue k.toValue = .ok (.bool (k' == k)) := by
-  cases k' <;> cases k <;> first
-    | rfl
-    | exact absurd hty (by simp [Interface.Key.ty])
+    evalBin .eq k'.toValue k.toValue = .ok (.bool (decide (k' = k))) := by
+  cases k' <;> cases k <;>
+    simp_all [evalBin, Interface.Key.toValue, Interface.Key.ty, beq_eq_decide']
 
 /-! ## The loop guard
 
@@ -289,7 +297,7 @@ theorem eval_guard {i : Nat} {row : Value} {fs : List (Ident × Value)}
     evalExpr σ (.bin .land
         (.rd (field s tmpI (Schema.names s).occupied))
         (.bin .eq (.rd (field s tmpI pk.name)) (.rd (.var pk.name))))
-      = .ok (.bool (b && (k' == k))) := by
+      = .ok (.bool (b && decide (k' = k))) := by
   have hfo : row.getStep (.fld (Schema.names s).occupied) = some (.bool b) := by
     subst hstrct; simpa [Value.getStep] using hocc
   have hfk : row.getStep (.fld pk.name) = some kv := by
@@ -364,7 +372,7 @@ passes it. -/
 /-- Slot `i` is occupied and holds key `k`. -/
 def slotMatches (s : Schema) (glb : Env) (k : Interface.Key) (i : Nat) : Bool :=
   match (rowsOf s glb)[i]? with
-  | some r => rowOccupied s r && (rowKey? s r == some k)
+  | some r => rowOccupied s r && decide (rowKey? s r = some k)
   | none   => false
 
 /-- The first matching slot in `[i, i + rem)`. -/
@@ -395,12 +403,12 @@ theorem exec_loopBody {p : Program} {callee} {pk : Schema.Field}
   obtain ⟨kv, k', hkfld, hcv, hrk, hkty'⟩ := key_of_rowOk hok hpk hstrct
   have hg := eval_guard R hlt hloc hround hrow hstrct hocc hkfld hcv
     (by rw [hkty', hkty]) hkloc
-  have hsm : slotMatches s σ.glb k i = (b && (k' == k)) := by
+  have hsm : slotMatches s σ.glb k i = (b && decide (k' = k)) := by
     simp only [slotMatches, hrow, hrocc, hrk]
     simp
   simp only [findLoopBody, Stmt.when, execAt, findGuard, hg, bind, Except.bind,
     hsm]
-  cases hb : b && (k' == k) with
+  cases hb : b && decide (k' = k) with
   | false => simp
   | true =>
     simp only [evalExpr, resolve_slot R hlt hloc hround, bind, Except.bind]
@@ -534,7 +542,7 @@ theorem firstMatch_isSome_iff {glb : Env} {k : Interface.Key} (R : RepInv s glb)
         have hmem : r ∈ rowsOf s glb := List.mem_of_getElem? hr
         simp only [absOf]
         cases hfd : (rowsOf s glb).find?
-            (fun r => rowOccupied s r && rowKey? s r == some k) with
+            (fun r => rowOccupied s r && decide (rowKey? s r = some k)) with
         | none =>
           have hno := List.find?_eq_none.mp hfd r hmem
           exact absurd hj (by simpa using hno)
@@ -542,7 +550,7 @@ theorem firstMatch_isSome_iff {glb : Env} {k : Interface.Key} (R : RepInv s glb)
   · intro h
     simp only [absOf] at h
     cases hfd : (rowsOf s glb).find?
-        (fun r => rowOccupied s r && rowKey? s r == some k) with
+        (fun r => rowOccupied s r && decide (rowKey? s r = some k)) with
     | none => rw [hfd] at h; simp at h
     | some r' =>
       obtain ⟨hp, hm'⟩ := find?_pred hfd
@@ -948,6 +956,70 @@ theorem find?_set_of_neg {α : Type _} {p : α → Bool} :
       rw [List.find?_cons_of_neg hna, List.find?_cons_of_neg hna]
       exact find?_set_of_neg hx (fun y hy => hi y (by simpa using hy))
 
+/-- **An erase removes exactly that key from the abstraction.**
+
+Two cases, and only one has content. For the erased key, `distinct` does the
+work: slot `i` was the *only* occupied slot holding it, so once its flag is
+cleared nothing answers for that key. For every other key, nothing that could
+have answered moved — slot `i` did not match those keys before the clear
+either, since its key was `k`.
+
+checked by: `lake build` -/
+theorem absOf_clearOccupied {glb glb' : Env} {i : Nat}
+    {fs : List (Ident × Value)} {k : Interface.Key}
+    (R : RepInv s glb)
+    (hrow : (rowsOf s glb)[i]? = some (.strct fs))
+    (hocc : (Env.get? fs (Schema.names s).occupied).isSome = true)
+    -- The slot must actually have been occupied. Without this the statement is
+    -- false: clearing an empty slot removes nothing, and some *other* slot
+    -- could still be answering for `k`.
+    (hoccTrue : rowOccupied s (.strct fs) = true)
+    (hkey : rowKey? s (.strct fs) = some k)
+    (hrows : rowsOf s glb'
+      = (rowsOf s glb).set i (.strct (Env.set fs (Schema.names s).occupied (.bool false)))) :
+    absOf s glb' = Interface.Abs.erase (absOf s glb) k := by
+  funext k'
+  have hclr : rowOccupied s
+      (.strct (Env.set fs (Schema.names s).occupied (.bool false))) = false :=
+    rowOccupied_set_occupied hocc
+  simp only [Interface.Abs.erase]
+  by_cases hkk : k' = k
+  · subst hkk
+    have hnone : (rowsOf s glb').find?
+        (fun r => rowOccupied s r && decide (rowKey? s r = some k')) = none := by
+      rw [hrows]
+      refine List.find?_eq_none.mpr ?_
+      intro r hr
+      obtain ⟨j, hj, hjr⟩ := List.getElem_of_mem hr
+      have hget : ((rowsOf s glb).set i
+          (.strct (Env.set fs (Schema.names s).occupied (.bool false))))[j]?
+            = some r := by rw [List.getElem?_eq_getElem hj, hjr]
+      rw [List.getElem?_set] at hget
+      by_cases hij : i = j
+      · rw [if_pos hij] at hget
+        rw [List.length_set] at hj
+        rw [if_pos (show i < (rowsOf s glb).length by omega)] at hget
+        cases hget
+        simp [hclr]
+      · rw [if_neg hij] at hget
+        intro hp
+        simp only [Bool.and_eq_true, decide_eq_true_eq] at hp
+        exact hij (R.distinct i j (.strct fs) r hrow hget hoccTrue hp.1
+          (by rw [hkey, hp.2]))
+    simp [absOf, hnone]
+  · have hpi : ∀ y, (rowsOf s glb)[i]? = some y →
+        (fun r => rowOccupied s r && decide (rowKey? s r = some k')) y = false := by
+      intro y hy
+      rw [hrow] at hy
+      cases hy
+      have hne : ¬ (some k = some k') := fun h => hkk (by cases h; rfl)
+      simp [hkey, hne]
+    have hfind := find?_set_of_neg
+      (p := fun r => rowOccupied s r && decide (rowKey? s r = some k'))
+      (x := .strct (Env.set fs (Schema.names s).occupied (.bool false)))
+      (by simp [hclr]) hpi
+    simp only [absOf, hrows, hfind, if_neg hkk]
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
@@ -960,21 +1032,14 @@ For `erase` the state content is now done: `repInv_clearOccupied` says the
 representation invariant survives clearing a slot's occupancy flag, all four
 clauses. What is left for `erase` is:
 
-- the `absOf` equation — that clearing slot `i`, which held key `k`, makes
-  `absOf` become `Abs.erase (absOf ·) k`. Its list-level content is done
-  (`find?_set_of_neg`), and the shape of the argument is settled: the erased
-  key needs `distinct` (slot `i` was the *only* occupied slot holding it, so
-  nothing else answers for it once the flag is cleared), and every other key
-  is untouched because no other slot moved and slot `i` did not match them
-  before the clear either. What is not settled is the plumbing between
-  `Option Key`'s `BEq` and propositional equality, which is where the attempt
-  stalled — `LawfulBEq Key` is now available but `LawfulBEq (Option Key)` is
-  not, and `absOf` compares at `Option`.
-- assembling the call, which follows `findCorrect`'s pattern with one new
-  wrinkle: `erase` *calls* `find`, so it goes through `execAt`'s `.call` case —
-  frame save and restore, and writing the result into `_at`. `exec_findBody`
-  was deliberately stated for arbitrary `p` and `callee`, so it applies at the
-  inner call depth unchanged.
+**`erase`'s state and abstraction content are both proved.**
+`repInv_clearOccupied` says the invariant survives, `absOf_clearOccupied` says
+the abstraction moves exactly the way `Abs.erase` says. What is left for
+`erase` is only the *assembly*: it follows `findCorrect`'s pattern with one new
+wrinkle — `erase` **calls** `find`, so it goes through `execAt`'s `.call`
+case, meaning frame save and restore and writing the result into `_at`.
+`exec_findBody` was deliberately stated for arbitrary `p` and `callee`, so it
+applies at the inner call depth unchanged.
 
 The reading half of the writers is done: `resolve_ptrField` and
 `read_ptrField` handle `_at->f` for a pointer that came from `find`, which is

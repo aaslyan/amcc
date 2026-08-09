@@ -245,7 +245,8 @@ It reads the globals alone, not a whole `Store`: the table has static storage
 duration, so a frame can hold nothing of it. That is Phase 0's no-pointer-to-a-
 local decision showing up as a smaller abstraction function. -/
 def absOf (s : Schema) (glb : Env) : Interface.AbsTable := fun k =>
-  match (rowsOf s glb).find? (fun r => rowOccupied s r && rowKey? s r == some k) with
+  match (rowsOf s glb).find?
+      (fun r => rowOccupied s r && decide (rowKey? s r = some k)) with
   | some r => rowVals? s r
   | none   => none
 
@@ -326,7 +327,7 @@ theorem absOf_eq_empty (s : Schema) (glb : Env)
   funext k
   simp only [absOf, Interface.Abs.empty]
   cases hf : (rowsOf s glb).find?
-      (fun r => rowOccupied s r && rowKey? s r == some k) with
+      (fun r => rowOccupied s r && decide (rowKey? s r = some k)) with
   | none => rfl
   | some r =>
     obtain ⟨hpred, hmem⟩ := find?_pred hf
