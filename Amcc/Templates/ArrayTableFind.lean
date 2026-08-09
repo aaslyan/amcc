@@ -1069,6 +1069,23 @@ theorem exec_callFind {p : Program} {d : Nat} {pk : Schema.Field}
   | none => rw [hg] at hat; exact absurd hat (by simp)
   | some _ => simp only [writeLoc, hg]
 
+/-! ## The `_at != NULL` guard
+
+The test `insert` and `erase` both make on what `find` returned. Two lemmas
+rather than one because `evalBin .ne` is defined by cases on the operands, and
+the two cases are what the two branches of the generated `if` correspond to. -/
+
+theorem eval_atGuard_ptr {ptr : Ident} {q : Path}
+    (hloc : σ.getLocal ptr = some (.ptr q)) :
+    evalExpr σ (.bin .ne (.rd (.var ptr)) (nullRow s)) = .ok (.bool true) := by
+  simp only [evalExpr, nullRow, read_local hloc, bind, Except.bind, evalBin,
+    resolve, hloc, readLoc]
+
+theorem eval_atGuard_null {ptr : Ident} (hloc : σ.getLocal ptr = some .null) :
+    evalExpr σ (.bin .ne (.rd (.var ptr)) (nullRow s)) = .ok (.bool false) := by
+  simp only [evalExpr, nullRow, read_local hloc, bind, Except.bind, evalBin,
+    resolve, hloc, readLoc]
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
