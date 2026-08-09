@@ -14,6 +14,7 @@ import Amcc.Dmmeta
 import Amcc.Interface
 import Amcc.Templates.ArrayTable
 import Amcc.Templates.ArrayTableWf
+import Amcc.Templates.ArrayTableFind
 import Amcc.Templates.Layout
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Codegen.Print
