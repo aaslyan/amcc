@@ -14,6 +14,7 @@ lake exe amcc tag        # the degenerate key-only table
 lake exe amcc pool       # the free-list pool
 lake exe amcc upptr      # the up-pointer accessors
 lake exe amcc llist      # the intrusive doubly-linked list
+lake exe amcc thash      # the hash index
 lake exe amcc > order_table.c
 ```
 -/
@@ -69,6 +70,8 @@ def main (args : List String) : IO UInt32 :=
     emitProgram Templates.Upptr.Examples.upDb Templates.Upptr.genUpptr
   | ["llist"]       => emitOpt Templates.Llist.Examples.listDb
                          Templates.Llist.genLlist "schema declares no Llist field"
+  | ["thash"]       => emitOpt Templates.Thash.Examples.hashDb
+                         Templates.Thash.genThash "schema declares no usable Thash field"
   | _ => do
-    IO.eprintln "usage: amcc [orders|tag|pool|upptr|llist]"
+    IO.eprintln "usage: amcc [orders|tag|pool|upptr|llist|thash]"
     return 2

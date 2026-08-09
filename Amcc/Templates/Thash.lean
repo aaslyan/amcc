@@ -1,0 +1,545 @@
+import Amcc.Dmmeta
+import Amcc.CSubset.Wf
+import Amcc.CSubset.Calls
+
+/-!
+# AMCC — the `Thash` template
+
+`amc`'s most-used access pattern: a hash index from a key to a row, chained
+through a link field the element carries. This is the template that turns the
+project's "one table" surface into an *index* — the thing `amc` schemas are
+mostly made of.
+
+## What is generated
+
+For a parent ctype `D` with a `Thash` field `f`, element ctype `E` whose `Pkey`
+field is `k`, and a declared bucket count `NB`:
+
+```c
+typedef struct E { …E's fields…; E *f_next; bool f_inhash; } E;
+typedef struct D { E *f_buckets[NB]; uint32_t f_n; } D;
+static D g_D;
+
+void     D_f_Init(void);              /* every bucket NULL; n = 0        */
+E*       D_f_Find(uint32_t key);      /* the row with that key, or NULL  */
+bool     D_f_InsertMaybe(E *row);     /* false on a duplicate key        */
+void     D_f_Remove(E *row);          /* unlink                          */
+uint32_t D_f_N(void);                 /* how many are indexed            */
+```
+
+## Three divergences, all forced by the subset
+
+**Fixed capacity, no rehash, no growth.** `amc`'s `Thash` keeps its buckets in
+a `Tary` and calls `$name_Reserve` to grow, rehashing every element. AMCC's
+bucket array is an inline array of a size the schema declares. This is the same
+gap `docs/DIVERGENCE.md` §2.2 records for the pool — `Stmt.alloc`/`Stmt.free`
+and the allocator oracle are not written, so nothing generated can allocate —
+and it is unfinished work rather than a design position. Recorded as §3.2.
+
+**The hash is a mask, not a hash.** The subset has no division and no shifts,
+so `key % nbuckets` is inexpressible. `key & (NB-1)` is, and it is exact when
+`NB` is a power of two — which the generator therefore requires. It also means
+the *bound* on the bucket index is an algebraic fact about `land` rather than a
+comparison the code performs, which is where the no-trap obligation for the
+subscript now lives.
+
+**The chain walk is bounded.** The subset has no `while` and no `break`: the
+only loop is `forN` with a bound read once. A hash chain has no static length,
+so the walk runs `CAP` iterations — the element capacity, an upper bound on any
+chain — with the body guarded by `_p != NULL` and, for `Find`, by
+`_hit == NULL` so that it stops at the *first* match rather than the last.
+Functionally this is `amc`'s walk; operationally it is O(CAP) rather than
+O(chain). Recorded as §3.2.
+
+The `_inhash` flag is the same divergence `Llist` carries and for the same
+reason: `amc` marks a row not-in-index by comparing against `($Cpptype*)-1`,
+which the subset makes inexpressible (§1.2, §2.4).
+-/
+
+namespace Templates
+namespace Thash
+
+open CSubset
+
+/-! ## Generated names -/
+
+def parRow : Ident := "row"
+def parKey : Ident := "key"
+def tmpB    : Ident := "_b"
+def tmpP    : Ident := "_p"
+def tmpHit  : Ident := "_hit"
+def tmpPrev : Ident := "_prev"
+def tmpI    : Ident := "_i"
+
+structure Names where
+  dbGlobal : Ident
+  buckets  : Ident
+  count    : Ident
+  next     : Ident
+  inhash   : Ident
+  init     : Ident
+  find     : Ident
+  insert   : Ident
+  remove   : Ident
+  size     : Ident
+  deriving Repr, Inhabited, DecidableEq
+
+/-- `amc`'s naming, in C. -/
+def names (dbC : Ident) (fld : Ident) : Names where
+  dbGlobal := "g_" ++ dbC
+  buckets  := fld ++ "_buckets"
+  count    := fld ++ "_n"
+  next     := fld ++ "_next"
+  inhash   := fld ++ "_inhash"
+  init     := dbC ++ "_" ++ fld ++ "_Init"
+  find     := dbC ++ "_" ++ fld ++ "_Find"
+  insert   := dbC ++ "_" ++ fld ++ "_InsertMaybe"
+  remove   := dbC ++ "_" ++ fld ++ "_Remove"
+  size     := dbC ++ "_" ++ fld ++ "_N"
+
+/-! ## Lvalue shorthands -/
+
+/-- `g_D.<x>` -/
+def dbFld (nm : Names) (x : Ident) : LVal := .fld (.glob nm.dbGlobal) x
+/-- `<p>-><x>` -/
+def ptrFld (p : Ident) (x : Ident) : LVal := .fld (.deref p) x
+/-- `g_D.f_buckets[<i>]` -/
+def bucket (nm : Names) (i : Ident) : LVal := .idx (dbFld nm nm.buckets) (.var i)
+
+/-- A pointer local, initialised to `NULL`. -/
+def ptrLocal (x : Ident) (elem : Ident) : LocalDef :=
+  { name := x, ty := .ptr (.strct elem), init := .null (.strct elem) }
+
+/-! ## The generated code -/
+
+/-- ```c
+void D_f_Init(void) {
+  uint32_t _i = 0;
+  for (_i = 0; _i < NB; ++_i) { g_D.f_buckets[_i] = NULL; }
+  g_D.f_n = 0;
+}
+``` -/
+def initDef (nm : Names) (elem : Ident) (nb : Nat) : FunDef where
+  name   := nm.init
+  params := []
+  ret    := none
+  locals := [LocalDef.zeroed tmpI .u32]
+  body   := .block
+    [ .forN tmpI (.lit nb) (.assign (bucket nm tmpI) (.null (.strct elem)))
+    , .assign (dbFld nm nm.count) (.lit (.u32 0)) ]
+
+/-- ```c
+E* D_f_Find(uint32_t key) {
+  uint32_t _b = 0; E *_p = NULL; E *_hit = NULL; uint32_t _i = 0;
+  _b = (key & MASK);
+  _p = g_D.f_buckets[_b];
+  for (_i = 0; _i < CAP; ++_i) {
+    if (_hit == NULL) {
+      if (_p != NULL) {
+        if (_p->k == key) { _hit = _p; }
+        _p = _p->f_next;
+      }
+    }
+  }
+  return _hit;
+}
+```
+The `_hit == NULL` guard is what makes this the *first* match: without it the
+walk would keep going and report the last. -/
+def findDef (nm : Names) (elem : Ident) (key : Ident) (mask cap : Nat) : FunDef where
+  name   := nm.find
+  params := [(parKey, .scalar .u32)]
+  ret    := some (.ptr (.strct elem))
+  locals := [ LocalDef.zeroed tmpB .u32
+            , ptrLocal tmpP elem
+            , ptrLocal tmpHit elem
+            , LocalDef.zeroed tmpI .u32 ]
+  body   := .block
+    [ .assign (.var tmpB)
+        (.bin .band (.rd (.var parKey)) (.lit (.u32 (UInt32.ofNat mask))))
+    , .assign (.var tmpP) (.rd (bucket nm tmpB))
+    , .forN tmpI (.lit cap) <|
+        .when (.bin .eq (.rd (.var tmpHit)) (.null (.strct elem))) <|
+          .when (.bin .ne (.rd (.var tmpP)) (.null (.strct elem))) <| .block
+            [ .when (.bin .eq (.rd (ptrFld tmpP key)) (.rd (.var parKey)))
+                (.assign (.var tmpHit) (.rd (.var tmpP)))
+            , .assign (.var tmpP) (.rd (ptrFld tmpP nm.next)) ]
+    , .ret (some (.rd (.var tmpHit))) ]
+
+/-- ```c
+bool D_f_InsertMaybe(E *row) {
+  uint32_t _b = 0; E *_dup = NULL;
+  if (!row->f_inhash) {
+    _dup = D_f_Find(row->k);
+    if (_dup == NULL) {
+      _b = (row->k & MASK);
+      row->f_next   = g_D.f_buckets[_b];
+      row->f_inhash = true;
+      g_D.f_buckets[_b] = row;
+      g_D.f_n = g_D.f_n + 1;
+      return true;
+    }
+  }
+  return false;
+}
+```
+`amc`'s `InsertMaybe` reports failure the same way, and the duplicate check is
+a call to the index's own `Find` there too. -/
+def insertDef (nm : Names) (elem : Ident) (key : Ident) (mask : Nat) : FunDef where
+  name   := nm.insert
+  params := [(parRow, .ptr (.strct elem))]
+  ret    := some (.scalar .bool)
+  locals := [LocalDef.zeroed tmpB .u32, ptrLocal tmpP elem]
+  body   := .block
+    [ .when (.un .lnot (.rd (ptrFld parRow nm.inhash))) <| .block
+        [ .call (some tmpP) nm.find [.rd (ptrFld parRow key)]
+        , .when (.bin .eq (.rd (.var tmpP)) (.null (.strct elem))) <| .block
+            [ .assign (.var tmpB)
+                (.bin .band (.rd (ptrFld parRow key))
+                  (.lit (.u32 (UInt32.ofNat mask))))
+            , .assign (ptrFld parRow nm.next) (.rd (bucket nm tmpB))
+            , .assign (ptrFld parRow nm.inhash) (.lit (.bool true))
+            , .assign (bucket nm tmpB) (.rd (.var parRow))
+            , .assign (dbFld nm nm.count)
+                (.bin .add (.rd (dbFld nm nm.count)) (.lit (.u32 1)))
+            , .ret (some (.lit (.bool true))) ] ]
+    , .ret (some (.lit (.bool false))) ]
+
+/-- ```c
+void D_f_Remove(E *row) {
+  uint32_t _b = 0; E *_p = NULL; E *_prev = NULL; uint32_t _i = 0;
+  if (row->f_inhash) {
+    _b = (row->k & MASK);
+    _p = g_D.f_buckets[_b];
+    for (_i = 0; _i < CAP; ++_i) {
+      if (_p != NULL) { if (_p->f_next == row) { _prev = _p; } _p = _p->f_next; }
+    }
+    if (_prev != NULL) { _prev->f_next = row->f_next; }
+    else { g_D.f_buckets[_b] = row->f_next; }
+    row->f_next   = NULL;
+    row->f_inhash = false;
+    g_D.f_n = g_D.f_n - 1;
+  }
+}
+```
+The chain is singly linked, so the predecessor is found by walking — which is
+what `amc`'s singly-linked `Llist_Remove` does, and for the same reason. -/
+def removeDef (nm : Names) (elem : Ident) (key : Ident) (mask cap : Nat) : FunDef where
+  name   := nm.remove
+  params := [(parRow, .ptr (.strct elem))]
+  ret    := none
+  locals := [ LocalDef.zeroed tmpB .u32
+            , ptrLocal tmpP elem
+            , ptrLocal tmpPrev elem
+            , LocalDef.zeroed tmpI .u32 ]
+  body   := .when (.rd (ptrFld parRow nm.inhash)) <| .block
+    [ .assign (.var tmpB)
+        (.bin .band (.rd (ptrFld parRow key)) (.lit (.u32 (UInt32.ofNat mask))))
+    , .assign (.var tmpP) (.rd (bucket nm tmpB))
+    , .forN tmpI (.lit cap) <|
+        .when (.bin .ne (.rd (.var tmpP)) (.null (.strct elem))) <| .block
+          [ .when (.bin .eq (.rd (ptrFld tmpP nm.next)) (.rd (.var parRow)))
+              (.assign (.var tmpPrev) (.rd (.var tmpP)))
+          , .assign (.var tmpP) (.rd (ptrFld tmpP nm.next)) ]
+    , .cond (.bin .ne (.rd (.var tmpPrev)) (.null (.strct elem)))
+        (.assign (ptrFld tmpPrev nm.next) (.rd (ptrFld parRow nm.next)))
+        (.assign (bucket nm tmpB) (.rd (ptrFld parRow nm.next)))
+    , .assign (ptrFld parRow nm.next) (.null (.strct elem))
+    , .assign (ptrFld parRow nm.inhash) (.lit (.bool false))
+    , .assign (dbFld nm nm.count)
+        (.bin .sub (.rd (dbFld nm nm.count)) (.lit (.u32 1))) ]
+
+/-- ```c
+uint32_t D_f_N(void) { return g_D.f_n; }
+``` -/
+def sizeDef (nm : Names) : FunDef where
+  name   := nm.size
+  params := []
+  ret    := some (.scalar .u32)
+  locals := []
+  body   := .ret (some (.rd (dbFld nm nm.count)))
+
+/-- The five operations. `Find` is emitted before `InsertMaybe`, which calls
+it. -/
+def defsFor (nm : Names) (elem key : Ident) (mask cap nb : Nat) : List FunDef :=
+  [ initDef nm elem nb
+  , findDef nm elem key mask cap
+  , insertDef nm elem key mask
+  , removeDef nm elem key mask cap
+  , sizeDef nm ]
+
+/-! ## Assembling a program -/
+
+/-- The element struct, with the chain link and the membership flag. -/
+def elemStruct (d : Dmmeta.Db) (nm : Names) (c : Dmmeta.Ctype) : StructDef where
+  name   := c.name
+  fields := (Dmmeta.structOf d c).fields
+            ++ [(nm.next, .ptr (.strct c.name)), (nm.inhash, .scalar .bool)]
+
+/-- The parent struct: the bucket array and the count. -/
+def dbStruct (nm : Names) (dbC elem : Ident) (nb : Nat) : StructDef where
+  name   := dbC
+  fields := [ (nm.buckets, .arr (.ptr (.strct elem)) nb)
+            , (nm.count, .scalar .u32) ]
+
+/-- The element's `Pkey` field, which is what the index is keyed by. -/
+def keyField? (c : Dmmeta.Ctype) : Option Dmmeta.Field :=
+  c.fields.find? (fun f => f.reftype == .Pkey)
+
+/-- **The generator.** Emits the index for the first `Thash` field of the
+parent ctype.
+
+`none` when the schema declares no such field, when the element has no `Pkey`,
+when the key is not a `u32` (the mask needs a scalar the subset can `band`), or
+when the bucket count is not a power of two — the last is what makes
+`key & (NB-1)` the same function as `key % NB`. Each of those is a real
+precondition rather than a silent fallback. -/
+def genThash (d : Dmmeta.Db) : Option Program := do
+  let dbName ← d.root
+  let full := d.withBuiltins
+  let dbC ← full.find? dbName
+  let fld ← dbC.fields.find? (fun f => f.reftype == .Thash)
+  let elemC ← full.find? fld.arg
+  let key ← keyField? elemC
+  guard (key.arg == "u32")
+  let nb ← full.inlaryMax? dbC.name fld.name
+  guard (nb != 0 && Nat.land nb (nb - 1) == 0)
+  -- An upper bound on any chain: no more elements can be indexed than the
+  -- schema declares room for.
+  let cap ← full.inlaryMax? dbC.name fld.name
+  let nm := names dbC.name fld.name
+  some
+    { structs := [elemStruct full nm elemC, dbStruct nm dbC.name elemC.name nb]
+    , globals := [{ name := nm.dbGlobal, ty := .strct dbC.name }]
+    , funs    := defsFor nm elemC.name key.name (nb - 1) cap nb }
+
+/-! ## Where the index's state lives -/
+
+def dbPath (nm : Names) (x : Ident) : Path := ⟨.glob nm.dbGlobal, [.fld x]⟩
+def fldPath (q : Path) (x : Ident) : Path := ⟨q.root, q.steps ++ [.fld x]⟩
+
+theorem resolve_dbFld {σ : Store} {nm : Names} {x : Ident} {v : Value}
+    (hread : σ.readPath (dbPath nm x) = some v) :
+    resolve σ (dbFld nm x) = .ok (.glb (dbPath nm x)) := by
+  obtain ⟨gv, hg⟩ : ∃ gv, σ.glb.get? nm.dbGlobal = some gv := by
+    cases hg : σ.glb.get? nm.dbGlobal with
+    | none => simp [dbPath, Store.readPath, Store.rootVal, hg] at hread
+    | some gv => exact ⟨gv, rfl⟩
+  simp only [dbPath] at hread
+  simp only [dbFld, resolve, hg, bind, Except.bind, dbPath, List.nil_append,
+    hread]
+
+theorem resolve_ptrFld {σ : Store} {ptr x : Ident} {q : Path} {v : Value}
+    (hloc : σ.getLocal ptr = some (.ptr q))
+    (hread : σ.readPath (fldPath q x) = some v) :
+    resolve σ (ptrFld ptr x) = .ok (.glb (fldPath q x)) := by
+  simp only [fldPath] at hread
+  obtain ⟨w, hw⟩ : ∃ w, σ.rootVal q.root = some w := by
+    cases hr : σ.rootVal q.root with
+    | none => simp [Store.readPath, hr] at hread
+    | some w => exact ⟨w, rfl⟩
+  simp only [ptrFld, resolve, hloc, hw, bind, Except.bind, fldPath, hread]
+
+/-! ## The laws
+
+Stated against an arbitrary program in which the name resolves, as the `Upptr`
+and `Llist` templates' are; `CSubset.lookupFun_of_mem` turns "the schema
+declares this field" into that hypothesis. -/
+
+section Laws
+
+variable {p : Program} {m : Mem} {nm : Names} {elem key : Ident} {q : Path}
+  {mask cap nb : Nat}
+
+/-- **`N` reports the count.**
+
+checked by: `lake build` -/
+theorem size_correct {v : Value}
+    (hlook : lookupFun p nm.size = .ok (sizeDef nm))
+    (hn : ∃ n, p.funs.length = n + 1)
+    (hread : readMem m (dbPath nm nm.count) = some v) :
+    callFun p m nm.size [] = .ok (m, some v) := by
+  obtain ⟨n, hn⟩ := hn
+  have hr : (m.toStore []).readPath (dbPath nm nm.count) = some v := by
+    rw [readMem_toStore]; exact hread
+  have hbody : execAt p (execStmt p n) (sizeDef nm).body (m.toStore [])
+      = .ok (m.toStore [], .ret (some v)) := by
+    simp only [sizeDef, execAt, evalExpr, resolve_dbFld hr, readLoc, hr, bind,
+      Except.bind]
+  simpa [sizeDef] using
+    callFun_ret (p := p) (m := m) (fd := sizeDef nm) (args := []) hlook hn rfl hbody
+
+/-- **`InsertMaybe` on a row already in the index reports failure and does
+nothing.** `amc`'s guard, with the sentinel replaced by the stored flag.
+
+checked by: `lake build` -/
+theorem insert_noop
+    (hlook : lookupFun p nm.insert = .ok (insertDef nm elem key mask))
+    (hn : ∃ n, p.funs.length = n + 1)
+    (hread : readMem m (fldPath q nm.inhash) = some (.bool true)) :
+    callFun p m nm.insert [.ptr q] = .ok (m, some (.bool false)) := by
+  obtain ⟨n, hn⟩ := hn
+  have hloc : (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0),
+      (tmpP, Value.null)]).getLocal parRow = some (.ptr q) := rfl
+  have hr : (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0),
+      (tmpP, Value.null)]).readPath (fldPath q nm.inhash)
+      = some (.bool true) := by rw [readMem_toStore]; exact hread
+  have hbody : execAt p (execStmt p n) (insertDef nm elem key mask).body
+      (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0), (tmpP, Value.null)])
+      = .ok (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0),
+          (tmpP, Value.null)], .ret (some (.bool false))) := by
+    simp only [insertDef, Stmt.block, Stmt.when]
+    rw [execAt_seq', execAt_cond']
+    simp only [evalExpr, resolve_ptrFld hloc hr, readLoc, hr, bind, Except.bind,
+      evalUn, Bool.not_true]
+    rfl
+  simpa [insertDef] using
+    callFun_ret (p := p) (m := m) (fd := insertDef nm elem key mask)
+      (args := [Value.ptr q]) hlook hn rfl hbody
+
+/-- **`Remove` on a row not in the index does nothing.**
+
+checked by: `lake build` -/
+theorem remove_noop
+    (hlook : lookupFun p nm.remove = .ok (removeDef nm elem key mask cap))
+    (hn : ∃ n, p.funs.length = n + 1)
+    (hread : readMem m (fldPath q nm.inhash) = some (.bool false)) :
+    callFun p m nm.remove [.ptr q] = .ok (m, none) := by
+  obtain ⟨n, hn⟩ := hn
+  have hloc : (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0),
+      (tmpP, Value.null), (tmpPrev, Value.null),
+      (tmpI, .u32 0)]).getLocal parRow = some (.ptr q) := rfl
+  have hr : (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0),
+      (tmpP, Value.null), (tmpPrev, Value.null),
+      (tmpI, .u32 0)]).readPath (fldPath q nm.inhash)
+      = some (.bool false) := by rw [readMem_toStore]; exact hread
+  have hbody : execAt p (execStmt p n) (removeDef nm elem key mask cap).body
+      (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0), (tmpP, Value.null),
+        (tmpPrev, Value.null), (tmpI, .u32 0)])
+      = .ok (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0),
+          (tmpP, Value.null), (tmpPrev, Value.null), (tmpI, .u32 0)],
+        .normal) := by
+    simp only [removeDef, Stmt.when]
+    rw [execAt_cond']
+    simp only [evalExpr, resolve_ptrFld hloc hr, readLoc, hr, bind, Except.bind]
+    rfl
+  simpa [removeDef] using
+    callFun_normal (p := p) (m := m) (fd := removeDef nm elem key mask cap)
+      (args := [Value.ptr q]) hlook hn rfl hbody
+
+end Laws
+
+/-! ## Still owed: the index invariant
+
+`size_correct` and the two idempotence guards are proved. `Find`, and the
+linking half of `InsertMaybe` and `Remove`, are not — for the same reason the
+`Llist` template's linking laws are not, and it is the same missing piece.
+
+A hash index's shape is a property of `NB` **chains** in the heap:
+
+- each bucket's chain from `buckets[i]` along `next` is finite, acyclic and
+  `NULL`-terminated;
+- every row on bucket `i`'s chain has `key & MASK = i` — the clause that makes
+  looking in one bucket sufficient, and the one that would break under a
+  rehash;
+- `inhash` is `true` exactly on rows that are on some chain;
+- keys are distinct across all chains — which is what makes `Find`'s answer
+  unique and `InsertMaybe`'s refusal correct;
+- `n` is the total length.
+
+Every clause needs the same reachability predicate over the store that
+`Templates/Llist.lean` says it needs, which is why that one is worth building
+before either. `docs/PLAN.md` carries it.
+
+There is one obligation here that `Llist` did not have, and it is worth
+naming separately because it is the *no-trap* obligation for this template:
+`g_D.f_buckets[_b]` is in range because `_b = key & (NB-1)` and `NB` is a power
+of two. That is an algebraic fact about `UInt32.land`, not a consequence of any
+invariant, and it is the one place where the generator's power-of-two
+precondition is cashed. -/
+
+/-- **The subscript never traps.** `_b = key & (NB-1)` with `NB` a power of two
+is always a legal bucket index. Stated separately from the index invariant
+because it depends on nothing but the mask. -/
+def BucketInRange (nb : Nat) : Prop :=
+  ∀ k : UInt32, (k &&& UInt32.ofNat (nb - 1)).toNat < nb
+
+/-- **What `Find` should be proved to do**, once the index invariant exists. -/
+def FindCorrect (nm : Names) (elem key : Ident) (mask cap : Nat) : Prop :=
+  ∀ (p : Program) (m : Mem) (k : UInt32),
+    lookupFun p nm.find = .ok (findDef nm elem key mask cap) →
+    (∃ n, p.funs.length = n + 1) →
+    ∃ r, callFun p m nm.find [.u32 k] = .ok (m, some r)
+      ∧ (r = .null ∨ ∃ q, r = .ptr q ∧ readMem m (fldPath q key) = some (.u32 k))
+
+/-! ## Checked -/
+
+namespace Examples
+
+/-- A parent holding one hash index, and an element keyed by a `u32`. Eight
+buckets — a power of two, as the mask requires. -/
+def hashDb : Dmmeta.Db where
+  ctypes :=
+    [ { name   := "item_row"
+      , fields := [ { name := "id",  arg := "u32", reftype := .Pkey }
+                  , { name := "qty", arg := "u32", reftype := .Val } ] }
+    , { name   := "ItemDb"
+      , fields := [{ name := "ind_item", arg := "item_row", reftype := .Thash }] } ]
+  inlary := [{ ctype := "ItemDb", field := "ind_item", max := 8 }]
+  root   := some "ItemDb"
+
+end Examples
+
+namespace Checks
+
+/-- checked by: `lake build` -/
+example : Dmmeta.check Examples.hashDb = [] := rfl
+
+/-- The generated program satisfies every C-subset obligation — including the
+one the array table's scan also had to satisfy, that a subscript through a
+`u32` local is in range, and the new one that a called function's own frame is
+built correctly (`InsertMaybe` calls `Find`).
+
+checked by: `lake build` -/
+example : (genThash Examples.hashDb).map CSubset.Wf.check = some [] := rfl
+
+/-- The five operations, in `amc`'s naming.
+
+checked by: `lake build` -/
+example : (genThash Examples.hashDb).map (fun p => p.funs.map FunDef.name)
+    = some ["ItemDb_ind_item_Init", "ItemDb_ind_item_Find",
+            "ItemDb_ind_item_InsertMaybe", "ItemDb_ind_item_Remove",
+            "ItemDb_ind_item_N"] := rfl
+
+/-- The element carries the chain link and the flag; the parent carries the
+bucket array and the count.
+
+checked by: `lake build` -/
+example : (genThash Examples.hashDb).map
+    (fun p => p.structs.map (fun sd => (sd.name, sd.fields.map Prod.fst)))
+    = some [("item_row", ["id", "qty", "ind_item_next", "ind_item_inhash"]),
+            ("ItemDb", ["ind_item_buckets", "ind_item_n"])] := rfl
+
+/-- A bucket count that is not a power of two is refused, because the mask
+would not be the modulus.
+
+checked by: `lake build` -/
+example : (genThash { Examples.hashDb with
+    inlary := [{ ctype := "ItemDb", field := "ind_item", max := 6 }] }) = none :=
+  rfl
+
+/-- So is a key the mask cannot be applied to.
+
+checked by: `lake build` -/
+example : (genThash { Examples.hashDb with
+    ctypes :=
+      [ { name := "item_row"
+        , fields := [{ name := "id", arg := "u64", reftype := .Pkey }] }
+      , { name   := "ItemDb"
+        , fields := [{ name := "ind_item", arg := "item_row"
+                     , reftype := .Thash }] } ] }) = none := rfl
+
+end Checks
+
+end Thash
+end Templates

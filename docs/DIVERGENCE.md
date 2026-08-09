@@ -175,10 +175,10 @@ Stated plainly so the comparison is not read as parity.
 - **Storage providers**: `Lary` (390 uses), `Ptrary` (136), `Tary` (69),
   `Tpool` (40), `Lpool`, `Blkpool`, `Delptr`, `Malloc`, `Sbrk` — AMCC emits
   one, over `Inlary`.
-- **Access patterns**: `Thash`, `Bheap`, `Atree`, `Count`, and a cursor for
-  every one of them, plus seven of `Llist`'s eight flavours. AMCC emits
-  `Llist`'s `zdl` and nothing else — and for that one, the *linking* laws are
-  stated (`InsertLinks` / `RemoveUnlinks`) and not yet proved.
+- **Access patterns**: `Bheap`, `Atree`, `Count`, and a cursor for every access
+  pattern, plus seven of `Llist`'s eight flavours. AMCC emits `Llist`'s `zdl`
+  and a fixed-capacity `Thash` — and for both, the laws about *linking* are
+  stated and not yet proved.
 - **Cross-references** — the centre of the library. AMCC models them
   (`Amcc/Spec/Algebra.lean`) and emits none.
 - **The ssim layer** entirely: `acr`, query mode, `ssimfile` loading,
@@ -226,6 +226,41 @@ statement can be made about a bare member assignment, because there is no
 generated function to make it about.
 
 The cost is four function symbols per up-pointer where `amc` emits one.
+
+### 3.2 `Thash` has a fixed bucket array, a mask for a hash, and a bounded walk
+
+Three separate divergences, all in one template, and worth separating because
+only one of them is a design position.
+
+**Fixed capacity: no rehash, no growth.** `amc`'s `Thash` keeps its buckets in
+a `Tary` and grows them through `$name_Reserve`, rehashing every element.
+AMCC's bucket array is an inline array of a size the schema declares
+(`dmmeta.inlary`), so the load factor rises without bound and nothing is ever
+rehashed. This is §2.2's gap again — `Stmt.alloc`/`Stmt.free` and the allocator
+oracle are not written, so nothing generated can allocate — and it is
+**unfinished work, not a position we would defend**.
+
+**The hash is a mask.** The subset has no division and no shifts, so
+`key % nbuckets` is inexpressible. `key & (NB-1)` is, and it is the same
+function when `NB` is a power of two, which the generator therefore requires
+and refuses schemas without. Against `amc` this costs the freedom to pick any
+bucket count, and it costs whatever a real hash function would buy on
+adversarial keys — AMCC indexes the key directly, so keys that agree modulo
+`NB` all collide. That is a genuine weakness for a general-purpose index.
+
+**The chain walk is bounded.** There is no `while` and no `break` in the
+subset: the only loop is `forN` with a bound read once, before the first
+iteration. A hash chain has no static length, so `Find` and `Remove` run `CAP`
+iterations — the declared element capacity, an upper bound on any chain — with
+the body guarded so that it does nothing once the chain ends. Functionally that
+is `amc`'s walk; operationally it is O(CAP) where `amc` is O(chain). This one
+follows from Phase 0's decision that every loop must have a literal bound,
+which is what makes `execStmt` total, so it is the cost of the design rather
+than an oversight.
+
+What is proved about the template is the count and the two idempotence guards.
+`FindCorrect` and `BucketInRange` are stated and owed; see `Amcc.lean`'s "Still
+open".
 
 ### 3.1 The pretty-printer is unverified
 

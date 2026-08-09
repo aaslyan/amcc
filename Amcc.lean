@@ -22,6 +22,7 @@ import Amcc.Templates.Layout
 import Amcc.Templates.Pool
 import Amcc.Templates.Upptr
 import Amcc.Templates.Llist
+import Amcc.Templates.Thash
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Codegen.Print
 import Amcc.Codegen.PrintChecks
@@ -91,6 +92,10 @@ that should fail does not.)
 - `Templates.Pool`      — the **pool template** over the ctype model: a
                           free-list allocator (`Tpool`'s shape) emitted as C,
                           with `Init`/`Alloc`/`Free`/`N`
+- `Templates.Thash`     — the **hash index**: five functions over a
+                          fixed-capacity, power-of-two bucket array, with the
+                          count and both idempotence guards proved and
+                          `FindCorrect` / `BucketInRange` stated
 - `Templates.Llist`     — the **intrusive doubly-linked list** (`amc`'s `zdl`
                           flavour): nine functions, with the readers and both
                           idempotence guards proved and the linking laws
@@ -114,9 +119,12 @@ from `RepInv` where it arises, so `MilestoneTheorem` is proved without it. It
 remains owed as the general bridge a template that cannot argue locally would
 need.
 
-`Templates.Llist.InsertLinks` and `RemoveUnlinks` — the linking laws. They
-need a reachability predicate over the store that does not exist yet; see the
-"Still owed" section of `Templates/Llist.lean` for exactly what.
+`Templates.Llist.InsertLinks` / `RemoveUnlinks` and `Templates.Thash`'s
+`FindCorrect`. All three need the same missing piece — a reachability
+predicate over the store, because a chain's shape is a property of a graph in
+the heap rather than of a carrier list. `Templates.Thash.BucketInRange` is
+separate and smaller: it is the no-trap obligation for the bucket subscript,
+and depends on nothing but the mask.
 
 `Codegen.Print` is unverified — see `docs/DIVERGENCE.md` §3. A closed
 `MilestoneTheorem` certifies the generated **AST**; the C text is covered by

@@ -40,3 +40,10 @@ cc -std=c11 -Wall -Wextra -Werror -o "$tmp/llist" "$tmp/llist.c" scripts/llist_d
 "$tmp/llist" > "$tmp/llist_got.txt"
 diff scripts/llist_expected.txt "$tmp/llist_got.txt"
 echo "smoke: llist  OK — link, unlink and the idempotence guards behave as proved"
+
+# The hash index. Keys 1, 9 and 17 collide, so the chain cases are real.
+lake exe amcc thash > "$tmp/thash.c"
+cc -std=c11 -Wall -Wextra -Werror -o "$tmp/thash" "$tmp/thash.c" scripts/thash_driver.c
+"$tmp/thash" > "$tmp/thash_got.txt"
+diff scripts/thash_expected.txt "$tmp/thash_got.txt"
+echo "smoke: thash  OK — find, duplicate refusal and chain unlink behave as stated"

@@ -17,7 +17,7 @@ allocator layer), `docs/ALLOCATOR_REQUIREMENT.md` (the allocator contract),
 
 ## Status
 
-**Emitted C** — four templates, twenty functions.
+**Emitted C** — five templates, twenty-five functions.
 
 | Template | Functions |
 |---|---|
@@ -25,8 +25,9 @@ allocator layer), `docs/ALLOCATOR_REQUIREMENT.md` (the allocator contract),
 | Pool (`Templates/Pool`) | `D_f_Init`, `D_f_Alloc`, `D_f_Free`, `D_f_N` |
 | Up-pointer (`Templates/Upptr`) | `C_f_Init`, `C_f_Get`, `C_f_Set`, `C_f_Q` |
 | Intrusive list (`Templates/Llist`) | `D_f_Init`, `_Insert`, `_Remove`, `_First`, `_Next`, `_Prev`, `_InLlistQ`, `_EmptyQ`, `_N` |
+| Hash index (`Templates/Thash`) | `D_f_Init`, `_Find`, `_InsertMaybe`, `_Remove`, `_N` |
 
-All four compile under `cc -Wall -Wextra -Werror` and are differentially
+All five compile under `cc -Wall -Wextra -Werror` and are differentially
 tested against a real compiler by `scripts/smoke.sh`.
 
 **Proved for every accepted schema**
@@ -53,6 +54,8 @@ tested against a real compiler by `scripts/smoke.sh`.
 - `Llist.init_correct`, the five readers, and both idempotence guards
   (`insert_noop`, `remove_noop`). The linking laws are **stated and not
   proved** — `InsertLinks` / `RemoveUnlinks`; see below.
+- `Thash.size_correct` and both idempotence guards. `FindCorrect` and
+  `BucketInRange` are **stated and not proved**.
 - `Store.readPath_writePath_disjoint` — the frame law the above rests on, and
   the first thing that makes `Path.overlaps` mean something: a prefix test on
   access paths *is* a sufficient aliasing analysis, because a path names an
@@ -96,7 +99,12 @@ Two gaps remain against the full measure, both recorded in
 
 ## Next, in order
 
-1. **The list invariant, and with it `Llist.InsertLinks` / `RemoveUnlinks`.**
+0. **`Thash.BucketInRange`** — `key & (NB-1)` is a legal index into an
+   `NB`-bucket array when `NB` is a power of two. Small, self-contained, and
+   the no-trap obligation for the only new partial operation this round
+   introduced.
+1. **The chain invariant, and with it `Llist.InsertLinks` / `RemoveUnlinks`
+   and `Thash.FindCorrect`.**
    A linked list's shape is a property of a graph in the heap, not of a
    carrier list, so the invariant needs a *reachability* predicate over the
    store — the chain from `head` along `next` is finite, acyclic and
@@ -109,7 +117,7 @@ Two gaps remain against the full measure, both recorded in
    claim does. No subset extension needed.
 3. **Xref maintenance** tying them together, using the prepare/commit design
    from `Spec/Algebra.lean`.
-4. **Proofs for the above**, drawing on the machinery `ArrayTableFind.lean`
+3. **Proofs for the above**, drawing on the machinery `ArrayTableFind.lean`
    already banked: slot resolution, the pointer-deref path with `nullDeref` and
    `useAfterFree` discharged, field writes with their frame property, and the
    call path with frame save/restore.

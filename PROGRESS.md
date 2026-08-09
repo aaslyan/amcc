@@ -2,9 +2,19 @@
 
 ## Now
 
-**D — `Thash`.**
+**`Thash.BucketInRange`**, then the chain invariant.
 
 ## Done
+
+- **D — `Thash`.** `Templates/Thash.lean` emits five functions over a
+  fixed-capacity, power-of-two bucket array and passes `Wf.check`. Proved:
+  `size_correct` and both idempotence guards. **Not proved**: `FindCorrect`
+  (needs the same chain invariant `Llist` needs) and `BucketInRange` (the
+  no-trap obligation for the bucket subscript — small and self-contained).
+  Three divergences recorded in `docs/DIVERGENCE.md` §3.2: fixed buckets with
+  no rehash, a mask where `amc` has a hash, and a `CAP`-bounded chain walk
+  because the subset has no `while` and no `break`. Differentially tested by
+  `scripts/smoke.sh` on keys that collide.
 
 - **C — `Llist` link/unlink.** `Templates/Llist.lean` emits `amc`'s `zdl`
   flavour — nine functions — and passes `Wf.check`. Proved: `init_correct`,
@@ -27,7 +37,9 @@
 
 ## Next
 
-- The list invariant, and with it the two linking laws
+- `BucketInRange` — `key & (NB-1) < NB` for `NB` a power of two
+- The chain invariant, and with it `Llist.InsertLinks` / `RemoveUnlinks` and
+  `Thash.FindCorrect`
 
 ## Decisions
 
@@ -76,6 +88,12 @@
   arises. Recorded in `Amcc.lean` and `docs/PLAN.md`.
 
 ## Findings
+
+- **`Thash` reuses the chain problem, it does not add a new one.** A bucket is
+  a chain, so the same reachability predicate serves both templates. The one
+  genuinely new obligation is the bucket subscript's bound, which is algebra
+  about `UInt32.land` and depends on no invariant at all — which is why it is
+  stated separately as `BucketInRange` and is the next thing to prove.
 
 - **A linked list has no carrier.** `RepInv` for the array table quantifies
   over indices of a `List Value`. A list's shape is a property of a graph in
