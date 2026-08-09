@@ -373,13 +373,29 @@ subset's single partial operation — nor anything else.
 Stated as "returns `.ok`" rather than "≠ `.error .oob`" because that is
 stronger and just as easy to use: it also rules out the structural errors,
 which for generated code should be unreachable by construction. -/
+def NoTrapFind (s : Schema) : Prop :=
+  ∀ (m : Mem) (pk : Schema.Field) (k : Interface.Key),
+    Schema.wf s = true → Schema.pkey? s = some pk → k.ty = pk.ty →
+    RepInv s m.glb →
+    ∃ r, call s m (Schema.names s).find [k.toValue] = .ok r
+
+def NoTrapInsert (s : Schema) : Prop :=
+  ∀ (m : Mem) (pk : Schema.Field) (k : Interface.Key) (vs : List Value),
+    Schema.wf s = true → Schema.pkey? s = some pk → k.ty = pk.ty →
+    RepInv s m.glb → vs.length = (Schema.valFields s).length →
+    ∃ r, call s m (Schema.names s).insert (k.toValue :: vs) = .ok r
+
+def NoTrapErase (s : Schema) : Prop :=
+  ∀ (m : Mem) (pk : Schema.Field) (k : Interface.Key),
+    Schema.wf s = true → Schema.pkey? s = some pk → k.ty = pk.ty →
+    RepInv s m.glb →
+    ∃ r, call s m (Schema.names s).erase [k.toValue] = .ok r
+
+/-- Split into one clause per operation so that they can be discharged
+independently — `find` is provable now, the writers need more. Each carries
+the key-type precondition for the same reason `FindCorrect` does. -/
 def NoTrap (s : Schema) : Prop :=
-  ∀ (m : Mem) (k : Interface.Key) (vs : List Value),
-    Schema.wf s = true → RepInv s m.glb →
-    vs.length = (Schema.valFields s).length →
-    (∃ r, call s m (Schema.names s).find [k.toValue] = .ok r)
-    ∧ (∃ r, call s m (Schema.names s).insert (k.toValue :: vs) = .ok r)
-    ∧ (∃ r, call s m (Schema.names s).erase [k.toValue] = .ok r)
+  NoTrapFind s ∧ NoTrapInsert s ∧ NoTrapErase s
 
 /-- **`find` agrees with the abstraction.** It returns a pointer to a slot, or
 `NULL`, and it is a pointer exactly when the key is present.

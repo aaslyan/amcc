@@ -652,21 +652,87 @@ theorem findCorrect : FindCorrect s := by
   simp only [hmem, Mem.toStore_toMem, Mem.toStore_glb]
   rfl
 
+/-- **`find` never traps** — an immediate corollary, since `findCorrect`
+concludes `.ok`, which is exactly what `NoTrapFind` asks.
+
+checked by: `lake build` -/
+theorem noTrapFind : NoTrapFind s := by
+  intro m pk k hwf hpk hkty R
+  obtain ⟨r, hcall, _⟩ := findCorrect m pk k hwf hpk hkty R
+  exact ⟨_, hcall⟩
+
+/-! ## Writing through the returned pointer
+
+`insert` and `erase` both do their work through the pointer `find` handed
+back: `_at->f = v`. Resolving that is the write-side counterpart of
+`resolve_field`, and the interesting difference is which errors have to be
+discharged — a `deref` can fail with `nullDeref` or `useAfterFree`, neither of
+which arises for the index-rooted `g[_i].f` form. Both are ruled out here by
+the pointer coming from `find`: it points at a live slot of the storage
+array. -/
+
+/-- **`p->f` resolves** when `p` holds a pointer to a slot of the storage
+array. -/
+theorem resolve_ptrField {i : Nat} {row : Value} {f : Ident} {v : Value}
+    {ptr : Ident} (R : RepInv s σ.glb)
+    (hptr : σ.getLocal ptr
+      = some (.ptr ⟨.glob (Schema.names s).storage, [.idx i]⟩))
+    (hrow : (rowsOf s σ.glb)[i]? = some row)
+    (hfld : row.getStep (.fld f) = some v) :
+    resolve σ (ptrField ptr f)
+      = .ok (.glb ⟨.glob (Schema.names s).storage, [.idx i, .fld f]⟩) := by
+  have hglb : σ.glb.get? (Schema.names s).storage
+      = some (.arr (rowsOf s σ.glb)) := R.storage
+  have hstep : (Value.arr (rowsOf s σ.glb)).getStep (.idx i) = some row := by
+    simp only [Value.getStep, hrow]
+  have hpath : (Value.arr (rowsOf s σ.glb)).getPath [.idx i, .fld f] = some v := by
+    show (match (Value.arr (rowsOf s σ.glb)).getStep (.idx i) with
+          | some v' => Value.getPath v' [.fld f]
+          | none => none) = some v
+    rw [hstep]
+    show (match row.getStep (.fld f) with
+          | some v' => Value.getPath v' []
+          | none => none) = some v
+    rw [hfld]
+    rfl
+  simp only [ptrField, resolve, hptr, Store.readPath, Store.rootVal, hglb,
+    bind, Except.bind, List.cons_append, List.nil_append]
+  rw [hpath]
+
+/-- **And reading through it gives the field.**
+
+checked by: `lake build` -/
+theorem read_ptrField {i : Nat} {row : Value} {f : Ident} {v : Value}
+    {ptr : Ident} (R : RepInv s σ.glb)
+    (hptr : σ.getLocal ptr
+      = some (.ptr ⟨.glob (Schema.names s).storage, [.idx i]⟩))
+    (hrow : (rowsOf s σ.glb)[i]? = some row)
+    (hfld : row.getStep (.fld f) = some v) :
+    evalExpr σ (.rd (ptrField ptr f)) = .ok v := by
+  simp only [evalExpr, resolve_ptrField R hptr hrow hfld, bind, Except.bind]
+  exact readLoc_field R hrow hfld
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
 for progress:
 
-- The other four clauses of `Simulates`: `NoTrap`, `InsertRefines`,
-  `EraseRefines`, `RepInvPreserved`. `find` was the prerequisite — the other
-  three operations all call it — so they are now reachable, but they are not
-  done.
+- `NoTrapInsert` and `NoTrapErase`, and with them `InsertRefines`,
+  `EraseRefines` and `RepInvPreserved`.
 
-`NoTrap` should now be close to free for `find`: `findCorrect` returns `.ok`,
-which is exactly what `NoTrap` asks. `insert` and `erase` additionally write
-through the returned pointer, so they need a write-side counterpart of
-`read_field` and the fact that `RepInv` survives a field update — neither of
-which is new technique.
+The reading half of the writers is done: `resolve_ptrField` and
+`read_ptrField` handle `_at->f` for a pointer that came from `find`, which is
+what rules out `nullDeref` and `useAfterFree` — neither of which could arise
+for the index-rooted `g[_i].f` form, so they are genuinely new obligations.
+
+What is left is the **write** half: that a field update produces a store still
+satisfying `RepInv`, and that `absOf` moves the way `Abs.insert` and
+`Abs.erase` say. `RepInv` has four clauses and a field write has to preserve
+all of them — `storage` and `length` are immediate (a write does not change
+the array's shape), `rows` needs the written value to keep the row well
+formed, and `distinct` is the one with content: writing a key can only be
+allowed to preserve key-uniqueness, which is exactly what `insert`'s
+find-first-then-claim structure is for.
 
 ## Two findings about `FindCorrect` as currently stated
 
