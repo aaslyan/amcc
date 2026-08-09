@@ -177,10 +177,26 @@ structure Ctype where
   fields : List Field := []
   deriving DecidableEq, Repr, Inhabited
 
+/-- `dmmeta.inlary` — the bound on an `Inlary` field's inline array.
+
+A separate record keyed by field, as in `dmmeta`, rather than an extra column
+on `Field`: attributes that apply to one reftype live in their own table, which
+is what lets the vocabulary grow without disturbing every field. -/
+structure Inlary where
+  ctype : Ident
+  field : Ident
+  max   : Nat
+  deriving DecidableEq, Repr, Inhabited
+
 /-- The ctypes of one schema, **in declaration order**. Order is meaningful:
 a layout-carrying field may only name a ctype declared earlier. -/
 structure Db where
   ctypes : List Ctype
+  /-- Sizes for the `Inlary` fields. -/
+  inlary : List Inlary := []
+  /-- The database ctype, if there is one: `amc`'s `FDb`, the single global
+  whose fields are the pools and the indexes. -/
+  root   : Option Ident := none
   deriving DecidableEq, Repr, Inhabited
 
 namespace Db
@@ -189,6 +205,10 @@ def find? (d : Db) (n : Ident) : Option Ctype :=
   d.ctypes.find? (fun c => c.name == n)
 
 def names (d : Db) : List Ident := d.ctypes.map Ctype.name
+
+/-- The declared bound on one `Inlary` field. -/
+def inlaryMax? (d : Db) (owner f : Ident) : Option Nat :=
+  (d.inlary.find? (fun i => i.ctype == owner && i.field == f)).map Inlary.max
 
 end Db
 
@@ -204,7 +224,8 @@ def builtins : List Ctype :=
 
 /-- A `Db` with the builtins prepended, which is what the checker and the
 lowering both work against. -/
-def Db.withBuiltins (d : Db) : Db := ⟨builtins ++ d.ctypes⟩
+def Db.withBuiltins (d : Db) : Db :=
+  { d with ctypes := builtins ++ d.ctypes }
 
 /-! ## Lowering to the C subset
 
@@ -212,23 +233,56 @@ What a field becomes in the generated struct. `none` where the reftype has no
 inline representation of its own — an xref lives in the *database* ctype, not
 in the row. -/
 
-/-- The storage type of a field, resolved against the db. -/
-def fieldTy (d : Db) (f : Field) : Option CSubset.Ty := do
+/-- The storage type of a field, resolved against the db. `owner` is the ctype
+the field belongs to, needed because an `Inlary`'s bound is keyed by both. -/
+def fieldTy (d : Db) (owner : Ident) (f : Field) : Option CSubset.Ty := do
   let c ← d.find? f.arg
   let base : CSubset.Ty :=
     match c.scalar with
     | some t => .scalar t
     | none   => .strct c.name
   match f.reftype with
-  | .Val | .Base => some base
-  | .Pkey        => if c.scalar.isSome then some base else some (.ptr base)
+  | .Val | .Base  => some base
+  -- A key at scalar argument is the key itself; at record argument it is a
+  -- reference to that record.
+  | .Pkey         => if c.scalar.isSome then some base else some (.ptr base)
   | .Upptr | .Ptr => some (.ptr base)
-  | _            => none
+  -- The bounded inline array: `<arg> f[max];` inside the owning struct. This
+  -- is the fixed-capacity case, now one storage choice among many rather than
+  -- the shape of the whole model.
+  | .Inlary       => (d.inlaryMax? owner f.name).map (fun n => .arr base n)
+  | _             => none
 
 /-- The struct a record ctype lowers to: its inline fields, in order. -/
 def structOf (d : Db) (c : Ctype) : CSubset.StructDef where
   name   := c.name
-  fields := c.fields.filterMap (fun f => (fieldTy d f).map (fun t => (f.name, t)))
+  fields := c.fields.filterMap (fun f => (fieldTy d c.name f).map (fun t => (f.name, t)))
+
+/-! ## Lowering a whole `Db`
+
+The layout half of code generation: every record ctype becomes a struct, and
+the database ctype — if there is one — becomes the single global that holds
+the pools, exactly as `amc` emits one `_db`. -/
+
+/-- Every record ctype, as a struct, in declaration order. Builtins drop out
+because they are scalars. -/
+def genStructs (d : Db) : List CSubset.StructDef :=
+  let full := d.withBuiltins
+  full.ctypes.filterMap
+    (fun c => if c.scalar.isSome then none else some (structOf full c))
+
+/-- The single database instance, if a root ctype is declared. -/
+def genGlobals (d : Db) : List CSubset.GlobalDef :=
+  match d.root with
+  | none   => []
+  | some r => [{ name := "g_" ++ r, ty := .strct r }]
+
+/-- The generated translation unit's **layout**: structs and storage, no
+functions yet. -/
+def genLayout (d : Db) : CSubset.Program where
+  structs := genStructs d
+  globals := genGlobals d
+  funs    := []
 
 /-! ## The checker
 
@@ -274,6 +328,9 @@ def checkField (d : Db) (earlier : List Ident) (owner : Ident) (f : Field) :
          else [])
         ++ (if f.reftype == .Val && c.scalar.isNone && c.fields.isEmpty then
               [s!"{owner}.{f.name}: {f.arg} has no fields"]
+            else [])
+        ++ (if f.reftype == .Inlary && (d.inlaryMax? owner f.name).isNone then
+              [s!"{owner}.{f.name}: Inlary needs a declared bound"]
             else []))
 
 def checkCtype (d : Db) (earlier : List Ident) (c : Ctype) : List String :=
@@ -297,6 +354,12 @@ def checkCtype (d : Db) (earlier : List Ident) (c : Ctype) : List String :=
 def check (d : Db) : List String :=
   let full := d.withBuiltins
   (dups full.names).map (fun n => s!"duplicate ctype: {n}")
+    ++ (match d.root with
+        | none   => []
+        | some r =>
+          match full.find? r with
+          | none   => [s!"root ctype {r} is not declared"]
+          | some c => if c.scalar.isSome then [s!"root ctype {r} is a scalar"] else [])
     ++ full.ctypes.zipIdx.flatMap (fun ci =>
         checkCtype full ((full.ctypes.take ci.2).map Ctype.name) ci.1)
 
@@ -341,10 +404,10 @@ def db : Ctype where
     , { name := "child",     arg := "child_row", reftype := .Lary }
     , { name := "ind_child", arg := "child_row", reftype := .Thash } ]
 
-def relational : Db := ⟨[levelRow, childRow, db]⟩
+def relational : Db := { ctypes := [levelRow, childRow, db], root := some "Db" }
 
 /-- checked by: `lake build` -/
-example : check ⟨[orderRow]⟩ = [] := rfl
+example : check { ctypes := [orderRow] } = [] := rfl
 
 /-- A ctype referring to other ctypes, one of them itself, is accepted.
 
@@ -361,31 +424,61 @@ example : structOf relational.withBuiltins Examples.childRow =
     , fields := [("id", .scalar .u64), ("p_level", .ptr (.strct "level_row"))] } := rfl
 
 /-- An unknown `arg` is caught. -/
-example : check ⟨[{ name := "a", fields := [{ name := "f", arg := "nope", reftype := .Val }] }]⟩
+example : check { ctypes := [{ name := "a", fields := [{ name := "f", arg := "nope", reftype := .Val }] }] }
     = ["a.f: unknown ctype nope"] := rfl
 
 /-- A `Val` field embeds its argument, so a forward reference is rejected —
 this is what keeps struct nesting acyclic. -/
-example : check ⟨[ { name := "a", fields := [{ name := "b", arg := "b", reftype := .Val }] }
-                 , { name := "b", fields := [{ name := "x", arg := "u32", reftype := .Val }] } ]⟩
+example : check { ctypes :=
+    [ { name := "a", fields := [{ name := "b", arg := "b", reftype := .Val }] }
+    , { name := "b", fields := [{ name := "x", arg := "u32", reftype := .Val }] } ] }
     = ["a.b: b is not declared earlier, and Val needs its layout"] := rfl
 
 /-- The *same* forward reference through an up-pointer is fine: a pointer
 needs the name, not the layout. -/
-example : check ⟨[ { name := "a", fields := [{ name := "p_b", arg := "b", reftype := .Upptr }] }
-                 , { name := "b", fields := [{ name := "x", arg := "u32", reftype := .Val }] } ]⟩
+example : check { ctypes :=
+    [ { name := "a", fields := [{ name := "p_b", arg := "b", reftype := .Upptr }] }
+    , { name := "b", fields := [{ name := "x", arg := "u32", reftype := .Val }] } ] }
     = [] := rfl
 
 /-- A field may not shadow the generated-local namespace. -/
-example : check ⟨[{ name := "a", fields := [{ name := "_i", arg := "u32", reftype := .Val }] }]⟩
+example : check { ctypes := [{ name := "a", fields := [{ name := "_i", arg := "u32", reftype := .Val }] }] }
     = ["a._i: leading underscore is reserved for generated locals"] := rfl
 
 /-- Two `Base` fields is not single inheritance. -/
-example : check ⟨[ { name := "b", fields := [{ name := "x", arg := "u32", reftype := .Val }] }
-                 , { name := "c", fields := [{ name := "y", arg := "u32", reftype := .Val }] }
-                 , { name := "a", fields := [{ name := "b", arg := "b", reftype := .Base },
-                                             { name := "c", arg := "c", reftype := .Base }] } ]⟩
+example : check { ctypes :=
+    [ { name := "b", fields := [{ name := "x", arg := "u32", reftype := .Val }] }
+    , { name := "c", fields := [{ name := "y", arg := "u32", reftype := .Val }] }
+    , { name := "a", fields := [{ name := "b", arg := "b", reftype := .Base },
+                                { name := "c", arg := "c", reftype := .Base }] } ] }
     = ["a: more than one Base field"] := rfl
+
+/-- The fixed-capacity table, expressed in this model: a database ctype whose
+`row` field is an `Inlary` bounded at 4.
+
+Note where the capacity is. It belongs to the **storage field**, not to
+`order_row` — the row type says nothing about how many of them exist, which is
+what lets the same ctype be held in a bounded array here and in a growable
+pool elsewhere. -/
+def boundedDb : Db where
+  ctypes :=
+    [ orderRow
+    , { name   := "OrderDb"
+      , fields := [{ name := "row", arg := "order_row", reftype := .Inlary }] } ]
+  inlary := [{ ctype := "OrderDb", field := "row", max := 4 }]
+  root   := some "OrderDb"
+
+/-- checked by: `lake build` -/
+example : check boundedDb = [] := rfl
+
+/-- An `Inlary` without a declared bound is rejected: there is no capacity to
+emit. -/
+example : check { boundedDb with inlary := [] }
+    = ["OrderDb.row: Inlary needs a declared bound"] := rfl
+
+/-- A root that names nothing is rejected. -/
+example : check { boundedDb with root := some "Nope" }
+    = ["root ctype Nope is not declared"] := rfl
 
 /-! ### The reftype table, spot-checked against `dmmeta/reftype.ssim` -/
 
