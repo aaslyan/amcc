@@ -74,6 +74,28 @@ No arithmetic, no aliasing analysis — a prefix test. -/
 def Path.overlaps (p q : Path) : Bool :=
   p.root == q.root && (p.steps.isPrefixOf q.steps || q.steps.isPrefixOf p.steps)
 
+/-- `Path.overlaps` compares with `==`, and `List.isPrefixOf` does too, so the
+frame theorem below needs the derived `BEq`s to agree with equality. The
+`deriving` handler does not register that, and `simp` cannot see through the
+generated matcher without it. -/
+instance : LawfulBEq PathStep where
+  eq_of_beq := by
+    intro a b h
+    cases a <;> cases b <;> simp only [BEq.beq, instBEqPathStep.beq] at h <;>
+      first
+        | exact Bool.noConfusion h
+        | exact congrArg _ (eq_of_beq h)
+  rfl := by intro a; cases a <;> simp [BEq.beq, instBEqPathStep.beq]
+
+instance : LawfulBEq Root where
+  eq_of_beq := by
+    intro a b h
+    cases a <;> cases b <;> simp only [BEq.beq, instBEqRoot.beq] at h <;>
+      first
+        | exact Bool.noConfusion h
+        | exact congrArg _ (eq_of_beq h)
+  rfl := by intro a; cases a <;> simp [BEq.beq, instBEqRoot.beq]
+
 /-! ## Values -/
 
 /-- Runtime values.
@@ -215,6 +237,65 @@ theorem Value.getStep_setStep {v v' u : Value} {s : PathStep}
     · rw [if_neg hi] at h
       exact Option.noConfusion h
 
+private theorem getElem?_set_ne' {α : Type _} :
+    ∀ (l : List α) (i j : Nat) (a : α), i ≠ j → (l.set i a)[j]? = l[j]?
+  | [], _, _, _, _ => by simp
+  | _ :: _, 0, 0, _, h => absurd rfl h
+  | _ :: _, 0, _ + 1, _, _ => rfl
+  | _ :: _, _ + 1, 0, _, _ => rfl
+  | x :: xs, i + 1, j + 1, a, h => by
+    simp only [List.set]
+    simpa using getElem?_set_ne' xs i j a (fun e => h (by omega))
+
+/-- A step that can be read can be written. The two are defined by the same
+case split, which is the point: the subset has no write that could fail where
+the corresponding read succeeds.
+
+checked by: `lake build` -/
+theorem Value.setStep_isSome {v u w : Value} {s : PathStep}
+    (h : v.getStep s = some u) : ∃ v', v.setStep s w = some v' := by
+  cases v <;> cases s <;> simp only [Value.getStep] at h <;>
+    try exact Option.noConfusion h
+  case strct.fld fs f =>
+    exact ⟨.strct (Env.set fs f w), by
+      simp only [Value.setStep, if_pos (show (Env.get? fs f).isSome = true by
+        rw [h]; rfl)]⟩
+  case arr.idx vs i =>
+    exact ⟨.arr (vs.set i w), by
+      simp only [Value.setStep, if_pos (List.getElem?_eq_some_iff.mp h).1]⟩
+
+/-- **One step of frame.** Writing one step leaves every *other* step of the
+same value alone — including a step of the wrong shape, which reads `none`
+before and after.
+
+checked by: `lake build` -/
+theorem Value.getStep_setStep_ne {v v' u : Value} {s t : PathStep} (hne : s ≠ t)
+    (h : v.setStep s u = some v') : v'.getStep t = v.getStep t := by
+  cases v <;> cases s <;> simp only [Value.setStep] at h <;>
+    try exact Option.noConfusion h
+  case strct.fld fs f =>
+    by_cases hf : (Env.get? fs f).isSome = true
+    · rw [if_pos hf] at h
+      cases h
+      cases t with
+      | fld g =>
+        have hgf : g ≠ f := fun e => hne (by rw [e])
+        simp only [Value.getStep, Env.get?_set_ne _ hgf]
+      | idx _ => rfl
+    · rw [if_neg hf] at h
+      exact Option.noConfusion h
+  case arr.idx vs i =>
+    by_cases hi : i < vs.length
+    · rw [if_pos hi] at h
+      cases h
+      cases t with
+      | fld _ => rfl
+      | idx j =>
+        have hij : i ≠ j := fun e => hne (by rw [e])
+        simp only [Value.getStep, getElem?_set_ne' vs i j u hij]
+    · rw [if_neg hi] at h
+      exact Option.noConfusion h
+
 def Value.getPath : Value → List PathStep → Option Value
   | v, []      => some v
   | v, s :: ss => match v.getStep s with
@@ -255,6 +336,63 @@ theorem Value.getPath_setPath {w : Value} :
         have hstep : v'.getStep s = some v2 := Value.getStep_setStep h
         simp only [Value.getPath, hstep]
         exact ih hr
+
+/-- A path that can be read can be written, by induction on `setStep_isSome`.
+
+checked by: `lake build` -/
+theorem Value.setPath_isSome {w : Value} :
+    ∀ {ss : List PathStep} {v u : Value}, v.getPath ss = some u →
+      ∃ v', v.setPath ss w = some v' := by
+  intro ss
+  induction ss with
+  | nil => intro v u _; exact ⟨w, rfl⟩
+  | cons s ss ih =>
+    intro v u h
+    simp only [Value.getPath] at h
+    cases hs : v.getStep s with
+    | none => rw [hs] at h; exact Option.noConfusion h
+    | some v1 =>
+      rw [hs] at h
+      obtain ⟨v2, hv2⟩ := ih h
+      obtain ⟨v3, hv3⟩ := Value.setStep_isSome (w := v2) hs
+      exact ⟨v3, by simp only [Value.setPath, hs, hv2, hv3]⟩
+
+/-- **Frame along a path.** A write at `ss` is invisible at any `ts` that
+neither refines nor is refined by it.
+
+The induction is the whole content of the claim that a *prefix test* is a
+sufficient aliasing analysis: the two paths agree until they diverge, and at
+the step where they diverge `getStep_setStep_ne` applies.
+
+checked by: `lake build` -/
+theorem Value.getPath_setPath_ne {w : Value} :
+    ∀ {ss ts : List PathStep} {v v' : Value}, v.setPath ss w = some v' →
+      ss.isPrefixOf ts = false → ts.isPrefixOf ss = false →
+      v'.getPath ts = v.getPath ts := by
+  intro ss
+  induction ss with
+  | nil => intro ts v v' _ h1 _; simp [List.isPrefixOf] at h1
+  | cons s ss ih =>
+    intro ts v v' h h1 h2
+    cases ts with
+    | nil => simp [List.isPrefixOf] at h2
+    | cons t ts =>
+      simp only [Value.setPath] at h
+      cases hs : v.getStep s with
+      | none => rw [hs] at h; exact Option.noConfusion h
+      | some v1 =>
+        rw [hs] at h
+        simp only at h
+        cases hr : v1.setPath ss w with
+        | none => rw [hr] at h; exact Option.noConfusion h
+        | some v2 =>
+          rw [hr] at h
+          by_cases hst : s = t
+          · subst hst
+            simp only [Value.getPath, Value.getStep_setStep h, hs]
+            exact ih hr (by simpa [List.isPrefixOf] using h1)
+              (by simpa [List.isPrefixOf] using h2)
+          · simp only [Value.getPath, Value.getStep_setStep_ne hst h]
 
 /-! ## Stores -/
 
@@ -362,6 +500,66 @@ def Store.writePath (σ : Store) (p : Path) (w : Value) : Option Store :=
     match v.setPath p.steps w with
     | none    => none
     | some v' => some (σ.setRoot p.root v')
+
+/-! ### Read-after-write, and frame
+
+The three facts every generated write is justified by. `readPath_writePath_ne`
+is the one that earns `Path.overlaps` its place: it says the prefix test really
+is a sufficient aliasing analysis, which holds because a path names an *object*
+rather than an address. -/
+
+theorem Store.writePath_isSome {σ : Store} {p : Path} {v w : Value}
+    (h : σ.readPath p = some v) : ∃ σ', σ.writePath p w = some σ' := by
+  simp only [Store.readPath] at h
+  cases hr : σ.rootVal p.root with
+  | none => rw [hr] at h; exact Option.noConfusion h
+  | some rv =>
+    rw [hr] at h
+    obtain ⟨v', hv'⟩ := Value.setPath_isSome (w := w) h
+    exact ⟨σ.setRoot p.root v', by simp only [Store.writePath, hr, hv']⟩
+
+theorem Store.writePath_next {σ σ' : Store} {p : Path} {w : Value}
+    (h : σ.writePath p w = some σ') : σ'.next = σ.next := by
+  simp only [Store.writePath] at h
+  cases hr : σ.rootVal p.root with
+  | none => rw [hr] at h; exact Option.noConfusion h
+  | some rv =>
+    rw [hr] at h
+    simp only at h
+    cases hs : rv.setPath p.steps w with
+    | none => rw [hs] at h; exact Option.noConfusion h
+    | some rv' => rw [hs] at h; cases h; cases p.root <;> rfl
+
+/-- **Frame, at path granularity.** A write at `p` is invisible at every path
+that does not overlap it — where "overlap" is the prefix test and nothing more.
+
+`readPath_writePath_ne` below is the special case where the two paths have
+different *roots*; this is the one that also covers two fields of the same
+struct, or two slots of the same array, which is what a template writing one
+row of a pool needs.
+
+checked by: `lake build` -/
+theorem Store.readPath_writePath_disjoint {σ σ' : Store} {p q : Path} {w : Value}
+    (h : σ.writePath p w = some σ') (hne : p.overlaps q = false) :
+    σ'.readPath q = σ.readPath q := by
+  simp only [Store.writePath] at h
+  cases hr : σ.rootVal p.root with
+  | none => rw [hr] at h; exact Option.noConfusion h
+  | some rv =>
+    rw [hr] at h
+    simp only at h
+    cases hs : rv.setPath p.steps w with
+    | none => rw [hs] at h; exact Option.noConfusion h
+    | some rv' =>
+      rw [hs] at h
+      cases h
+      by_cases hrt : q.root = p.root
+      · simp only [Path.overlaps, hrt, beq_self_eq_true, Bool.true_and,
+          Bool.or_eq_false_iff] at hne
+        simp only [Store.readPath, hrt, Store.rootVal_setRoot_self, hr,
+          Option.map_some]
+        exact Value.getPath_setPath_ne hs hne.1 hne.2
+      · simp only [Store.readPath, Store.rootVal_setRoot_ne _ hrt]
 
 /-! ### Allocation
 

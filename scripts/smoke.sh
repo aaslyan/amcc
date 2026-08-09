@@ -26,3 +26,10 @@ cc -std=c11 -Wall -Wextra -Werror -o "$tmp/pool" "$tmp/pool.c" scripts/pool_driv
 "$tmp/pool" > "$tmp/pool_got.txt"
 diff scripts/pool_expected.txt "$tmp/pool_got.txt"
 echo "smoke: pool   OK — allocation, reuse and exhaustion behave as proved"
+
+# The Upptr accessors, against the laws Templates/Upptr.lean proves.
+lake exe amcc upptr > "$tmp/upptr.c"
+cc -std=c11 -Wall -Wextra -Werror -o "$tmp/upptr" "$tmp/upptr.c" scripts/upptr_driver.c
+"$tmp/upptr" > "$tmp/upptr_got.txt"
+diff scripts/upptr_expected.txt "$tmp/upptr_got.txt"
+echo "smoke: upptr  OK — read-back and frame hold in the compiled C"

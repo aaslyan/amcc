@@ -2,9 +2,14 @@
 
 ## Now
 
-**B — `Upptr` accessors.**
+**C — `Llist` link/unlink over the pool.**
 
 ## Done
+
+- **B — `Upptr` accessors.** `Templates/Upptr.lean`: `Init`/`Get`/`Set`/`Q`
+  emitted per `dmmeta.reftype Upptr` field, with `get_set` (read-back),
+  `init_correct`, `test_null`/`test_ptr`, and a frame law. Differentially
+  tested by `scripts/smoke.sh` (`lake exe amcc upptr`).
 
 - **A — `MilestoneTheorem` closed for the array table.** `InsertRefines`,
   `EraseRefines`, `RepInvPreserved` and all three `NoTrap` clauses are proved,
@@ -14,10 +19,24 @@
 
 ## Next
 
-- C — `Llist` link/unlink over the pool
 - D — `Thash`; record fixed-capacity buckets as a divergence
 
 ## Decisions
+
+- **`Path.overlaps` now means something.** It was defined in `Value.lean` with
+  a docstring promising "no aliasing analysis — a prefix test" and *never
+  used*. `Store.readPath_writePath_disjoint` proves the promise: a write at
+  `p` is invisible at every `q` with `p.overlaps q = false`. The pre-existing
+  `readPath_writePath_ne` only covered *different roots*, which is useless for
+  two rows of the same pool. Getting there needed `LawfulBEq` instances for
+  `PathStep` and `Root` — the `deriving` handler does not register them, and
+  `List.isPrefixOf` cannot be reasoned about without them.
+
+- **The `Upptr` laws are stated against an arbitrary program in which the name
+  resolves**, with `lookupFun_of_mem` turning "the schema declares this field"
+  into that hypothesis. Name collisions (`a`/`b_c` and `a_b`/`c` generate the
+  same C name) are a whole-schema property and belong to the checker, not to
+  this template; making that a hypothesis says so instead of hiding it.
 
 - **`resolve_slot` / `resolve_field` / `resolve_ptrField` / `write_slotField`
   take the storage binding, not `RepInv`.** They only ever used `R.storage`,

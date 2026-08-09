@@ -185,6 +185,25 @@ Stated plainly so the comparison is not read as parity.
 - **Scale**: the `amc` namespace alone generates ~54,000 lines across 130
   ctypes and 660 fields.
 
+### 3.0 `Upptr` is exposed as four functions, not a public member
+
+`cpp/amc/upptr.cpp` is nineteen lines: it declares the member
+(`InsVar(R, field.p_ctype, "$Cpptype*", "$name", ...)`) and generates one
+function, `Init`, whose body is `$parname.$name = NULL;`. There is no getter —
+the member is public C++, and the cross-reference code assigns it inline
+(`row.p_target = p_target;`, quoted in §1.1).
+
+AMCC emits the member too (`Dmmeta.fieldTy` lowers `Upptr` to a pointer field,
+so `row->p_level` still works), plus `Init`, `Get`, `Set` and `Q`. The extra
+three are a divergence in *surface*, and the reason is this project's rather
+than `amc`'s: a function is where a proof obligation can be attached.
+`Templates/Upptr.lean` proves read-back (`get_set`) and frame — a `Set`
+through one row is invisible through any non-overlapping path — and neither
+statement can be made about a bare member assignment, because there is no
+generated function to make it about.
+
+The cost is four function symbols per up-pointer where `amc` emits one.
+
 ### 3.1 The pretty-printer is unverified
 
 `MilestoneTheorem` (`Amcc/Templates/ArrayTableInsert.lean`) is closed: for

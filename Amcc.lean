@@ -19,6 +19,7 @@ import Amcc.Templates.ArrayTableErase
 import Amcc.Templates.ArrayTableInsert
 import Amcc.Templates.Layout
 import Amcc.Templates.Pool
+import Amcc.Templates.Upptr
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Codegen.Print
 import Amcc.Codegen.PrintChecks
@@ -85,6 +86,10 @@ that should fail does not.)
 - `Templates.Pool`      — the **pool template** over the ctype model: a
                           free-list allocator (`Tpool`'s shape) emitted as C,
                           with `Init`/`Alloc`/`Free`/`N`
+- `Templates.Upptr`     — the **up-pointer template**: `Init`/`Get`/`Set`/`Q`
+                          for a `dmmeta.reftype Upptr` field, with the
+                          read-back law (`get_set`) and the frame law proved
+                          for every program the names resolve in
 - `Codegen.Print`       — the pretty-printer to C text (trusted, unverified)
 - `Codegen.PrintChecks` — byte-for-byte golden tests of the printed output
 

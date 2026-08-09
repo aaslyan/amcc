@@ -17,15 +17,16 @@ allocator layer), `docs/ALLOCATOR_REQUIREMENT.md` (the allocator contract),
 
 ## Status
 
-**Emitted C** — two templates, seven functions.
+**Emitted C** — three templates, eleven functions.
 
 | Template | Functions |
 |---|---|
 | Array table (`Templates/ArrayTable`) | `<t>_Find` → row pointer or `NULL`, `<t>_InsertMaybe`, `<t>_Remove` |
 | Pool (`Templates/Pool`) | `D_f_Init`, `D_f_Alloc`, `D_f_Free`, `D_f_N` |
+| Up-pointer (`Templates/Upptr`) | `C_f_Init`, `C_f_Get`, `C_f_Set`, `C_f_Q` |
 
-Both compile under `cc -Wall -Wextra -Werror` and are differentially tested
-against a real compiler by `scripts/smoke.sh`.
+All three compile under `cc -Wall -Wextra -Werror` and are differentially
+tested against a real compiler by `scripts/smoke.sh`.
 
 **Proved for every accepted schema**
 
@@ -44,6 +45,14 @@ against a real compiler by `scripts/smoke.sh`.
 - **`milestoneTheorem`** — the conjunction: *every* well-formed schema's
   generated table simulates the abstract map. One proof, quantified over
   schemas.
+- `Upptr.get_set` — read-back for the up-pointer accessors: a `Get` after a
+  `Set` returns exactly what was set, and the `Set` is invisible at every path
+  that does not overlap the field. `init_correct`, `test_null` and `test_ptr`
+  cover the other three functions.
+- `Store.readPath_writePath_disjoint` — the frame law the above rests on, and
+  the first thing that makes `Path.overlaps` mean something: a prefix test on
+  access paths *is* a sufficient aliasing analysis, because a path names an
+  object rather than an address.
 
 **Proved about the algorithms, as Lean models**
 
@@ -83,18 +92,16 @@ Two gaps remain against the full measure, both recorded in
 
 ## Next, in order
 
-1. **`Upptr` accessors.** Small — the ctype model already lowers `Upptr` to a
-   pointer field.
-2. **`Llist` link/unlink** over the pool. Where the reftype vocabulary starts
+1. **`Llist` link/unlink** over the pool. Where the reftype vocabulary starts
    paying off, and where `alloc_frame` stops being theoretical. Unblocked by
    the printer emitting struct tags, which is what makes a self-referential
    link field legal.
-3. **`Thash`.** The bucket walk fits the capacity-bounded `forN` we already
+2. **`Thash`.** The bucket walk fits the capacity-bounded `forN` we already
    have; correctness does not depend on hash quality, only the expected-time
    claim does. No subset extension needed.
-4. **Xref maintenance** tying them together, using the prepare/commit design
+3. **Xref maintenance** tying them together, using the prepare/commit design
    from `Spec/Algebra.lean`.
-5. **Proofs for the above**, drawing on the machinery `ArrayTableFind.lean`
+4. **Proofs for the above**, drawing on the machinery `ArrayTableFind.lean`
    already banked: slot resolution, the pointer-deref path with `nullDeref` and
    `useAfterFree` discharged, field writes with their frame property, and the
    call path with frame save/restore.
