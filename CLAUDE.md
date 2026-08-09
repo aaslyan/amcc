@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Read `docs/GOALS.md` first — it is canonical, and if anything here contradicts it, it wins.**
+**Read `docs/GOALS.md` first — it is canonical, and if anything here contradicts it, it wins.** `docs/PLAN.md` is the roadmap and is *not* canonical: keep it short and update it in the same commit that changes the route. It was once allowed to grow to ~500 lines describing an architecture whose upper levels did not exist, which is how the route drifted without anyone noticing.
 
 AMCC is a **verified reimplementation of OpenACR's `amc`** (<https://github.com/alexeilebedev/openacr>), written in Lean 4 (Lake package, no external dependencies — no mathlib).
 
