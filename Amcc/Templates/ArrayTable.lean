@@ -19,24 +19,27 @@ For a schema `s` with primary key `pk` and value fields `v₁ … vₘ`:
 typedef struct { <pk> ; <v₁> ; … ; bool occupied; } <t>_row;
 static <t>_row g_<t>[CAP];
 
-uint32_t <t>_find(<pkty> pk);              /* slot index, or CAP when absent */
-bool     <t>_insert(<pkty> pk, …);          /* update in place, else claim a slot */
-bool     <t>_erase(<pkty> pk);
-<vty>    <t>_get_<v>(<pkty> pk);            /* the field, or zero when absent */
+<t>_row* <t>_Find(<pkty> pk);            /* the row, or NULL when absent */
+bool     <t>_InsertMaybe(<pkty> pk, …);  /* update in place, else claim a slot */
+bool     <t>_Remove(<pkty> pk);
 ```
 
-Three shape decisions, each made to keep an obligation provable rather than to
-make the C prettier:
+This is `amc`'s API shape, adapted to C: `Find` hands back a pointer to the
+row and the caller reads fields off it (`r->price`), exactly as
+`ind_targsrc_Find` hands back an `FTargsrc*`.
 
-- **`find` returns `CAP` as its "absent" sentinel**, not `-1`. There are no
-  signed types in the subset, and `CAP` is the one value that is both
-  representable and provably not a valid slot.
-- **Every access to `g_<t>[_at]` sits behind `_at != CAP`.** That guard is the
-  entire no-trap argument: `find`'s postcondition gives `_at ≤ CAP`, the guard
-  gives `_at ≠ CAP`, and the rep invariant gives `CAP = length`.
-- **No `<t>_at` returning a row pointer.** See `Schema.getterName` — an
-  index-taking accessor can trap, and it would put a precondition on the
-  template's headline theorem.
+The earlier design returned a `uint32_t` slot index with `CAP` as the "absent"
+sentinel, plus one generated getter per field. That was forced by the subset
+having no null pointer, and it was worse in two ways that matter: a getter
+could not distinguish an absent key from a stored zero, and reading an
+`n`-field row cost `n` full lookups. `NULL` exists now, so neither compromise
+is needed.
+
+- **`Find` returns `NULL` when absent.** Unambiguous, and it is what a C
+  caller expects.
+- **Every access through the returned pointer sits behind `_at != NULL`.**
+  That guard is the no-trap argument, now stated against null rather than
+  against a sentinel index.
 
 ## Temporaries
 
@@ -62,9 +65,22 @@ def tmpJ : Ident := "_j"
 
 def capLit (s : Schema) : Expr := .lit (.u32 (UInt32.ofNat s.capacity))
 
+/-- The generated row struct, as a type. -/
+def rowTy (s : Schema) : Ty := .strct (Schema.names s).row
+
 /-- `g_<t>[i]` -/
 def slot (s : Schema) (i : Ident) : LVal :=
   .idx (.glob (Schema.names s).storage) (.var i)
+
+/-- `p->f` — a field reached through the row pointer the API hands out. -/
+def ptrField (p : Ident) (f : Ident) : LVal := .fld (.deref p) f
+
+/-- `NULL`, at row-pointer type. -/
+def nullRow (s : Schema) : Expr := .null (rowTy s)
+
+/-- The row-pointer local the callers of `Find` keep their result in. -/
+def atLocal (s : Schema) : LocalDef :=
+  { name := tmpAt, ty := .ptr (rowTy s), init := nullRow s }
 
 /-- `g_<t>[i].f` -/
 def field (s : Schema) (i : Ident) (f : Ident) : LVal := .fld (slot s i) f
@@ -85,25 +101,25 @@ def storageDef (s : Schema) : GlobalDef where
   ty   := .arr (.strct (Schema.names s).row) s.capacity
 
 /-- ```c
-uint32_t <t>_find(<pkty> pk) {
+<t>_row* <t>_Find(<pkty> pk) {
   uint32_t _i = 0;
   for (_i = 0; _i < CAP; ++_i)
-    if (g[_i].occupied && g[_i].pk == pk) return _i;
-  return CAP;
+    if (g[_i].occupied && g[_i].pk == pk) return &g[_i];
+  return NULL;
 }
 ``` -/
 def findDef (s : Schema) (pk : Schema.Field) : FunDef where
   name   := (Schema.names s).find
   params := [(pk.name, .scalar pk.ty)]
-  ret    := some (.scalar .u32)
+  ret    := some (.ptr (rowTy s))
   locals := [LocalDef.zeroed tmpI .u32]
   body   := .block
     [ .forN tmpI (.lit s.capacity) <|
         .when (.bin .land
                 (.rd (field s tmpI (Schema.names s).occupied))
                 (.bin .eq (.rd (field s tmpI pk.name)) (.rd (.var pk.name)))) <|
-          .ret (some (.rd (.var tmpI)))
-    , .ret (some (capLit s)) ]
+          .ret (some (.addr (slot s tmpI)))
+    , .ret (some (nullRow s)) ]
 
 /-- ```c
 bool <t>_insert(<pkty> pk, <vty> v₁, …) {   /* key first */
@@ -122,12 +138,12 @@ def insertDef (s : Schema) (pk : Schema.Field) : FunDef where
   name   := (Schema.names s).insert
   params := (pk :: Schema.valFields s).map (fun f => (f.name, ValTy.scalar f.ty))
   ret    := some (.scalar .bool)
-  locals := [LocalDef.zeroed tmpAt .u32, LocalDef.zeroed tmpJ .u32]
+  locals := [atLocal s, LocalDef.zeroed tmpJ .u32]
   body   := .block
     [ .call (some tmpAt) (Schema.names s).find [.rd (.var pk.name)]
-    , .when (.bin .ne (.rd (.var tmpAt)) (capLit s)) <|
+    , .when (.bin .ne (.rd (.var tmpAt)) (nullRow s)) <|
         .block ((Schema.valFields s).map
-                  (fun f => .assign (field s tmpAt f.name) (.rd (.var f.name)))
+                  (fun f => .assign (ptrField tmpAt f.name) (.rd (.var f.name)))
                 ++ [.ret (some (.lit (.bool true)))])
     , .forN tmpJ (.lit s.capacity) <|
         .when (.un .lnot (.rd (field s tmpJ (Schema.names s).occupied))) <|
@@ -152,32 +168,13 @@ def eraseDef (s : Schema) (pk : Schema.Field) : FunDef where
   name   := (Schema.names s).erase
   params := [(pk.name, .scalar pk.ty)]
   ret    := some (.scalar .bool)
-  locals := [LocalDef.zeroed tmpAt .u32]
+  locals := [atLocal s]
   body   := .block
     [ .call (some tmpAt) (Schema.names s).find [.rd (.var pk.name)]
-    , .when (.bin .ne (.rd (.var tmpAt)) (capLit s)) <|
-        .block [ .assign (field s tmpAt (Schema.names s).occupied) (.lit (.bool false))
+    , .when (.bin .ne (.rd (.var tmpAt)) (nullRow s)) <|
+        .block [ .assign (ptrField tmpAt (Schema.names s).occupied) (.lit (.bool false))
                , .ret (some (.lit (.bool true))) ]
     , .ret (some (.lit (.bool false))) ]
-
-/-- ```c
-<vty> <t>_get_<v>(<pkty> pk) {
-  uint32_t _at = 0;
-  _at = <t>_find(pk);
-  if (_at != CAP) return g[_at].v;
-  return 0;
-}
-``` -/
-def getterDef (s : Schema) (pk : Schema.Field) (f : Schema.Field) : FunDef where
-  name   := Schema.getterName s f.name
-  params := [(pk.name, .scalar pk.ty)]
-  ret    := some (.scalar f.ty)
-  locals := [LocalDef.zeroed tmpAt .u32]
-  body   := .block
-    [ .call (some tmpAt) (Schema.names s).find [.rd (.var pk.name)]
-    , .when (.bin .ne (.rd (.var tmpAt)) (capLit s)) <|
-        .ret (some (.rd (field s tmpAt f.name)))
-    , .ret (some (.lit (zeroLit f.ty))) ]
 
 /-- **The generator.**
 
@@ -193,8 +190,7 @@ def genC (s : Schema) : Program :=
   | some pk =>
     { structs := [rowStructDef s]
     , globals := [storageDef s]
-    , funs    := [findDef s pk, insertDef s pk, eraseDef s pk]
-                 ++ (Schema.valFields s).map (getterDef s pk) }
+    , funs    := [findDef s pk, insertDef s pk, eraseDef s pk] }
 
 /-! ## The abstraction function
 

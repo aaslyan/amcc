@@ -16,36 +16,50 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-uint32_t order_find(uint64_t id);
-bool     order_insert(uint64_t id, uint64_t price, uint64_t qty);
-bool     order_erase(uint64_t id);
-uint64_t order_get_price(uint64_t id);
-uint64_t order_get_qty(uint64_t id);
+/* amc-shaped API: Find hands back the row, NULL when absent. The row struct
+ * is redeclared here exactly as the generator emits it, so the driver reads
+ * fields the way a real consumer would. */
+typedef struct {
+  uint64_t id;
+  uint64_t price;
+  uint64_t qty;
+  bool occupied;
+} order_row;
+
+order_row* order_Find(uint64_t id);
+bool       order_InsertMaybe(uint64_t id, uint64_t price, uint64_t qty);
+bool       order_Remove(uint64_t id);
 
 static void pb(bool b)      { printf("%u\n", (unsigned)b); }
-static void pu32(uint32_t v){ printf("%u\n", (unsigned)v); }
 static void pu64(uint64_t v){ printf("%llu\n", (unsigned long long)v); }
+/* 1 when the key is present, 0 when Find returned NULL */
+static void pfound(const order_row *r) { printf("%u\n", r ? 1u : 0u); }
+/* a field read through the pointer, or a stated miss */
+static void pfield(const order_row *r, int which) {
+  if (!r) { printf("absent\n"); return; }
+  pu64(which == 0 ? r->price : r->qty);
+}
 
 int main(void) {
   /* Sequence A: insert, look up, read fields, erase, confirm gone. */
-  pb(order_insert(7, 100, 5));
-  pu32(order_find(7));
-  pu64(order_get_price(7));
-  pu64(order_get_qty(7));
-  pu32(order_find(8));
-  pb(order_erase(7));
-  pu32(order_find(7));
-  pu64(order_get_price(7));
+  pb(order_InsertMaybe(7, 100, 5));
+  pfound(order_Find(7));
+  pfield(order_Find(7), 0);
+  pfield(order_Find(7), 1);
+  pfound(order_Find(8));
+  pb(order_Remove(7));
+  pfound(order_Find(7));
+  pfield(order_Find(7), 0);   /* absent is now distinguishable from zero */
 
   /* Sequence B: fill the table, watch it refuse, erase, reclaim the slot. */
-  pb(order_insert(1, 10, 1));
-  pb(order_insert(2, 20, 2));
-  pb(order_insert(3, 30, 3));
-  pb(order_insert(4, 40, 4));
-  pb(order_insert(5, 50, 5));
-  pb(order_erase(2));
-  pb(order_insert(5, 50, 5));
-  pu32(order_find(5));
+  pb(order_InsertMaybe(1, 10, 1));
+  pb(order_InsertMaybe(2, 20, 2));
+  pb(order_InsertMaybe(3, 30, 3));
+  pb(order_InsertMaybe(4, 40, 4));
+  pb(order_InsertMaybe(5, 50, 5));
+  pb(order_Remove(2));
+  pb(order_InsertMaybe(5, 50, 5));
+  pfield(order_Find(5), 0);
 
   return 0;
 }

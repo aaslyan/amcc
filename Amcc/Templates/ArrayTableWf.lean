@@ -189,30 +189,6 @@ private theorem append_ne {s a b : String} (h : a ≠ b) : s ++ a ≠ s ++ b :=
 private theorem append_inj {s a b : String} : s ++ a = s ++ b ↔ a = b :=
   ⟨append_cancel_left, fun h => h ▸ rfl⟩
 
-/-- `"_get_" ++ f` starts `'_','g'` and each fixed suffix starts differently,
-whatever `f` is. One lemma per fixed suffix, all by the same computation. -/
-private theorem get_ne_find (f : String) : "_get_" ++ f ≠ "_find" := by
-  intro h
-  have hd := congrArg String.toList h
-  simp [show "_get_".toList = ['_', 'g', 'e', 't', '_'] from rfl,
-        show "_find".toList = ['_', 'f', 'i', 'n', 'd'] from rfl] at hd
-
-private theorem get_ne_insert (f : String) : "_get_" ++ f ≠ "_insert" := by
-  intro h
-  have hd := congrArg String.toList h
-  simp [show "_get_".toList = ['_', 'g', 'e', 't', '_'] from rfl,
-        show "_insert".toList = ['_', 'i', 'n', 's', 'e', 'r', 't'] from rfl] at hd
-
-private theorem get_ne_erase (f : String) : "_get_" ++ f ≠ "_erase" := by
-  intro h
-  have hd := congrArg String.toList h
-  simp [show "_get_".toList = ['_', 'g', 'e', 't', '_'] from rfl,
-        show "_erase".toList = ['_', 'e', 'r', 'a', 's', 'e'] from rfl] at hd
-
-private theorem getterName_eq (s : Schema) (f : Ident) :
-    Schema.getterName s f = s.name ++ ("_get_" ++ f) := by
-  rw [Schema.getterName, String.append_assoc]
-
 /-- A name in the reserved leading-underscore namespace never equals one
 outside it — how the generated temporaries stay clear of every schema name. -/
 private theorem ne_of_reserved {a b : Ident}
@@ -402,37 +378,17 @@ private theorem checkGlobals_gen {s : Schema} (F : Facts s) :
 differ pairwise, a getter differs from every fixed name at the character after
 the shared `s.name ++ "_"`, and getters of distinct fields differ because the
 field names do. -/
-private theorem pw_funNames {s : Schema} (F : Facts s) :
-    ((Schema.names s).find :: (Schema.names s).insert :: (Schema.names s).erase ::
-        (Schema.valFields s).map (fun f => Schema.getterName s f.name)).Pairwise
+private theorem pw_funNames (s : Schema) :
+    ((Schema.names s).find :: (Schema.names s).insert :: [(Schema.names s).erase]).Pairwise
       (· ≠ ·) := by
-  have hget : ∀ f ∈ Schema.valFields s,
-      Schema.getterName s f.name = s.name ++ ("_get_" ++ f.name) :=
-    fun f _ => getterName_eq s f.name
-  refine List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_, ?_⟩⟩⟩
+  refine List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_, by simp⟩⟩
   · intro b hb
-    simp only [List.mem_cons] at hb
-    rcases hb with rfl | rfl | hb
-    · exact append_ne (by decide)
-    · exact append_ne (by decide)
-    · obtain ⟨f, hf, rfl⟩ := List.mem_map.mp hb
-      rw [hget f hf]
-      exact append_ne (Ne.symm (get_ne_find f.name))
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+    rcases hb with rfl | rfl <;> exact append_ne (by decide)
   · intro b hb
-    simp only [List.mem_cons] at hb
-    rcases hb with rfl | hb
-    · exact append_ne (by decide)
-    · obtain ⟨f, hf, rfl⟩ := List.mem_map.mp hb
-      rw [hget f hf]
-      exact append_ne (Ne.symm (get_ne_insert f.name))
-  · intro b hb
-    obtain ⟨f, hf, rfl⟩ := List.mem_map.mp hb
-    rw [hget f hf]
-    exact append_ne (Ne.symm (get_ne_erase f.name))
-  · rw [List.pairwise_map]
-    exact (List.pairwise_map.mp (pw_val_names F)).imp fun hab e =>
-      hab (append_cancel_left (append_cancel_left
-        (by rwa [getterName_eq, getterName_eq] at e)))
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+    subst hb
+    exact append_ne (by decide)
 
 /-! ## Lawful `BEq` for the syntax types
 
@@ -549,6 +505,11 @@ private theorem binTy_eq_scalar (t : ScalarTy) :
     Wf.binTy .eq (.scalar t) (.scalar t) = some (.scalar .bool) := by
   cases t <;> rfl
 
+/-- `p != NULL` typechecks: both sides are the same pointer type. -/
+private theorem binTy_ne_ptr (t : Ty) :
+    Wf.binTy .ne (.ptr t) (.ptr t) = some (.scalar .bool) := by
+  simp [Wf.binTy, Wf.isPtrTy, Wf.isWord]
+
 private theorem checkFun_find (F : Facts s)
     (hfl : s.fields.filter (fun f => f.reftype == .Pkey) = [pk])
     (earlier : List FunDef) :
@@ -566,7 +527,8 @@ private theorem checkFun_find (F : Facts s)
     Wf.Ctx.local?, Wf.Ctx.global?, Wf.Ctx.struct?, Wf.Ctx.field?,
     ValTy.toTy, Stmt.when, Stmt.block, List.find?,
     hpk_i, rowfield_lookup F (pk_mem hfl), rowfield_occ_lookup F,
-    binTy_eq_scalar, hland, F.capLt, distinct_eq_nil hpw]
+    binTy_eq_scalar, hland, F.capLt, distinct_eq_nil hpw,
+    rowTy, nullRow, Wf.rootIsLocal]
 
 private theorem checkFun_erase (F : Facts s)
     (hfl : s.fields.filter (fun f => f.reftype == .Pkey) = [pk])
@@ -577,43 +539,14 @@ private theorem checkFun_erase (F : Facts s)
   have hne_at : pk.name ≠ "_at" := ne_of_reserved hpkres (by decide)
   have hpk_at : (pk.name == "_at") = false := beq_eq_false_iff_ne.mpr hne_at
   have hpw : ([pk.name, "_at"] : List Ident).Pairwise (· ≠ ·) := by simp [hne_at]
-  have hne32 : Wf.binTy .ne (.scalar .u32) (.scalar .u32)
-      = some (.scalar .bool) := rfl
-  have hfun : (findDef s pk :: rest).find?
-      (fun fd => fd.name == (Schema.names s).find) = some (findDef s pk) :=
-    List.find?_cons_of_pos (by simp [findDef])
-  simp [Wf.checkFun, eraseDef, findDef, LocalDef.zeroed, rowStructDef, storageDef,
-    tmpAt, field, slot, capLit,
+  simp [Wf.checkFun, eraseDef, findDef, atLocal, LocalDef.zeroed,
+    rowStructDef, storageDef, tmpAt, ptrField, rowTy, nullRow,
     Wf.checkStmt, Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, Wf.indexOk,
     Wf.litTy, Wf.isValTy, Wf.Stmt.alwaysReturns,
     Wf.Ctx.local?, Wf.Ctx.global?, Wf.Ctx.struct?, Wf.Ctx.field?, Wf.Ctx.fun?,
     ValTy.toTy, Stmt.when, Stmt.block, List.find?,
     hpk_at, rowfield_occ_lookup F,
-    hne32, distinct_eq_nil hpw]
-
-private theorem checkFun_getter (F : Facts s)
-    (hfl : s.fields.filter (fun f => f.reftype == .Pkey) = [pk])
-    {f : Schema.Field} (hf : f ∈ Schema.valFields s) (rest : List FunDef) :
-    Wf.checkFun [rowStructDef s] [storageDef s] (findDef s pk :: rest)
-      (getterDef s pk f) = [] := by
-  have hpkres := F.notReserved pk (pk_mem hfl)
-  have hne_at : pk.name ≠ "_at" := ne_of_reserved hpkres (by decide)
-  have hpk_at : (pk.name == "_at") = false := beq_eq_false_iff_ne.mpr hne_at
-  have hpw : ([pk.name, "_at"] : List Ident).Pairwise (· ≠ ·) := by simp [hne_at]
-  have hne32 : Wf.binTy .ne (.scalar .u32) (.scalar .u32)
-      = some (.scalar .bool) := rfl
-  have hfun : (findDef s pk :: rest).find?
-      (fun fd => fd.name == (Schema.names s).find) = some (findDef s pk) :=
-    List.find?_cons_of_pos (by simp [findDef])
-  simp [Wf.checkFun, getterDef, findDef, LocalDef.zeroed, rowStructDef, storageDef,
-    tmpAt, field, slot, capLit,
-    Wf.checkStmt, Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, Wf.indexOk,
-    Wf.litTy, Wf.isValTy, Wf.Stmt.alwaysReturns,
-    Wf.Ctx.local?, Wf.Ctx.global?, Wf.Ctx.struct?, Wf.Ctx.field?, Wf.Ctx.fun?,
-    ValTy.toTy, Stmt.when, Stmt.block, List.find?,
-    hpk_at, rowfield_lookup F (val_mem hf).1,
-    hne32, distinct_eq_nil hpw]
-  cases f.ty <;> rfl
+    binTy_ne_ptr, distinct_eq_nil hpw]
 
 /-- Checking one generated assignment `g_<t>[i].<f> = <f>;` — the element step
 for both of `insert`'s assignment lists. Stated against any context that
@@ -632,7 +565,23 @@ private theorem check_assign_field (c : Wf.Ctx) (F : Facts s)
     Wf.Ctx.field?, hstr, hglb, hloci, hlocf, storageDef, rowStructDef,
     rowfield_lookup F hf, ValTy.toTy]
 
-/-- Checking `_at = <t>_find(pk);` — resolves the callee at the head of the
+/-- Checking one generated `p->f = f;` — the element step of `insert`'s
+present-key branch, which now writes through the row pointer `Find` returned
+rather than through a slot index. -/
+private theorem check_assign_ptrField (c : Wf.Ctx) (F : Facts s)
+    {f : Schema.Field} (hf : f ∈ s.fields) {p : Ident}
+    (hstr : c.structs = [rowStructDef s])
+    (hlocp : c.locals.find? (fun lv => lv.1 == p)
+      = some (p, ValTy.ptr (rowTy s)))
+    (hlocf : c.locals.find? (fun lv => lv.1 == f.name)
+      = some (f.name, ValTy.scalar f.ty)) :
+    Wf.checkStmt c (some (.scalar .bool))
+      (.assign (ptrField p f.name) (.rd (.var f.name))) = [] := by
+  simp [Wf.checkStmt, Wf.addrChecks, Wf.inferExpr, Wf.inferLVal,
+    Wf.isValTy, ptrField, rowTy, Wf.Ctx.local?, Wf.Ctx.struct?, Wf.Ctx.field?,
+    hstr, hlocp, hlocf, rowStructDef, rowfield_lookup F hf, ValTy.toTy]
+
+/-- Checking `_at = <t>_Find(pk);` — resolves the callee at the head of the
 `earlier` list, the argument against the parameter environment, and the
 destination temporary. -/
 private theorem check_call_find (c : Wf.Ctx) (ret? : Option ValTy)
@@ -640,11 +589,12 @@ private theorem check_call_find (c : Wf.Ctx) (ret? : Option ValTy)
     (hlocpk : c.locals.find? (fun lv => lv.1 == pk.name)
       = some (pk.name, ValTy.scalar pk.ty))
     (hlocat : c.locals.find? (fun lv => lv.1 == "_at")
-      = some ("_at", ValTy.scalar .u32)) :
+      = some ("_at", ValTy.ptr (rowTy s))) :
     Wf.checkStmt c ret? (.call (some tmpAt) (Schema.names s).find
       [.rd (.var pk.name)]) = [] := by
   simp [Wf.checkStmt, Wf.Ctx.fun?, hfuns, findDef, Wf.addrChecks, Wf.inferExpr,
-    Wf.inferLVal, Wf.isValTy, Wf.Ctx.local?, hlocpk, hlocat, ValTy.toTy, tmpAt]
+    Wf.inferLVal, Wf.isValTy, Wf.Ctx.local?, hlocpk, hlocat, ValTy.toTy, tmpAt,
+    rowTy]
 
 /-- Checking the present-key branch: every value field is rewritten in place,
 then `return true`. -/
@@ -652,17 +602,15 @@ private theorem check_when_update (c : Wf.Ctx) (F : Facts s)
     (_hfl : s.fields.filter (fun f => f.reftype == .Pkey) = [pk])
     (hstr : c.structs = [rowStructDef s]) (hglb : c.globals = [storageDef s])
     (hlocat : c.locals.find? (fun lv => lv.1 == "_at")
-      = some ("_at", ValTy.scalar .u32))
+      = some ("_at", ValTy.ptr (rowTy s)))
     (hlocf : ∀ f ∈ pk :: Schema.valFields s,
       c.locals.find? (fun lv => lv.1 == f.name)
         = some (f.name, ValTy.scalar f.ty)) :
     Wf.checkStmt c (some (.scalar .bool))
-      (.when (.bin .ne (.rd (.var tmpAt)) (capLit s))
+      (.when (.bin .ne (.rd (.var tmpAt)) (nullRow s))
         (.block ((Schema.valFields s).map
-            (fun f => .assign (field s tmpAt f.name) (.rd (.var f.name)))
+            (fun f => .assign (ptrField tmpAt f.name) (.rd (.var f.name)))
           ++ [.ret (some (.lit (.bool true)))]))) = [] := by
-  have hne32 : Wf.binTy .ne (.scalar .u32) (.scalar .u32)
-      = some (.scalar .bool) := rfl
   simp only [Stmt.when, Wf.checkStmt, checkStmt_block, List.flatMap_append,
     List.flatMap_cons, List.flatMap_nil, List.append_nil,
     List.append_eq_nil_iff]
@@ -670,11 +618,11 @@ private theorem check_when_update (c : Wf.Ctx) (F : Facts s)
   all_goals first
     | exact List.flatMap_eq_nil_iff.mpr fun st hst => by
         obtain ⟨f, hf, rfl⟩ := List.mem_map.mp hst
-        exact check_assign_field c F (val_mem hf).1 hstr hglb hlocat
+        exact check_assign_ptrField c F (val_mem hf).1 hstr hlocat
           (hlocf f (List.mem_cons_of_mem pk hf))
     | simp [Wf.addrChecks, Wf.inferExpr, Wf.inferLVal,
-        Wf.isValTy, Wf.Ctx.local?, hlocat, hne32, capLit, tmpAt, Wf.litTy,
-        ValTy.toTy]
+        Wf.isValTy, Wf.Ctx.local?, hlocat, binTy_ne_ptr, nullRow, rowTy,
+        tmpAt, Wf.litTy, ValTy.toTy]
 
 /-- Checking the free-slot scan: claim the slot, write every field (key
 included), `return true`; the loop body never assigns the loop variable
@@ -752,7 +700,7 @@ private theorem checkFun_insert (F : Facts s)
       rcases hb with rfl | rfl <;> exact ne_of_reserved (hvalres g hg) (by decide)
   -- the same list as the context's key list
   have hkeys : (((pk :: Schema.valFields s).map (fun g => (g.name, ValTy.scalar g.ty))
-      ++ [("_at", ValTy.scalar .u32), ("_j", ValTy.scalar .u32)]).map Prod.fst)
+      ++ [("_at", ValTy.ptr (rowTy s)), ("_j", ValTy.scalar .u32)]).map Prod.fst)
       = pk.name :: ((Schema.valFields s).map (fun g => g.name) ++ ["_at", "_j"]) := by
     simp
   have hpwkeys := hkeys.symm ▸ hpwFull
@@ -764,19 +712,19 @@ private theorem checkFun_insert (F : Facts s)
     obtain ⟨g, hg, rfl⟩ := List.mem_map.mp hp
     exact ne_of_reserved (F.notReserved g (hmemfields g hg)) hx
   have ha : ((pk :: Schema.valFields s).map (fun g => (g.name, ValTy.scalar g.ty))
-      ++ [("_at", ValTy.scalar .u32), ("_j", ValTy.scalar .u32)]).find?
-        (fun lv => lv.1 == "_at") = some ("_at", ValTy.scalar .u32) := by
+      ++ [("_at", ValTy.ptr (rowTy s)), ("_j", ValTy.scalar .u32)]).find?
+        (fun lv => lv.1 == "_at") = some ("_at", ValTy.ptr (rowTy s)) := by
     rw [find?_keyed_skip (hskip "_at" (by decide))]
     exact List.find?_cons_of_pos (by simp)
   have hj : ((pk :: Schema.valFields s).map (fun g => (g.name, ValTy.scalar g.ty))
-      ++ [("_at", ValTy.scalar .u32), ("_j", ValTy.scalar .u32)]).find?
+      ++ [("_at", ValTy.ptr (rowTy s)), ("_j", ValTy.scalar .u32)]).find?
         (fun lv => lv.1 == "_j") = some ("_j", ValTy.scalar .u32) := by
     rw [find?_keyed_skip (hskip "_j" (by decide))]
-    rw [List.find?_cons_of_neg (by decide)]
+    rw [List.find?_cons_of_neg (by simp)]
     exact List.find?_cons_of_pos (by simp)
   have hvlookup : ∀ g ∈ pk :: Schema.valFields s,
       ((pk :: Schema.valFields s).map (fun g => (g.name, ValTy.scalar g.ty))
-        ++ [("_at", ValTy.scalar .u32), ("_j", ValTy.scalar .u32)]).find?
+        ++ [("_at", ValTy.ptr (rowTy s)), ("_j", ValTy.scalar .u32)]).find?
           (fun lv => lv.1 == g.name) = some (g.name, ValTy.scalar g.ty) :=
     fun g hg => find?_keyed hpwkeys
       (List.mem_append_left _ (List.mem_map_of_mem hg))
@@ -789,16 +737,16 @@ private theorem checkFun_insert (F : Facts s)
         ++ (insertDef s pk).locals.map LocalDef.name)
         = pk.name :: ((Schema.valFields s).map (fun g => g.name)
             ++ ["_at", "_j"]) := by
-      simp [insertDef, LocalDef.zeroed, tmpAt, tmpJ, Function.comp]
+      simp [insertDef, atLocal, LocalDef.zeroed, tmpAt, tmpJ, Function.comp]
     rw [hnames]
     exact hpwFull
   case inits =>
-    simp [insertDef, LocalDef.zeroed, Wf.addrChecks, Wf.inferExpr, Wf.litTy,
-      ValTy.toTy]
+    simp [insertDef, atLocal, LocalDef.zeroed, Wf.addrChecks, Wf.inferExpr,
+      Wf.litTy, ValTy.toTy, nullRow, rowTy]
   case rets =>
     simp [insertDef, Stmt.block, Stmt.when, Wf.Stmt.alwaysReturns]
   case body =>
-    simp only [insertDef, LocalDef.zeroed, List.map_cons, List.map_nil]
+    simp only [insertDef, atLocal, LocalDef.zeroed, List.map_cons, List.map_nil]
     rw [checkStmt_block]
     simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil,
       List.append_eq_nil_iff]
@@ -835,30 +783,22 @@ theorem genWellFormed : GenWellFormed := by
   refine ⟨⟨⟨checkStructs_gen F, checkGlobals_gen F⟩, ?dist⟩, ?funs⟩
   case dist =>
     refine distinct_eq_nil ?_
-    have hnames : (([findDef s pk, insertDef s pk, eraseDef s pk]
-        ++ (Schema.valFields s).map (getterDef s pk)).map FunDef.name)
+    have hnames : (([findDef s pk, insertDef s pk, eraseDef s pk]).map FunDef.name)
         = (Schema.names s).find :: (Schema.names s).insert
-          :: (Schema.names s).erase
-          :: (Schema.valFields s).map (fun f => Schema.getterName s f.name) := by
-      simp [findDef, insertDef, eraseDef, getterDef, Function.comp]
+          :: [(Schema.names s).erase] := by
+      simp [findDef, insertDef, eraseDef]
     rw [hnames]
-    exact pw_funNames F
+    exact pw_funNames s
   case funs =>
     rw [List.flatMap_eq_nil_iff]
     intro fdi hfdi
     obtain ⟨fd, i⟩ := fdi
-    simp only [List.cons_append, List.nil_append, List.zipIdx_cons,
-      List.mem_cons, Prod.mk.injEq] at hfdi
-    rcases hfdi with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | hfdi
+    simp only [List.zipIdx_cons, List.zipIdx_nil, List.mem_cons,
+      List.not_mem_nil, or_false, Prod.mk.injEq] at hfdi
+    rcases hfdi with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
     · exact checkFun_find F hfl _
     · exact checkFun_insert F hfl []
     · exact checkFun_erase F hfl [insertDef s pk]
-    · obtain ⟨hle, _, heq⟩ := List.mem_zipIdx hfdi
-      obtain ⟨j, rfl⟩ : ∃ j, i = j + 3 := ⟨i - 3, by omega⟩
-      simp only [Nat.add_sub_cancel, List.getElem_map] at heq
-      rw [heq]
-      simp only [List.cons_append, List.nil_append, List.take_succ_cons]
-      exact checkFun_getter F hfl (List.getElem_mem _) _
 
 end ArrayTable
 end Templates

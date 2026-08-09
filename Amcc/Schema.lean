@@ -107,23 +107,26 @@ structure Names where
   erase    : Ident
   deriving DecidableEq, Repr, Inhabited
 
-/-- `<table>_get_<field>` — the accessor generated for each value field. Not a
-`Names` field because there is one per value field rather than one per table.
+/-- `<table>_get_<field>` — **no longer generated**.
 
-There is deliberately **no** `<table>_at` returning a `<row> *`. Such a function
-takes a slot index the caller must independently know is in range, so it can
-trap — and a template whose no-trap theorem carries a precondition is a worse
-deliverable than one whose does not. Reading a field goes through the key
-instead, where the `!= CAP` guard makes the access provably safe. -/
+Per-field getters existed only because the C subset had no null pointer: a
+`Find` returning `<row> *` had nothing to return for an absent key, so it
+returned a slot index with a sentinel and each field got its own accessor.
+That API could not distinguish an absent key from a zero value, and reading an
+`n`-field row cost `n` lookups. `NULL` exists now, so `Find` returns a row
+pointer and fields are read through it, as in `amc`.
+
+The name is still reserved by `check`, so a schema cannot introduce a field
+that would collide if per-field accessors return. -/
 def getterName (s : Schema) (field : Ident) : Ident := s.name ++ "_get_" ++ field
 
 def names (s : Schema) : Names where
   row      := s.name ++ "_row"
   storage  := "g_" ++ s.name
   occupied := "occupied"
-  find     := s.name ++ "_find"
-  insert   := s.name ++ "_insert"
-  erase    := s.name ++ "_erase"
+  find     := s.name ++ "_Find"
+  insert   := s.name ++ "_InsertMaybe"
+  erase    := s.name ++ "_Remove"
 
 /-! ## Well-formedness -/
 

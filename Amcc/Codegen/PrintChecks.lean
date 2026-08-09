@@ -31,9 +31,14 @@ example : Print.declare (.scalar .u32) "x" = "uint32_t x" := rfl
 example : Print.declare (.arr (.arr (.scalar .u64) 3) 2) "m"
     = "uint64_t m[2][3]" := rfl
 
-/-- A pointer wraps the declarator, so pointer-to-array parenthesises. -/
+/-- A plain pointer needs no parentheses. -/
 example : Print.declare (.ptr (.strct "order_row")) "p"
-    = "order_row (*p)" := rfl
+    = "order_row *p" := rfl
+
+/-- Pointer *to an array* does, or `*p[2]` would bind as an array of
+pointers. -/
+example : Print.declare (.ptr (.arr (.scalar .u64) 2)) "p"
+    = "uint64_t (*p)[2]" := rfl
 
 /-- Literal suffixes: no integer literal has a surprising promoted type. -/
 example : Print.lit (.u32 4) = "4u" := rfl
@@ -55,23 +60,23 @@ typedef struct {
 
 static order_row g_order[4];
 
-uint32_t order_find(uint64_t id) {
+order_row *order_Find(uint64_t id) {
   uint32_t _i = 0u;
   for (_i = 0u; _i < 4u; ++_i) {
     if ((g_order[_i].occupied && (g_order[_i].id == id))) {
-      return _i;
+      return (&g_order[_i]);
     }
   }
-  return 4u;
+  return NULL;
 }
 
-bool order_insert(uint64_t id, uint64_t price, uint64_t qty) {
-  uint32_t _at = 0u;
+bool order_InsertMaybe(uint64_t id, uint64_t price, uint64_t qty) {
+  order_row *_at = NULL;
   uint32_t _j = 0u;
-  _at = order_find(id);
-  if ((_at != 4u)) {
-    g_order[_at].price = price;
-    g_order[_at].qty = qty;
+  _at = order_Find(id);
+  if ((_at != NULL)) {
+    _at->price = price;
+    _at->qty = qty;
     return true;
   }
   for (_j = 0u; _j < 4u; ++_j) {
@@ -86,32 +91,14 @@ bool order_insert(uint64_t id, uint64_t price, uint64_t qty) {
   return false;
 }
 
-bool order_erase(uint64_t id) {
-  uint32_t _at = 0u;
-  _at = order_find(id);
-  if ((_at != 4u)) {
-    g_order[_at].occupied = false;
+bool order_Remove(uint64_t id) {
+  order_row *_at = NULL;
+  _at = order_Find(id);
+  if ((_at != NULL)) {
+    _at->occupied = false;
     return true;
   }
   return false;
-}
-
-uint64_t order_get_price(uint64_t id) {
-  uint32_t _at = 0u;
-  _at = order_find(id);
-  if ((_at != 4u)) {
-    return g_order[_at].price;
-  }
-  return 0ull;
-}
-
-uint64_t order_get_qty(uint64_t id) {
-  uint32_t _at = 0u;
-  _at = order_find(id);
-  if ((_at != 4u)) {
-    return g_order[_at].qty;
-  }
-  return 0ull;
 }
 "
 
@@ -132,21 +119,21 @@ typedef struct {
 
 static tag_row g_tag[2];
 
-uint32_t tag_find(uint32_t k) {
+tag_row *tag_Find(uint32_t k) {
   uint32_t _i = 0u;
   for (_i = 0u; _i < 2u; ++_i) {
     if ((g_tag[_i].occupied && (g_tag[_i].k == k))) {
-      return _i;
+      return (&g_tag[_i]);
     }
   }
-  return 2u;
+  return NULL;
 }
 
-bool tag_insert(uint32_t k) {
-  uint32_t _at = 0u;
+bool tag_InsertMaybe(uint32_t k) {
+  tag_row *_at = NULL;
   uint32_t _j = 0u;
-  _at = tag_find(k);
-  if ((_at != 2u)) {
+  _at = tag_Find(k);
+  if ((_at != NULL)) {
     return true;
   }
   for (_j = 0u; _j < 2u; ++_j) {
@@ -159,11 +146,11 @@ bool tag_insert(uint32_t k) {
   return false;
 }
 
-bool tag_erase(uint32_t k) {
-  uint32_t _at = 0u;
-  _at = tag_find(k);
-  if ((_at != 2u)) {
-    g_tag[_at].occupied = false;
+bool tag_Remove(uint32_t k) {
+  tag_row *_at = NULL;
+  _at = tag_Find(k);
+  if ((_at != NULL)) {
+    _at->occupied = false;
     return true;
   }
   return false;

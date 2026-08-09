@@ -47,7 +47,10 @@ def declare : Ty → String → String
   | .scalar t, x => s!"{scalarTy t} {x}"
   | .strct n,  x => s!"{n} {x}"
   | .arr t k,  x => declare t s!"{x}[{k}]"
-  | .ptr t,    x => declare t s!"(*{x})"
+  -- Pointer *to an array* is the one case C's grammar needs parenthesised:
+  -- without them `T *x[n]` would bind as an array of pointers.
+  | .ptr (.arr t k), x => declare (.arr t k) s!"(*{x})"
+  | .ptr t,    x => declare t s!"*{x}"
 
 def declareVal (vt : ValTy) (x : String) : String := declare vt.toTy x
 
@@ -74,6 +77,8 @@ def lval : LVal → String
   | .var x   => x
   | .glob g  => g
   | .deref p => s!"(*{p})"
+  -- `p->f`, not `(*p).f` — same meaning, and it is what a C reader expects.
+  | .fld (.deref p) f => s!"{p}->{f}"
   | .fld l f => s!"{lval l}.{f}"
   | .idx l i => s!"{lval l}[{index i}]"
 
