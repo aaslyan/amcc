@@ -408,6 +408,9 @@ def Store.toMem (σ : Store) : Mem :=
 @[simp] theorem Mem.toStore_toMem (m : Mem) (loc : Env) :
     (m.toStore loc).toMem = m := rfl
 
+@[simp] theorem Mem.toStore_glb (m : Mem) (loc : Env) :
+    (m.toStore loc).glb = m.glb := rfl
+
 /-- Writing a global leaves the frame untouched. Trivial here — and trivial is
 the point: it follows from `Store` having two independent components, which
 follows from no pointer being able to name a local.

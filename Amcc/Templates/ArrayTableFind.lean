@@ -36,8 +36,9 @@ arise rather than by a theorem that does not exist yet.
 4. `forLoop` induction: scanning `[i, i+rem)` returns the first match.
 5. `FindCorrect`.
 
-This file establishes (1) through (4). What is *not* yet proved is recorded
-honestly at the bottom rather than stated as if it were.
+All five are established: `findCorrect` at the bottom discharges
+`ArrayTable.FindCorrect`. It is the project's first theorem about what
+generated code **computes**, as opposed to whether the checker accepts it.
 -/
 
 namespace Templates
@@ -575,18 +576,97 @@ theorem filter_of_pkey {pk : Schema.Field} (hpk : Schema.pkey? s = some pk) :
     | nil => rw [Schema.pkey?, hf] at hpk; cases hpk; rfl
     | cons b tl2 => rw [Schema.pkey?, hf] at hpk; exact Option.noConfusion hpk
 
+/-- **The body**: the scan, and the `return NULL` it falls through to. -/
+theorem exec_findBody {p : Program} {callee} {pk : Schema.Field}
+    {k : Interface.Key} (hpk : Schema.pkey? s = some pk) (hne : pk.name ≠ tmpI)
+    (hkty : k.ty = pk.ty)
+    (R : RepInv s σ.glb)
+    (hk0 : σ.getLocal pk.name = some k.toValue)
+    (ht0 : (σ.getLocal tmpI).isSome = true)
+    (hcap : s.capacity ≤ (rowsOf s σ.glb).length)
+    (hrnd : ∀ j, j < (rowsOf s σ.glb).length → (UInt32.ofNat j).toNat = j) :
+    ∃ σ', execAt p callee (findDef s pk).body σ
+        = .ok (σ', .ret (some (match firstMatch s σ.glb k 0 s.capacity with
+                               | some j =>
+                                 .ptr ⟨.glob (Schema.names s).storage, [.idx j]⟩
+                               | none => .null)))
+      ∧ σ'.toMem = σ.toMem := by
+  obtain ⟨σ', hloop, hmem⟩ :=
+    forLoop_scan (p := p) (callee := callee) hpk hne hkty s.capacity 0 σ R hk0
+      ht0 (by omega) hrnd
+  refine ⟨σ', ?_, hmem⟩
+  show (do
+    match ← execAt p callee (.forN tmpI (.lit s.capacity) (findLoopBody s pk)) σ with
+    | (σ₁, .normal) => execAt p callee (.ret (some (nullRow s))) σ₁
+    | (σ₁, .ret v)  => .ok (σ₁, .ret v)) = _
+  simp only [execAt, evalIndex, bind, Except.bind]
+  rw [hloop]
+  cases firstMatch s σ.glb k 0 s.capacity with
+  | some j => rfl
+  | none => simp only [execAt, evalExpr, nullRow, bind, Except.bind]
+
+/-- **`find` is correct.**
+
+It returns a pointer to a slot, or `NULL`, and it is a pointer exactly when
+`absOf` says the key is present. The memory it was handed comes back
+unchanged, because the scan writes only the loop variable and nothing else in
+the function writes at all.
+
+This is the project's first theorem about what generated code *computes*, as
+opposed to whether the checker accepts it.
+
+checked by: `lake build` -/
+theorem findCorrect : FindCorrect s := by
+  intro m pk k hwf hpk hkty R
+  have hchk : Schema.check s = [] := List.isEmpty_iff.mp hwf
+  have F := facts_of_check hchk
+  have hfl := filter_of_pkey hpk
+  have hne : pk.name ≠ tmpI :=
+    ne_of_reserved (F.notReserved pk (pk_mem hfl)) (by decide)
+  have hlen : (rowsOf s m.glb).length = s.capacity := R.length
+  have hrnd : ∀ j, j < (rowsOf s m.glb).length → (UInt32.ofNat j).toNat = j := by
+    intro j hj
+    have hlt : j < 4294967296 := by
+      have hc := F.capLt; simp only [Wf.u32Bound] at hc; omega
+    simpa [UInt32.toNat_ofNat'] using Nat.mod_eq_of_lt hlt
+  have hgenC : (genC s).funs = [findDef s pk, insertDef s pk, eraseDef s pk] := by
+    simp only [genC, hpk]
+  have hlook : lookupFun (genC s) (Schema.names s).find = .ok (findDef s pk) := by
+    simp [lookupFun, hgenC, findDef]
+  have hk0 : (m.toStore [(pk.name, k.toValue), (tmpI, .u32 0)]).getLocal pk.name
+      = some k.toValue := by
+    simp [Mem.toStore, Store.getLocal, Env.get?]
+  have ht0 : ((m.toStore [(pk.name, k.toValue), (tmpI, .u32 0)]).getLocal
+      tmpI).isSome = true := by
+    simp [Mem.toStore, Store.getLocal, Env.get?, hne]
+  obtain ⟨σ', hbody, hmem⟩ :=
+    exec_findBody (p := genC s) (callee := execStmt (genC s) 2)
+      hpk hne hkty (σ := m.toStore [(pk.name, k.toValue), (tmpI, .u32 0)]) R hk0 ht0
+      (by simp [Mem.toStore_glb, hlen]) (by simp only [Mem.toStore_glb]; exact hrnd)
+  refine ⟨firstMatch s m.glb k 0 s.capacity, ?_, by rw [← hlen]; exact firstMatch_isSome_iff R⟩
+  have hn : (genC s).funs.length = 2 + 1 := by rw [hgenC]; rfl
+  simp only [call, callFun, hlook, buildFrame_find, bind, Except.bind, hn]
+  rw [show execStmt (genC s) (2 + 1)
+        = execAt (genC s) (execStmt (genC s) 2) from rfl]
+  rw [hbody]
+  simp only [hmem, Mem.toStore_toMem, Mem.toStore_glb]
+  rfl
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
 for progress:
 
-- `FindCorrect` itself. Every *ingredient* is now proved — `buildFrame_find`
-  gives the prologue, `forLoop_scan` the loop, `firstMatch_isSome_iff` the link
-  to `absOf`, and the epilogue is one `evalExpr` on `NULL`. What remains is
-  assembling them through `callFun`, which means unfolding `lookupFun`,
-  `execStmt` at the call-depth budget, and `execAt` on `.seq`. That is
-  mechanical rather than conceptual, but it is not yet done, and saying it is
-  "nearly there" is not the same as it being checked.
+- The other four clauses of `Simulates`: `NoTrap`, `InsertRefines`,
+  `EraseRefines`, `RepInvPreserved`. `find` was the prerequisite — the other
+  three operations all call it — so they are now reachable, but they are not
+  done.
+
+`NoTrap` should now be close to free for `find`: `findCorrect` returns `.ok`,
+which is exactly what `NoTrap` asks. `insert` and `erase` additionally write
+through the returned pointer, so they need a write-side counterpart of
+`read_field` and the fact that `RepInv` survives a field update — neither of
+which is new technique.
 
 ## Two findings about `FindCorrect` as currently stated
 
