@@ -5,6 +5,7 @@ import Amcc.CSubset.Syntax
 import Amcc.CSubset.Examples
 import Amcc.CSubset.Value
 import Amcc.CSubset.Eval
+import Amcc.CSubset.Calls
 import Amcc.CSubset.Wf
 import Amcc.CSubset.WfChecks
 import Amcc.CSubset.SmallStep
@@ -20,6 +21,7 @@ import Amcc.Templates.ArrayTableInsert
 import Amcc.Templates.Layout
 import Amcc.Templates.Pool
 import Amcc.Templates.Upptr
+import Amcc.Templates.Llist
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Codegen.Print
 import Amcc.Codegen.PrintChecks
@@ -53,6 +55,9 @@ that should fail does not.)
 ## Phase 1 — semantics
 - `CSubset.Value`     — values, access paths, stores, the frame lemmas
 - `CSubset.Eval`      — the executable big-step semantics (`execStmt`)
+- `CSubset.Calls`     — template-independent reasoning about a call: peeling
+                        one statement, resolving a name to a definition, and
+                        getting in and out of `callFun`
 - `CSubset.Wf`        — the decidable checker for the obligations
 - `CSubset.WfChecks`  — the checker exercised, positively and negatively
 - `CSubset.SmallStep` — the normative relation, determinism, and
@@ -86,6 +91,10 @@ that should fail does not.)
 - `Templates.Pool`      — the **pool template** over the ctype model: a
                           free-list allocator (`Tpool`'s shape) emitted as C,
                           with `Init`/`Alloc`/`Free`/`N`
+- `Templates.Llist`     — the **intrusive doubly-linked list** (`amc`'s `zdl`
+                          flavour): nine functions, with the readers and both
+                          idempotence guards proved and the linking laws
+                          stated as `InsertLinks`/`RemoveUnlinks`
 - `Templates.Upptr`     — the **up-pointer template**: `Init`/`Get`/`Set`/`Q`
                           for a `dmmeta.reftype Upptr` field, with the
                           read-back law (`get_set`) and the frame law proved
@@ -104,6 +113,10 @@ Phase 3: every structural error the array table could raise is dischargeable
 from `RepInv` where it arises, so `MilestoneTheorem` is proved without it. It
 remains owed as the general bridge a template that cannot argue locally would
 need.
+
+`Templates.Llist.InsertLinks` and `RemoveUnlinks` — the linking laws. They
+need a reachability predicate over the store that does not exist yet; see the
+"Still owed" section of `Templates/Llist.lean` for exactly what.
 
 `Codegen.Print` is unverified — see `docs/DIVERGENCE.md` §3. A closed
 `MilestoneTheorem` certifies the generated **AST**; the C text is covered by

@@ -13,6 +13,7 @@ lake exe amcc            # the orders table
 lake exe amcc tag        # the degenerate key-only table
 lake exe amcc pool       # the free-list pool
 lake exe amcc upptr      # the up-pointer accessors
+lake exe amcc llist      # the intrusive doubly-linked list
 lake exe amcc > order_table.c
 ```
 -/
@@ -47,6 +48,18 @@ def emitProgram (d : Dmmeta.Db) (gen : Dmmeta.Db → CSubset.Program) : IO UInt3
     for e in errs do IO.eprintln s!"  {e}"
     return 1
 
+/-- Emit a program from a generator that may decline. -/
+def emitOpt (d : Dmmeta.Db) (gen : Dmmeta.Db → Option CSubset.Program)
+    (why : String) : IO UInt32 := do
+  match Dmmeta.check d with
+  | [] =>
+    match gen d with
+    | some p => IO.print (Codegen.Print.program p); return 0
+    | none   => IO.eprintln why; return 1
+  | errs => do
+    for e in errs do IO.eprintln s!"  {e}"
+    return 1
+
 def main (args : List String) : IO UInt32 :=
   match args with
   | [] | ["orders"] => emit Schema.Examples.orders
@@ -54,6 +67,8 @@ def main (args : List String) : IO UInt32 :=
   | ["pool"]        => emitPool Dmmeta.Examples.boundedDb
   | ["upptr"]       =>
     emitProgram Templates.Upptr.Examples.upDb Templates.Upptr.genUpptr
+  | ["llist"]       => emitOpt Templates.Llist.Examples.listDb
+                         Templates.Llist.genLlist "schema declares no Llist field"
   | _ => do
-    IO.eprintln "usage: amcc [orders|tag|pool|upptr]"
+    IO.eprintln "usage: amcc [orders|tag|pool|upptr|llist]"
     return 2

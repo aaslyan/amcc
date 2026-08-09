@@ -1,5 +1,6 @@
 import Amcc.Dmmeta
 import Amcc.CSubset.Wf
+import Amcc.CSubset.Calls
 
 /-!
 # AMCC — the `Upptr` template
@@ -160,58 +161,18 @@ def genUpptr (d : Dmmeta.Db) : Program :=
 
 /-! ## Reading memory between calls
 
-`Store.readPath` consults only the globals and the heap, so what an accessor
-observes is a function of the `Mem` alone. That is what lets the laws below be
-stated about `Mem` — which is what persists across a call — rather than about
-a store with a frame in it. -/
+`readMem` and the lookup and call lemmas used below live in `CSubset.Calls`:
+they say nothing about up-pointers, and the `Llist` template needs the same
+ones. -/
 
 /-- Where the up-pointer lives, given a pointer to the row. -/
 def upPath (q : Path) (fld : Ident) : Path := ⟨q.root, q.steps ++ [.fld fld]⟩
-
-/-- Reading a path out of memory. -/
-def readMem (m : Mem) (p : Path) : Option Value := (m.toStore []).readPath p
-
-theorem readMem_toStore (m : Mem) (loc : Env) (p : Path) :
-    (m.toStore loc).readPath p = readMem m p := by
-  simp only [readMem, Store.readPath]
-  have h : (m.toStore loc).rootVal = (m.toStore []).rootVal := by
-    funext r; cases r <;> rfl
-  rw [h]
-
-theorem readMem_toMem (σ : Store) (p : Path) :
-    readMem σ.toMem p = σ.readPath p := by
-  simp only [readMem, Store.readPath]
-  have h : (σ.toMem.toStore []).rootVal = σ.rootVal := by funext r; cases r <;> rfl
-  rw [h]
 
 /-! ## Looking a generated function up
 
 The accessors are emitted as one block of four per `Upptr` field, so the only
 thing standing between "this definition is in the program" and "this name
-resolves to it" is that the generated names do not collide. That is stated as a
-hypothesis rather than proved, because it is a property of the *whole* schema:
-`child ++ "_" ++ fld` is not injective in the pair (`a` / `b_c` and `a_b` / `c`
-generate the same name), so it is the schema checker's business, not this
-template's. -/
-
-theorem find?_of_mem_pairwise {α : Type _} {f : α → Ident} :
-    ∀ (l : List α) (a : α), a ∈ l → (l.map f).Pairwise (· ≠ ·) →
-      l.find? (fun x => f x == f a) = some a
-  | [], _, hm, _ => absurd hm (by simp)
-  | x :: xs, a, hm, hpw => by
-    rcases List.mem_cons.mp hm with rfl | hm'
-    · rw [List.find?_cons_of_pos (by simp)]
-    · have hne : f x ≠ f a :=
-        (List.pairwise_cons.mp (by simpa using hpw)).1 (f a) (List.mem_map_of_mem hm')
-      rw [List.find?_cons_of_neg (by simp [hne])]
-      exact find?_of_mem_pairwise xs a hm'
-        (List.Pairwise.of_cons (by simpa using hpw))
-
-/-- A function in a program with pairwise-distinct names resolves to itself. -/
-theorem lookupFun_of_mem {p : Program} {fd : FunDef} (hmem : fd ∈ p.funs)
-    (hpw : (p.funs.map FunDef.name).Pairwise (· ≠ ·)) :
-    lookupFun p fd.name = .ok fd := by
-  simp only [lookupFun, find?_of_mem_pairwise p.funs fd hmem hpw]
+resolves to it" is `CSubset.lookupFun_of_mem` plus the two facts below. -/
 
 /-- The four accessors of an `Upptr` field are in the generated program. -/
 theorem defsFor_subset {d : Dmmeta.Db} {c : Dmmeta.Ctype} {f : Dmmeta.Field}
@@ -258,31 +219,9 @@ theorem resolve_up {σ : Store} {v : Value}
     | some w => exact ⟨w, rfl⟩
   simp only [upFld, resolve, hloc, hw, bind, Except.bind, upPath, hread]
 
-theorem read_var {σ : Store} {x : Ident} {v : Value} (h : σ.getLocal x = some v) :
-    evalExpr σ (.rd (.var x)) = .ok v := by
-  simp only [evalExpr, resolve, h, readLoc, bind, Except.bind]
-
-/-- None of the four accessors calls anything, so any positive depth budget
-runs the body. This is the only place the depth budget appears. -/
-theorem callFun_normal {fd : FunDef} {args : List Value} {frame : Env} {n : Nat}
-    {σ' : Store}
-    (hlook : lookupFun p fd.name = .ok fd) (hn : p.funs.length = n + 1)
-    (hframe : buildFrame m fd args = .ok frame)
-    (hbody : execAt p (execStmt p n) fd.body (m.toStore frame)
-      = .ok (σ', .normal)) :
-    callFun p m fd.name args = .ok (σ'.toMem, none) := by
-  simp only [callFun, hlook, hframe, bind, Except.bind, hn]
-  rw [show execStmt p (n + 1) = execAt p (execStmt p n) from rfl, hbody]
-
-theorem callFun_ret {fd : FunDef} {args : List Value} {frame : Env} {n : Nat}
-    {σ' : Store} {res : Option Value}
-    (hlook : lookupFun p fd.name = .ok fd) (hn : p.funs.length = n + 1)
-    (hframe : buildFrame m fd args = .ok frame)
-    (hbody : execAt p (execStmt p n) fd.body (m.toStore frame)
-      = .ok (σ', .ret res)) :
-    callFun p m fd.name args = .ok (σ'.toMem, res) := by
-  simp only [callFun, hlook, hframe, bind, Except.bind, hn]
-  rw [show execStmt p (n + 1) = execAt p (execStmt p n) from rfl, hbody]
+/-! None of the four accessors calls anything, so any positive depth budget
+runs the body; `callFun_normal` / `callFun_ret` in `CSubset.Calls` do the
+rest. -/
 
 /-- Writing through `row->f`. The write cannot fail — `writePath_isSome` — for
 exactly the reason the read cannot: the field is there. -/
@@ -317,7 +256,7 @@ theorem get_correct {v : Value}
       = .ok (m.toStore [(parRow, Value.ptr q)], .ret (some v)) := by
     simp only [getDef, execAt, evalExpr, resolve_up hloc hread, readLoc, hread,
       bind, Except.bind]
-  have := callFun_ret (m := m) (fd := getDef (names child fld) child fld parent)
+  have := callFun_ret (p := p) (m := m) (fd := getDef (names child fld) child fld parent)
     (args := [Value.ptr q]) (frame := [(parRow, Value.ptr q)]) hlook hn rfl hbody
   simpa [getDef] using this
 
@@ -343,7 +282,7 @@ theorem init_correct {v : Value}
     exec_assign_up (p := p) (callee := execStmt p n) (w := Value.null)
       (e := .null (.strct parent)) hloc hread rfl
   refine ⟨σ'.toMem, ?_, ?_, ?_⟩
-  · have := callFun_normal (m := m) (fd := initDef (names child fld) child fld parent)
+  · have := callFun_normal (p := p) (m := m) (fd := initDef (names child fld) child fld parent)
       (args := [Value.ptr q]) (frame := [(parRow, Value.ptr q)]) hlook hn rfl
       (by simpa [initDef] using hbody)
     simpa [initDef] using this
@@ -380,13 +319,13 @@ theorem get_set {v pv : Value}
       (upPath q fld) = some v := by rw [readMem_toStore]; exact hrow
   obtain ⟨σ', hbody, hwr⟩ :=
     exec_assign_up (p := p) (callee := execStmt p n) (w := pv)
-      hloc hread (read_var hlocP)
+      hloc hread (read_local' hlocP)
   have hrow' : RowAt σ'.toMem q fld pv := by
     show readMem σ'.toMem _ = _
     rw [readMem_toMem]
     exact Store.readPath_writePath_self hwr
   refine ⟨σ'.toMem, ?_, get_correct hlookG ⟨n, hn⟩ hrow', ?_⟩
-  · have := callFun_normal (m := m) (fd := setDef (names child fld) child fld parent)
+  · have := callFun_normal (p := p) (m := m) (fd := setDef (names child fld) child fld parent)
       (args := [Value.ptr q, pv]) (frame := [(parRow, Value.ptr q), (parP, pv)])
       hlookS hn rfl (by simpa [setDef] using hbody)
     simpa [setDef] using this
@@ -419,7 +358,7 @@ theorem test_null
       = .ok (m.toStore [(parRow, Value.ptr q)], .ret (some (.bool false))) := by
     simp only [testDef, execAt, evalExpr, resolve_up hloc hread, readLoc, hread,
       bind, Except.bind, evalBin]
-  have := callFun_ret (m := m) (fd := testDef (names child fld) child fld parent)
+  have := callFun_ret (p := p) (m := m) (fd := testDef (names child fld) child fld parent)
     (args := [Value.ptr q]) (frame := [(parRow, Value.ptr q)]) hlook hn rfl hbody
   simpa [testDef] using this
 
@@ -440,7 +379,7 @@ theorem test_ptr {r : Path}
       = .ok (m.toStore [(parRow, Value.ptr q)], .ret (some (.bool true))) := by
     simp only [testDef, execAt, evalExpr, resolve_up hloc hread, readLoc, hread,
       bind, Except.bind, evalBin]
-  have := callFun_ret (m := m) (fd := testDef (names child fld) child fld parent)
+  have := callFun_ret (p := p) (m := m) (fd := testDef (names child fld) child fld parent)
     (args := [Value.ptr q]) (frame := [(parRow, Value.ptr q)]) hlook hn rfl hbody
   simpa [testDef] using this
 

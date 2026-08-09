@@ -175,8 +175,10 @@ Stated plainly so the comparison is not read as parity.
 - **Storage providers**: `Lary` (390 uses), `Ptrary` (136), `Tary` (69),
   `Tpool` (40), `Lpool`, `Blkpool`, `Delptr`, `Malloc`, `Sbrk` — AMCC emits
   one, over `Inlary`.
-- **Access patterns**: `Thash`, `Llist` in eight flavours, `Bheap`, `Atree`,
-  `Count`, and a cursor for every one of them. AMCC emits none.
+- **Access patterns**: `Thash`, `Bheap`, `Atree`, `Count`, and a cursor for
+  every one of them, plus seven of `Llist`'s eight flavours. AMCC emits
+  `Llist`'s `zdl` and nothing else — and for that one, the *linking* laws are
+  stated (`InsertLinks` / `RemoveUnlinks`) and not yet proved.
 - **Cross-references** — the centre of the library. AMCC models them
   (`Amcc/Spec/Algebra.lean`) and emits none.
 - **The ssim layer** entirely: `acr`, query mode, `ssimfile` loading,
@@ -184,6 +186,27 @@ Stated plainly so the comparison is not read as parity.
   by construction.
 - **Scale**: the `amc` namespace alone generates ~54,000 lines across 130
   ctypes and 660 fields.
+
+### 2.4 `Llist` membership is a stored flag, not the `(T*)-1` sentinel
+
+`amc`'s `InLlistQ` is `row.$xfname_next != ($Cpptype*)-1` — the same
+unconstructible pointer §1.2 records for the pool's double-delete guard. Every
+one of `amc`'s eight list flavours needs a not-in-list marker, so this is not
+specific to any of them.
+
+The subset has no integer-to-pointer conversion, so AMCC's element gains one
+generated `bool` instead. The cost is one byte per element against `amc`'s
+zero. The return is that "is this row in the list" is a fact stored in the
+program's own value domain, so `Insert`'s and `Remove`'s idempotence guards are
+statements about the store — `Templates/Llist.lean`'s `insert_noop` and
+`remove_noop` — rather than about implementation-defined behaviour.
+
+AMCC also emits only the `zdl` flavour of the eight (zero-terminated,
+doubly-linked, head insertion). Circular is ruled out by the same sentinel
+problem; singly-linked is not, but `amc`'s singly-linked `Remove` scans from
+the head to find the predecessor, which makes it O(n) and makes the unlink
+argument a statement about a scan. The other seven are unattempted work, not a
+design position.
 
 ### 3.0 `Upptr` is exposed as four functions, not a public member
 

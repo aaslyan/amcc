@@ -2,9 +2,17 @@
 
 ## Now
 
-**C — `Llist` link/unlink over the pool.**
+**D — `Thash`.**
 
 ## Done
+
+- **C — `Llist` link/unlink.** `Templates/Llist.lean` emits `amc`'s `zdl`
+  flavour — nine functions — and passes `Wf.check`. Proved: `init_correct`,
+  the five readers, and both idempotence guards. **Not proved**: the linking
+  laws, stated as `InsertLinks` / `RemoveUnlinks`. They need a reachability
+  predicate over the store that does not exist yet; the "Still owed" section
+  of the module says exactly what, and `docs/PLAN.md` carries it as the next
+  proof obligation. Differentially tested by `scripts/smoke.sh`.
 
 - **B — `Upptr` accessors.** `Templates/Upptr.lean`: `Init`/`Get`/`Set`/`Q`
   emitted per `dmmeta.reftype Upptr` field, with `get_set` (read-back),
@@ -19,7 +27,7 @@
 
 ## Next
 
-- D — `Thash`; record fixed-capacity buckets as a divergence
+- The list invariant, and with it the two linking laws
 
 ## Decisions
 
@@ -66,6 +74,15 @@
 - **`Wf.TypeSound` is confirmed off the critical path.** Every structural
   error the array table could raise is dischargeable from `RepInv` where it
   arises. Recorded in `Amcc.lean` and `docs/PLAN.md`.
+
+## Findings
+
+- **A linked list has no carrier.** `RepInv` for the array table quantifies
+  over indices of a `List Value`. A list's shape is a property of a graph in
+  the heap, so its invariant needs a reachability predicate over the store —
+  and `Thash` will need the same one, because a bucket *is* a chain. That is
+  why the linking laws are stated rather than proved: building the predicate
+  once, for both, beats improvising it twice.
 
 ## Dead ends
 

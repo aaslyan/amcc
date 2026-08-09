@@ -33,3 +33,10 @@ cc -std=c11 -Wall -Wextra -Werror -o "$tmp/upptr" "$tmp/upptr.c" scripts/upptr_d
 "$tmp/upptr" > "$tmp/upptr_got.txt"
 diff scripts/upptr_expected.txt "$tmp/upptr_got.txt"
 echo "smoke: upptr  OK — read-back and frame hold in the compiled C"
+
+# The intrusive list, against the laws Templates/Llist.lean states.
+lake exe amcc llist > "$tmp/llist.c"
+cc -std=c11 -Wall -Wextra -Werror -o "$tmp/llist" "$tmp/llist.c" scripts/llist_driver.c
+"$tmp/llist" > "$tmp/llist_got.txt"
+diff scripts/llist_expected.txt "$tmp/llist_got.txt"
+echo "smoke: llist  OK — link, unlink and the idempotence guards behave as proved"

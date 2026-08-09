@@ -17,15 +17,16 @@ allocator layer), `docs/ALLOCATOR_REQUIREMENT.md` (the allocator contract),
 
 ## Status
 
-**Emitted C** — three templates, eleven functions.
+**Emitted C** — four templates, twenty functions.
 
 | Template | Functions |
 |---|---|
 | Array table (`Templates/ArrayTable`) | `<t>_Find` → row pointer or `NULL`, `<t>_InsertMaybe`, `<t>_Remove` |
 | Pool (`Templates/Pool`) | `D_f_Init`, `D_f_Alloc`, `D_f_Free`, `D_f_N` |
 | Up-pointer (`Templates/Upptr`) | `C_f_Init`, `C_f_Get`, `C_f_Set`, `C_f_Q` |
+| Intrusive list (`Templates/Llist`) | `D_f_Init`, `_Insert`, `_Remove`, `_First`, `_Next`, `_Prev`, `_InLlistQ`, `_EmptyQ`, `_N` |
 
-All three compile under `cc -Wall -Wextra -Werror` and are differentially
+All four compile under `cc -Wall -Wextra -Werror` and are differentially
 tested against a real compiler by `scripts/smoke.sh`.
 
 **Proved for every accepted schema**
@@ -49,6 +50,9 @@ tested against a real compiler by `scripts/smoke.sh`.
   `Set` returns exactly what was set, and the `Set` is invisible at every path
   that does not overlap the field. `init_correct`, `test_null` and `test_ptr`
   cover the other three functions.
+- `Llist.init_correct`, the five readers, and both idempotence guards
+  (`insert_noop`, `remove_noop`). The linking laws are **stated and not
+  proved** — `InsertLinks` / `RemoveUnlinks`; see below.
 - `Store.readPath_writePath_disjoint` — the frame law the above rests on, and
   the first thing that makes `Path.overlaps` mean something: a prefix test on
   access paths *is* a sufficient aliasing analysis, because a path names an
@@ -92,10 +96,14 @@ Two gaps remain against the full measure, both recorded in
 
 ## Next, in order
 
-1. **`Llist` link/unlink** over the pool. Where the reftype vocabulary starts
-   paying off, and where `alloc_frame` stops being theoretical. Unblocked by
-   the printer emitting struct tags, which is what makes a self-referential
-   link field legal.
+1. **The list invariant, and with it `Llist.InsertLinks` / `RemoveUnlinks`.**
+   A linked list's shape is a property of a graph in the heap, not of a
+   carrier list, so the invariant needs a *reachability* predicate over the
+   store — the chain from `head` along `next` is finite, acyclic and
+   `NULL`-terminated, `prev` is its inverse, `inlist` marks exactly its
+   members, `n` is its length. `Store.readPath_writePath_disjoint` supports
+   the frame reasoning but does not supply that predicate. `Thash` needs the
+   same thing (a bucket *is* a chain), so it is worth building once.
 2. **`Thash`.** The bucket walk fits the capacity-bounded `forN` we already
    have; correctness does not depend on hash quality, only the expected-time
    claim does. No subset extension needed.
