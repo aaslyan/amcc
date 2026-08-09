@@ -305,7 +305,7 @@ schema. -/
 /-- `find?` returns an element that satisfies the predicate and is in the list.
 Proved here rather than cited because core's `List.find?_some` does not unify
 against a two-argument boolean conjunction without help. -/
-private theorem find?_pred {α : Type _} {p : α → Bool} :
+theorem find?_pred {α : Type _} {p : α → Bool} :
     ∀ {l : List α} {a : α}, l.find? p = some a → p a = true ∧ a ∈ l
   | [], _, h => by simp [List.find?] at h
   | x :: xs, a, h => by
@@ -381,20 +381,26 @@ def NoTrap (s : Schema) : Prop :=
     ∧ (∃ r, call s m (Schema.names s).insert (k.toValue :: vs) = .ok r)
     ∧ (∃ r, call s m (Schema.names s).erase [k.toValue] = .ok r)
 
-/-- **`find` agrees with the abstraction.** It returns a slot index no greater
-than `CAP`, and that index is a real slot exactly when the key is present.
+/-- **`find` agrees with the abstraction.** It returns a pointer to a slot, or
+`NULL`, and it is a pointer exactly when the key is present.
 
-The `i ≤ capacity` clause is what the `_at != CAP` guard needs in order to make
-every subsequent subscript in `insert`, `erase` and the getters in range — so
-this is where the no-trap argument is actually discharged. -/
+The `_at != NULL` guard in `insert` and `erase` consumes this: a non-null
+result is a live slot, which is what makes every subsequent access through it
+safe. -/
 def FindCorrect (s : Schema) : Prop :=
-  ∀ (m : Mem) (k : Interface.Key),
-    Schema.wf s = true → RepInv s m.glb →
-    ∃ i : Nat,
-      i ≤ s.capacity
-      ∧ call s m (Schema.names s).find [k.toValue]
-          = .ok (m, some (.u32 (UInt32.ofNat i)))
-      ∧ (i < s.capacity ↔ (absOf s m.glb k).isSome)
+  ∀ (m : Mem) (pk : Schema.Field) (k : Interface.Key),
+    Schema.wf s = true → Schema.pkey? s = some pk →
+    -- Without this the statement is *false*: `evalBin .eq` is defined only on
+    -- matching scalar constructors, so searching a `u64`-keyed table with a
+    -- `bool` key raises `typeErr` rather than reporting a miss.
+    k.ty = pk.ty →
+    RepInv s m.glb →
+    ∃ r : Option Nat,
+      call s m (Schema.names s).find [k.toValue]
+          = .ok (m, some (match r with
+                          | some i => .ptr ⟨.glob (Schema.names s).storage, [.idx i]⟩
+                          | none   => .null))
+      ∧ (r.isSome ↔ (absOf s m.glb k).isSome)
 
 /-- **`insert` refines `Abs.insert`.**
 

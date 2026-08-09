@@ -431,12 +431,12 @@ theorem forLoop_scan {p : Program} {callee} {pk : Schema.Field}
                            .ret (some (.ptr ⟨.glob (Schema.names s).storage,
                                              [.idx j]⟩))
                          | none => .normal)
-            ∧ σ'.glb = σ.glb := by
+            ∧ σ'.toMem = σ.toMem := by
   intro rem
   induction rem with
   | zero =>
     intro i σ _ _ _ _ _
-    exact ⟨σ.setLocal tmpI (.u32 (UInt32.ofNat i)), rfl, Store.setLocal_glb _ _ _⟩
+    exact ⟨σ.setLocal tmpI (.u32 (UInt32.ofNat i)), rfl, rfl⟩
   | succ rem ih =>
     intro i σ R hkloc htmp hbnd hrnd
     have hlt : i < (rowsOf s σ.glb).length := by omega
@@ -462,15 +462,96 @@ theorem forLoop_scan {p : Program} {callee} {pk : Schema.Field}
     cases hm : slotMatches s σ.glb k i with
     | true =>
       simp only [if_pos trivial]
-      exact ⟨_, rfl, hglb⟩
+      exact ⟨_, rfl, rfl⟩
     | false =>
       obtain ⟨σ', heq, hgl⟩ := ih (i + 1)
         (σ.setLocal tmpI (.u32 (UInt32.ofNat i))) (hglb ▸ R) hk0
         (by rw [Store.getLocal, Store.setLocal, Env.isSome_get?_set]; exact htmp)
         (by rw [hglb]; omega) (by rw [hglb]; exact hrnd)
       rw [hglb] at heq
-      refine ⟨σ', ?_, by rw [hgl, hglb]⟩
+      refine ⟨σ', ?_, hgl⟩
       simpa using heq
+
+/-! ## What the scan found, in the abstraction's terms
+
+`firstMatch` is an index; `absOf` is a `List.find?`. Relating them is what
+turns "the loop stopped at slot `j`" into "the key is in the table". -/
+
+theorem firstMatch_none {glb : Env} {k : Interface.Key} :
+    ∀ (rem i : Nat), firstMatch s glb k i rem = none →
+      ∀ j, i ≤ j → j < i + rem → slotMatches s glb k j = false := by
+  intro rem
+  induction rem with
+  | zero => intro i _ j _ hj; omega
+  | succ rem ih =>
+    intro i h j hij hj
+    cases hm : slotMatches s glb k i with
+    | true => simp [firstMatch, hm] at h
+    | false =>
+      simp only [firstMatch, hm, Bool.false_eq_true, if_false] at h
+      rcases Nat.eq_or_lt_of_le hij with rfl | hlt
+      · exact hm
+      · exact ih (i + 1) h j hlt (by omega)
+
+theorem firstMatch_some {glb : Env} {k : Interface.Key} :
+    ∀ (rem i j : Nat), firstMatch s glb k i rem = some j →
+      slotMatches s glb k j = true := by
+  intro rem
+  induction rem with
+  | zero => intro i j h; exact Option.noConfusion h
+  | succ rem ih =>
+    intro i j h
+    cases hm : slotMatches s glb k i with
+    | true =>
+      simp only [firstMatch, hm, if_true] at h
+      cases h; exact hm
+    | false =>
+      simp only [firstMatch, hm, Bool.false_eq_true, if_false] at h
+      exact ih (i + 1) j h
+
+/-- **The scan agrees with the abstraction.**
+
+A scan of the whole array finds a slot exactly when `absOf` says the key is
+present. This is the one place the generated loop and the abstraction function
+— written independently of one another — are forced to agree.
+
+checked by: `lake build` -/
+theorem firstMatch_isSome_iff {glb : Env} {k : Interface.Key} (R : RepInv s glb) :
+    (firstMatch s glb k 0 (rowsOf s glb).length).isSome
+      ↔ (absOf s glb k).isSome := by
+  constructor
+  · intro h
+    cases hf : firstMatch s glb k 0 (rowsOf s glb).length with
+    | none => rw [hf] at h; simp at h
+    | some j =>
+      have hj := firstMatch_some _ _ _ hf
+      simp only [slotMatches] at hj
+      cases hr : (rowsOf s glb)[j]? with
+      | none => rw [hr] at hj; simp at hj
+      | some r =>
+        rw [hr] at hj
+        have hmem : r ∈ rowsOf s glb := List.mem_of_getElem? hr
+        simp only [absOf]
+        cases hfd : (rowsOf s glb).find?
+            (fun r => rowOccupied s r && rowKey? s r == some k) with
+        | none =>
+          have hno := List.find?_eq_none.mp hfd r hmem
+          exact absurd hj (by simpa using hno)
+        | some r' => exact (R.rows r' (find?_pred hfd).2).vals
+  · intro h
+    simp only [absOf] at h
+    cases hfd : (rowsOf s glb).find?
+        (fun r => rowOccupied s r && rowKey? s r == some k) with
+    | none => rw [hfd] at h; simp at h
+    | some r' =>
+      obtain ⟨hp, hm'⟩ := find?_pred hfd
+      obtain ⟨j, hjlt, hjr⟩ := List.getElem_of_mem hm'
+      cases hf : firstMatch s glb k 0 (rowsOf s glb).length with
+      | some _ => simp
+      | none =>
+        have hno := firstMatch_none _ _ hf j (Nat.zero_le j) (by omega)
+        simp only [slotMatches, List.getElem?_eq_getElem hjlt, hjr] at hno
+        exact absurd hp (by simpa using hno)
 
 /-! ## Still owed
 
