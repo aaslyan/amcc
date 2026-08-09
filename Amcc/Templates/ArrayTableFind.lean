@@ -712,6 +712,83 @@ theorem read_ptrField {i : Nat} {row : Value} {f : Ident} {v : Value}
   simp only [evalExpr, resolve_ptrField R hptr hrow hfld, bind, Except.bind]
   exact readLoc_field R hrow hfld
 
+/-! ## Writing a slot's field
+
+What a write through `_at->f` does to the storage array, as an equation about
+`rowsOf`. This is the shared foundation for `insert` and `erase`: both do
+exactly one field write per affected slot, and both then have to argue that
+`RepInv` survives it. -/
+
+/-- **A field write updates exactly that slot, and nothing else.**
+
+The frame content — that the rest of the array is untouched and the local
+frame is untouched — is what makes the invariant's other clauses survive, and
+it comes from `List.set` rather than from any aliasing analysis, because the
+path is rooted at a global and resolved.
+
+checked by: `lake build` -/
+theorem write_slotField {i : Nat} {row : Value} {fs : List (Ident × Value)}
+    {f : Ident} {w : Value} (R : RepInv s σ.glb)
+    (hrow : (rowsOf s σ.glb)[i]? = some row)
+    (hstrct : row = .strct fs)
+    (hfld : (Env.get? fs f).isSome = true) :
+    ∃ σ', writeLoc σ (.glb ⟨.glob (Schema.names s).storage, [.idx i, .fld f]⟩) w
+            = .ok σ'
+      ∧ rowsOf s σ'.glb
+          = (rowsOf s σ.glb).set i (.strct (Env.set fs f w))
+      ∧ σ'.loc = σ.loc
+      ∧ σ'.hp = σ.hp := by
+  have hglb : σ.glb.get? (Schema.names s).storage
+      = some (.arr (rowsOf s σ.glb)) := R.storage
+  have hlt : i < (rowsOf s σ.glb).length := by
+    obtain ⟨h, _⟩ := List.getElem?_eq_some_iff.mp hrow; exact h
+  subst hstrct
+  -- the value the array becomes
+  have hset : (Value.arr (rowsOf s σ.glb)).setPath [.idx i, .fld f] w
+      = some (.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w)))) := by
+    show (match (Value.arr (rowsOf s σ.glb)).getStep (.idx i) with
+          | none => none
+          | some v' =>
+            match v'.setPath [.fld f] w with
+            | none => none
+            | some v'' => (Value.arr (rowsOf s σ.glb)).setStep (.idx i) v'') = _
+    rw [show (Value.arr (rowsOf s σ.glb)).getStep (.idx i)
+          = some (.strct fs) from by simp only [Value.getStep, hrow]]
+    show (match (Value.strct fs).setPath [.fld f] w with
+          | none => none
+          | some v'' => (Value.arr (rowsOf s σ.glb)).setStep (.idx i) v'') = _
+    rw [show (Value.strct fs).setPath [.fld f] w
+          = some (.strct (Env.set fs f w)) from by
+      show (match (Value.strct fs).getStep (.fld f) with
+            | none => none
+            | some v' =>
+              match v'.setPath [] w with
+              | none => none
+              | some v'' => (Value.strct fs).setStep (.fld f) v'') = _
+      cases hg : Env.get? fs f with
+      | none => rw [hg] at hfld; exact absurd hfld (by simp)
+      | some x =>
+        simp only [Value.getStep, hg, Value.setPath, Value.setStep]
+        rw [if_pos (by simp [hg])]]
+    simp only [Value.setStep]
+    rw [if_pos hlt]
+  refine ⟨σ.setRoot (.glob (Schema.names s).storage)
+            (.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w)))), ?_, ?_, ?_, ?_⟩
+  · simp only [writeLoc, Store.writePath, Store.rootVal, hglb, hset]
+  · have hget : (σ.glb.set (Schema.names s).storage
+        (Value.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w))))).get?
+        (Schema.names s).storage
+        = some (.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w)))) := by
+      rw [Env.get?_set_self, hglb]; rfl
+    show (match (σ.glb.set (Schema.names s).storage
+            (Value.arr ((rowsOf s σ.glb).set i (.strct (Env.set fs f w))))).get?
+            (Schema.names s).storage with
+          | some (.arr vs) => vs
+          | _ => []) = _
+    rw [hget]
+  · rfl
+  · rfl
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
@@ -725,14 +802,24 @@ The reading half of the writers is done: `resolve_ptrField` and
 what rules out `nullDeref` and `useAfterFree` — neither of which could arise
 for the index-rooted `g[_i].f` form, so they are genuinely new obligations.
 
-What is left is the **write** half: that a field update produces a store still
-satisfying `RepInv`, and that `absOf` moves the way `Abs.insert` and
-`Abs.erase` say. `RepInv` has four clauses and a field write has to preserve
-all of them — `storage` and `length` are immediate (a write does not change
-the array's shape), `rows` needs the written value to keep the row well
-formed, and `distinct` is the one with content: writing a key can only be
-allowed to preserve key-uniqueness, which is exactly what `insert`'s
-find-first-then-claim structure is for.
+`write_slotField` gives the write itself: a field update replaces exactly that
+slot and leaves the rest of the array, the frame and the heap alone. The frame
+content comes from `List.set`, not from any aliasing analysis, because the
+path is rooted at a global and already resolved.
+
+What is left is that `RepInv` survives it. The invariant has four clauses and
+they are not equally hard:
+
+- `storage` and `length` are immediate — `List.set` does not change length.
+- `rows` needs the written value to keep the row well formed. For `erase`
+  (writing `false` to the occupancy flag) that is trivial; for `insert` it
+  needs the written field to match its declared type.
+- `distinct` is the one with content. Clearing occupancy can only shrink the
+  occupied set, so `erase` preserves it for free. `insert` claiming a slot
+  writes a *key*, and preserving key-uniqueness is exactly what the
+  find-first-then-claim structure exists to guarantee — so that is where the
+  real argument lives, and it is the one place `insert` is harder than
+  `erase` rather than merely longer.
 
 ## Two findings about `FindCorrect` as currently stated
 
