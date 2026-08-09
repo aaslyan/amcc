@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Read `docs/GOALS.md` first — it is canonical, and if anything here contradicts it, it wins.**
 
-AMCC is a **verified reimplementation of OpenACR's `amc`**, written in Lean 4 (Lake package, no external dependencies — no mathlib).
+AMCC is a **verified reimplementation of OpenACR's `amc`** (<https://github.com/alexeilebedev/openacr>), written in Lean 4 (Lake package, no external dependencies — no mathlib).
 
 **The goal: replicate OpenACR's `amc` with provable correctness.** amc turns a relational schema into data-structure code; AMCC does the same, and additionally emits — as Lean statements anyone can read, cite and build on — what the generated functions are guaranteed to do. The deliverable is not only C: it is C *plus explicit, machine-checked statements of its behaviour*, so a consumer can depend on the guarantee rather than on testing.
 

@@ -4,7 +4,8 @@
 
 ## The goal
 
-**AMCC is a verified reimplementation of OpenACR's `amc`.**
+**AMCC is a verified reimplementation of OpenACR's `amc`**
+(<https://github.com/alexeilebedev/openacr>).
 
 It consumes the same kind of relational schema `amc` consumes and generates the
 same kind of data-structure code `amc` generates — same API shape, same
@@ -80,7 +81,8 @@ pretty-printer, the C compiler, and the leaf allocator.
 
 ## Reference
 
-The specification of *what* to build is `amc` itself:
-`~/openacr-mine/data/dmmeta/` for the vocabulary, `cpp/gen/` for the generated
+The specification of *what* to build is `amc` itself —
+<https://github.com/alexeilebedev/openacr>, with `~/openacr-mine` as the local
+reference checkout: `data/dmmeta/` for the schema vocabulary, `cpp/gen/` for the generated
 API, `cpp/amc/` for the generator, `txt/exe/amc/` for the documentation. The
 proofs are what AMCC adds.

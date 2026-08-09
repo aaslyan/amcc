@@ -10,6 +10,7 @@ import Amcc.CSubset.WfChecks
 import Amcc.CSubset.SmallStep
 import Amcc.CSubset.Sanity
 import Amcc.Schema
+import Amcc.Dmmeta
 import Amcc.Interface
 import Amcc.Templates.ArrayTable
 import Amcc.Templates.ArrayTableWf
@@ -53,7 +54,11 @@ that should fail does not.)
 - `CSubset.Sanity`    — the phase's sanity theorems
 
 ## Phase 2 — the schema DSL
-- `Schema` — the generator's input language, and its checker
+- `Schema` — the legacy single-table input language, and its checker
+- `Dmmeta` — the **ctype model**: `Ctype`, `Field` whose `arg` names another
+  ctype, `Db` in declaration order, the full `Reftype` vocabulary with its
+  `dmmeta/reftype.ssim` flags, and a checker that resolves every `arg` and
+  keeps layout acyclic while letting pointers and indexes refer forwards
 
 ## Phase 3 — the array-table template
 - `Interface`                  — the abstract map (`MapLaws`) a table implements

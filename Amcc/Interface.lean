@@ -11,6 +11,13 @@ read and cite, and `MapLaws` is that form for a keyed table: three operations
 and the four equations relating them, stated in Lean and independent of any
 implementation.
 
+**Nothing upstream supplies this.** `amc` generates the code and states no laws
+about it, so `MapLaws` is AMCC's own abstraction rather than something adopted.
+It is deliberately minimal — a starting point, not the finished interface. The
+growth path is in `docs/PLAN.md`: traversal laws (because `amc` generates a
+`_curs` for every access pattern, and nothing here yet says anything about
+iteration order) and a fallible insert (because allocation can fail).
+
 ## Shape
 
 `MapLaws M` is a *bundle*: the three operations plus the four equations
@@ -22,7 +29,9 @@ takes one as a parameter.
 
 Four laws, no more: they are what any keyed map must satisfy, and each is
 discharged for `AbsTable` below in one line. Anything harder to prove would be
-a sign the interface, not the implementation, is wrong.
+a sign the interface, not the implementation, is wrong. Laws for the access
+patterns `amc` also generates — ordered iteration, group-by — are additions to
+make, not omissions to excuse; see `docs/PLAN.md`.
 -/
 
 namespace Interface
