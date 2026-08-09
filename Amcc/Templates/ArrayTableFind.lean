@@ -789,6 +789,78 @@ theorem write_slotField {i : Nat} {row : Value} {fs : List (Ident × Value)}
   · rfl
   · rfl
 
+/-! ## Clearing occupancy
+
+What `erase` does to a row. The point of these is that writing the occupancy
+flag disturbs **nothing else** about the row — not its key, not its value
+fields — which is what makes `RepInv`'s `rows` clause survive and what makes
+`absOf` change in exactly the way `Abs.erase` says.
+
+They rest on the schema check's no-`occupied`-collision rule: a field named
+`occupied` would make the write clobber a real field instead. That rule has
+been in `Schema.check` since Phase 2 and this is the first place it is
+*used*. -/
+
+/-- Writing the occupancy flag leaves the key alone. -/
+theorem rowKey_set_occupied {fs : List (Ident × Value)} {pk : Schema.Field}
+    {w : Value} (hpk : Schema.pkey? s = some pk)
+    (hne : pk.name ≠ (Schema.names s).occupied) :
+    rowKey? s (.strct (Env.set fs (Schema.names s).occupied w))
+      = rowKey? s (.strct fs) := by
+  simp [rowKey?, hpk, Env.get?_set_ne _ hne]
+
+/-- And leaves the value fields alone. -/
+theorem rowVals_set_occupied {fs : List (Ident × Value)} {w : Value}
+    (hne : ∀ f ∈ Schema.valFields s, f.name ≠ (Schema.names s).occupied) :
+    rowVals? s (.strct (Env.set fs (Schema.names s).occupied w))
+      = rowVals? s (.strct fs) := by
+  simp only [rowVals?]
+  have key : ∀ (l : List Schema.Field),
+      (∀ f ∈ l, f.name ≠ (Schema.names s).occupied) →
+      l.mapM (fun f => Env.get? (Env.set fs (Schema.names s).occupied w) f.name)
+        = l.mapM (fun f => Env.get? fs f.name) := by
+    intro l
+    induction l with
+    | nil => intro _; rfl
+    | cons a as ih =>
+      intro h
+      simp only [List.mapM_cons, Env.get?_set_ne _ (h a (by simp)),
+        ih (fun f hf => h f (List.mem_cons_of_mem a hf))]
+  exact key _ hne
+
+/-- The written flag is what the row now reports. -/
+theorem rowOccupied_set_occupied {fs : List (Ident × Value)} {b : Bool}
+    (hocc : (Env.get? fs (Schema.names s).occupied).isSome = true) :
+    rowOccupied s (.strct (Env.set fs (Schema.names s).occupied (.bool b))) = b := by
+  simp only [rowOccupied, Env.get?_set_self]
+  cases hg : Env.get? fs (Schema.names s).occupied with
+  | none => rw [hg] at hocc; exact absurd hocc (by simp)
+  | some _ => rfl
+
+/-- **A row stays well formed when its occupancy flag is written.**
+
+checked by: `lake build` -/
+theorem rowOk_set_occupied {fs : List (Ident × Value)} {pk : Schema.Field}
+    {b : Bool} (hpk : Schema.pkey? s = some pk)
+    (hnepk : pk.name ≠ (Schema.names s).occupied)
+    (hneval : ∀ f ∈ Schema.valFields s, f.name ≠ (Schema.names s).occupied)
+    (hocc : (Env.get? fs (Schema.names s).occupied).isSome = true)
+    (h : RowOk s (.strct fs)) :
+    RowOk s (.strct (Env.set fs (Schema.names s).occupied (.bool b))) where
+  occupied := ⟨b, by
+    show Env.get? (Env.set fs (Schema.names s).occupied (.bool b))
+        (Schema.names s).occupied = some (.bool b)
+    rw [Env.get?_set_self]
+    cases hg : Env.get? fs (Schema.names s).occupied with
+    | none => rw [hg] at hocc; exact absurd hocc (by simp)
+    | some _ => rfl⟩
+  key := by rw [rowKey_set_occupied hpk hnepk]; exact h.key
+  keyTy := by
+    intro pk' k' hpk' hrk
+    rw [rowKey_set_occupied hpk hnepk] at hrk
+    exact h.keyTy pk' k' hpk' hrk
+  vals := by rw [rowVals_set_occupied hneval]; exact h.vals
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
@@ -796,6 +868,13 @@ for progress:
 
 - `NoTrapInsert` and `NoTrapErase`, and with them `InsertRefines`,
   `EraseRefines` and `RepInvPreserved`.
+
+For `erase` the row-level content is now done: `rowOk_set_occupied` says a row
+stays well formed when its occupancy flag is written, because writing that
+flag disturbs neither the key nor the value fields. What is left for `erase`
+is lifting that from one row to the array (`RepInv`'s `rows` and `distinct`
+clauses, the latter free because clearing occupancy only shrinks the occupied
+set) and assembling the call, which follows `findCorrect`'s pattern.
 
 The reading half of the writers is done: `resolve_ptrField` and
 `read_ptrField` handle `_at->f` for a pointer that came from `find`, which is
