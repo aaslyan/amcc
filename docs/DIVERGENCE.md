@@ -124,27 +124,30 @@ is downstream of it.
 
 ## 2. Where AMCC is weaker, because of a restriction we chose
 
-### 2.1 Index-linked free list instead of pointer-linked
+### 2.1 ~~Index-linked free list~~ — resolved
 
-`amc` threads its free list through the elements with **pointers**:
+This entry recorded a divergence that turned out to be unnecessary, and the
+correction is worth keeping because the mistake is instructive.
+
+The emitted pool used `uint32_t` slot indices plus a `_slot` field so that
+`Free(E *p)` could recover an element's index. The stated reason was that
+`CSubset.Index` has no arithmetic, so `&g.f[_i + 1]` — needed to link element
+`i` to element `i+1` — cannot be written.
+
+That reasoning assumed the free list had to be built **forwards**. It does
+not. Building it backwards with a running pointer needs no arithmetic:
 
 ```c
-row.$name_next = $parname.$name_free;
-$parname.$name_free = &row;
+for (_i = 0; _i < N; ++_i) { g.f[_i]._freenext = _prev; _prev = &g.f[_i]; }
+g.f_free = _prev;
 ```
 
-AMCC uses `uint32_t` slot indices and stores an extra `_slot` field so that
-`Free(E *p)` can recover the element's index.
+The order of a free list is not observable, so the reversal costs nothing. The
+emitted pool now uses **pointer links with a `NULL` empty-list sentinel,
+exactly as `amc` does**, and the `_slot` field is gone.
 
-The reason is a real limitation of our C subset: `CSubset.Index` is a literal
-or a `u32` local, with **no arithmetic**, so `&g.f[_i + 1]` — which
-pointer-linked initialisation needs — cannot be written. Index links sidestep
-it because `f[_i]._freenext = _i + 1` is an ordinary expression assigned to a
-field, not a subscript.
-
-**Cost:** four bytes per element, and an API that is otherwise identical.
-**Fix, if we want it:** allow `Index.var + literal`, which is a small,
-UB-free extension of the same kind as literal loop bounds.
+The lesson: a claimed limitation of the subset should be checked against what
+the subset can actually express before it is designed around.
 
 ### 2.2 Fixed capacity, still, in the emitted pool
 

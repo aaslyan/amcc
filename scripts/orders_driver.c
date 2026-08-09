@@ -19,7 +19,7 @@
 /* amc-shaped API: Find hands back the row, NULL when absent. The row struct
  * is redeclared here exactly as the generator emits it, so the driver reads
  * fields the way a real consumer would. */
-typedef struct {
+typedef struct order_row {
   uint64_t id;
   uint64_t price;
   uint64_t qty;

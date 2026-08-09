@@ -21,9 +21,10 @@ Printing decisions, all made for auditability rather than prettiness:
   append `[n]` to the declarator, pointers wrap it in `(*…)`. This is exactly
   C's inside-out declarator grammar, and it is what makes nested
   array-of-struct and pointer types come out right without special cases.
-- **Structs are `typedef`ed**, so a struct name is usable as a plain type
-  name everywhere after its declaration — which obligation 2's
-  declare-before-use ordering guarantees is soon enough.
+- **Structs are emitted with a tag *and* a typedef**, and struct types are
+  printed using the tag (`struct row *p`). The tag is what makes a field
+  pointing at its own struct legal — inside the definition the typedef does
+  not exist yet — and intrusive links need exactly that.
 - Globals are `static` (zero-initialised, internal linkage); functions are
   extern so a test driver can call them.
 - `if (c) { s }` with an absent else prints without an `else` branch:
@@ -45,7 +46,9 @@ def scalarTy : ScalarTy → String
 at type `t`, so arrays extend the declarator and pointers wrap it. -/
 def declare : Ty → String → String
   | .scalar t, x => s!"{scalarTy t} {x}"
-  | .strct n,  x => s!"{n} {x}"
+  -- The *tag*, not the typedef name: a struct with a pointer to itself
+  -- refers to its own type before the typedef exists.
+  | .strct n,  x => s!"struct {n} {x}"
   | .arr t k,  x => declare t s!"{x}[{k}]"
   -- Pointer *to an array* is the one case C's grammar needs parenthesised:
   -- without them `T *x[n]` would bind as an array of pointers.
@@ -114,8 +117,11 @@ def stmt (ind : Nat) : Stmt → String
   | .ret none => s!"{indent ind}return;\n"
   | .ret (some e) => s!"{indent ind}return {expr e};\n"
 
+/-- `typedef struct <name> { … } <name>;` — the tag is what makes a
+self-referential pointer field legal, and the typedef is kept so a
+hand-written caller can use the bare name. -/
 def structDef (sd : StructDef) : String :=
-  s!"typedef struct \{\n"
+  s!"typedef struct {sd.name} \{\n"
     ++ String.join (sd.fields.map (fun fv => s!"  {declare fv.2 fv.1};\n"))
     ++ s!"} {sd.name};\n"
 

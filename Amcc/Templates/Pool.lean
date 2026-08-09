@@ -28,26 +28,30 @@ void      D_f_Free(E *p);      /* push it back */
 uint32_t  D_f_N(void);         /* how many are live */
 ```
 
-## Two generated element fields, and why
+## One generated element field
 
-- **`_freenext`** threads the free list *through the elements*, as `Tpool`
-  does, rather than keeping a separate array. A free slot's link is dead
-  storage anyway.
-- **`_slot`** records an element's own index. `amc`'s `Free` recovers the
-  index from the pointer by subtraction; the C subset has no pointer
-  arithmetic, deliberately, so the index is stored instead. One `uint32_t` per
-  element buys the ability to free by pointer, which is the API a caller
-  wants.
+**`_freenext`** threads the free list *through the elements*, as `Tpool` does
+(`cpp/amc/tpool.cpp`), rather than keeping a separate array — a free slot's
+link is dead storage anyway. It lives in the leading-underscore namespace that
+`Dmmeta.check` reserves, so no schema field can collide with it.
 
-Both live in the leading-underscore namespace that `Dmmeta.check` reserves, so
-no schema field can collide with them.
+The links are **pointers**, and the empty list is `NULL`, exactly as in `amc`.
 
-## The exhaustion sentinel
+An earlier version used `uint32_t` indices and carried a second `_slot` field
+so that `Free(E *p)` could recover an element's index. That was unnecessary,
+and the reasoning behind it was wrong: it assumed the free list had to be
+built *forwards*, which needs `&g.f[_i + 1]` and so needs index arithmetic the
+subset does not have. Building it **backwards** with a running pointer needs no
+arithmetic at all —
 
-`f_free = N` means the free list is empty — the same trick, and for the same
-reason, as the array table's old `CAP` sentinel: there are no signed types, and
-`N` is the one value that is representable and provably not a slot index.
-Unlike the old `find`, this sentinel is *internal*; the caller sees `NULL`.
+```c
+for (_i = 0; _i < N; ++_i) { g.f[_i]._freenext = _prev; _prev = &g.f[_i]; }
+g.f_free = _prev;
+```
+
+— and the order of a free list is not observable, so the reversal costs
+nothing. That removes a documented divergence from `amc` and four bytes per
+element, with no change to the subset.
 -/
 
 namespace Templates
@@ -64,10 +68,10 @@ def tmpH : Ident := "_h"
 /-- `Free`'s parameter. -/
 def parP : Ident := "p"
 
-/-- Free-list link, stored in the element. -/
+/-- Free-list link, stored in the element. A pointer, as in `Tpool`. -/
 def freeNextName : Ident := "_freenext"
-/-- The element's own index, stored in the element. -/
-def slotName : Ident := "_slot"
+/-- Running pointer that `Init` builds the free list with. -/
+def tmpPrev : Ident := "_prev"
 
 structure Names where
   /-- The single global holding the database ctype. -/
@@ -106,65 +110,64 @@ def cellFld (i : Ident) (x : Ident) : LVal := .fld (cell nm fld i) x
 
 /-- ```c
 void D_f_Init(void) {
-  uint32_t _i = 0;
-  for (_i = 0; _i < N; ++_i) {
-    g_D.f[_i]._freenext = _i + 1;
-    g_D.f[_i]._slot     = _i;
-  }
-  g_D.f_free = 0;
+  uint32_t _i = 0; E *_prev = NULL;
+  for (_i = 0; _i < N; ++_i) { g_D.f[_i]._freenext = _prev; _prev = &g_D.f[_i]; }
+  g_D.f_free = _prev;
   g_D.f_n    = 0;
 }
 ```
-The last element's `_freenext` is `N`, which is the exhaustion sentinel — so
-the sweep needs no special case for the tail. -/
-def initDef (nm : Names) (fld : Ident) (n : Nat) : FunDef where
+Built backwards, so the head ends up at the last slot and no element ever
+needs the address of its *successor* — which is what would have required index
+arithmetic. -/
+def initDef (nm : Names) (fld : Ident) (n : Nat) (elem : Ident) : FunDef where
   name   := nm.init
   params := []
   ret    := none
-  locals := [LocalDef.zeroed tmpI .u32]
+  locals := [ LocalDef.zeroed tmpI .u32
+            , { name := tmpPrev, ty := .ptr (.strct elem), init := .null (.strct elem) } ]
   body   := .block
     [ .forN tmpI (.lit n) <| .block
-        [ .assign (cellFld nm fld tmpI freeNextName)
-            (.bin .add (.rd (.var tmpI)) (.lit (.u32 1)))
-        , .assign (cellFld nm fld tmpI slotName) (.rd (.var tmpI)) ]
-    , .assign (dbFld nm nm.freeHead) (.lit (.u32 0))
+        [ .assign (cellFld nm fld tmpI freeNextName) (.rd (.var tmpPrev))
+        , .assign (.var tmpPrev) (.addr (cell nm fld tmpI)) ]
+    , .assign (dbFld nm nm.freeHead) (.rd (.var tmpPrev))
     , .assign (dbFld nm nm.count) (.lit (.u32 0)) ]
 
 /-- ```c
 E* D_f_Alloc(void) {
-  uint32_t _h = 0;
+  E *_h = NULL;
   _h = g_D.f_free;
-  if (_h != N) {
-    g_D.f_free = g_D.f[_h]._freenext;
+  if (_h != NULL) {
+    g_D.f_free = _h->_freenext;
     g_D.f_n    = g_D.f_n + 1;
-    return &g_D.f[_h];
+    return _h;
   }
   return NULL;
 }
 ``` -/
-def allocDef (nm : Names) (fld : Ident) (n : Nat) (elem : Ident) : FunDef where
+def allocDef (nm : Names) (elem : Ident) : FunDef where
   name   := nm.alloc
   params := []
   ret    := some (.ptr (.strct elem))
-  locals := [LocalDef.zeroed tmpH .u32]
+  locals := [{ name := tmpH, ty := .ptr (.strct elem), init := .null (.strct elem) }]
   body   := .block
     [ .assign (.var tmpH) (.rd (dbFld nm nm.freeHead))
-    , .when (.bin .ne (.rd (.var tmpH)) (.lit (.u32 (UInt32.ofNat n)))) <| .block
-        [ .assign (dbFld nm nm.freeHead) (.rd (cellFld nm fld tmpH freeNextName))
+    , .when (.bin .ne (.rd (.var tmpH)) (.null (.strct elem))) <| .block
+        [ .assign (dbFld nm nm.freeHead) (.rd (.fld (.deref tmpH) freeNextName))
         , .assign (dbFld nm nm.count)
             (.bin .add (.rd (dbFld nm nm.count)) (.lit (.u32 1)))
-        , .ret (some (.addr (cell nm fld tmpH))) ]
+        , .ret (some (.rd (.var tmpH))) ]
     , .ret (some (.null (.strct elem))) ]
 
 /-- ```c
 void D_f_Free(E *p) {
   p->_freenext = g_D.f_free;
-  g_D.f_free   = p->_slot;
+  g_D.f_free   = p;
   g_D.f_n      = g_D.f_n - 1;
 }
 ```
-Freeing by *pointer* is what a caller wants, and it is `_slot` that makes it
-possible without pointer arithmetic. -/
+Identical to `amc`'s `Tpool_FreeMem` minus its double-delete guard, which the
+subset cannot express and the pool's invariant makes unnecessary — see
+`docs/DIVERGENCE.md`. -/
 def freeDef (nm : Names) (elem : Ident) : FunDef where
   name   := nm.free
   params := [(parP, .ptr (.strct elem))]
@@ -172,7 +175,7 @@ def freeDef (nm : Names) (elem : Ident) : FunDef where
   locals := []
   body   := .block
     [ .assign (.fld (.deref parP) freeNextName) (.rd (dbFld nm nm.freeHead))
-    , .assign (dbFld nm nm.freeHead) (.rd (.fld (.deref parP) slotName))
+    , .assign (dbFld nm nm.freeHead) (.rd (.var parP))
     , .assign (dbFld nm nm.count)
         (.bin .sub (.rd (dbFld nm nm.count)) (.lit (.u32 1))) ]
 
@@ -195,14 +198,14 @@ the free head and the count. -/
 def elemStruct (d : Dmmeta.Db) (c : Dmmeta.Ctype) : StructDef where
   name   := c.name
   fields := (Dmmeta.structOf d c).fields
-            ++ [(freeNextName, .scalar .u32), (slotName, .scalar .u32)]
+            ++ [(freeNextName, .ptr (.strct c.name))]
 
 /-- The database struct: the inline array, then the pool's bookkeeping. -/
 def dbStruct (nm : Names) (dbC : Ident) (fld : Ident) (elem : Ident) (n : Nat) :
     StructDef where
   name   := dbC
   fields := [ (fld, .arr (.strct elem) n)
-            , (nm.freeHead, .scalar .u32)
+            , (nm.freeHead, .ptr (.strct elem))
             , (nm.count, .scalar .u32) ]
 
 /-- **The generator.** Emits the pool for the first `Inlary` field of the
@@ -220,8 +223,8 @@ def genPool (d : Dmmeta.Db) : Option Program := do
   some
     { structs := [elemStruct full elemC, dbStruct nm dbC.name fld.name elemC.name n]
     , globals := [{ name := nm.dbGlobal, ty := .strct dbC.name }]
-    , funs    := [ initDef nm fld.name n
-                 , allocDef nm fld.name n elemC.name
+    , funs    := [ initDef nm fld.name n elemC.name
+                 , allocDef nm elemC.name
                  , freeDef nm elemC.name
                  , sizeDef nm ] }
 
@@ -255,7 +258,7 @@ own, and both are in the reserved namespace.
 checked by: `lake build` -/
 example : (genPool Examples.boundedDb).map
     (fun p => (p.structs.head?).map (fun sd => sd.fields.map Prod.fst))
-    = some (some ["id", "price", "qty", "_freenext", "_slot"]) := rfl
+    = some (some ["id", "price", "qty", "_freenext"]) := rfl
 
 /-- The database struct holds the inline array and the pool's bookkeeping —
 capacity on the storage field, as the ctype model insists.

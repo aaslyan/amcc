@@ -33,7 +33,7 @@ example : Print.declare (.arr (.arr (.scalar .u64) 3) 2) "m"
 
 /-- A plain pointer needs no parentheses. -/
 example : Print.declare (.ptr (.strct "order_row")) "p"
-    = "order_row *p" := rfl
+    = "struct order_row *p" := rfl
 
 /-- Pointer *to an array* does, or `*p[2]` would bind as an array of
 pointers. -/
@@ -51,16 +51,16 @@ private def ordersGolden : String :=
 #include <stdbool.h>
 #include <stddef.h>
 
-typedef struct {
+typedef struct order_row {
   uint64_t id;
   uint64_t price;
   uint64_t qty;
   bool occupied;
 } order_row;
 
-static order_row g_order[4];
+static struct order_row g_order[4];
 
-order_row *order_Find(uint64_t id) {
+struct order_row *order_Find(uint64_t id) {
   uint32_t _i = 0u;
   for (_i = 0u; _i < 4u; ++_i) {
     if ((g_order[_i].occupied && (g_order[_i].id == id))) {
@@ -71,7 +71,7 @@ order_row *order_Find(uint64_t id) {
 }
 
 bool order_InsertMaybe(uint64_t id, uint64_t price, uint64_t qty) {
-  order_row *_at = NULL;
+  struct order_row *_at = NULL;
   uint32_t _j = 0u;
   _at = order_Find(id);
   if ((_at != NULL)) {
@@ -92,7 +92,7 @@ bool order_InsertMaybe(uint64_t id, uint64_t price, uint64_t qty) {
 }
 
 bool order_Remove(uint64_t id) {
-  order_row *_at = NULL;
+  struct order_row *_at = NULL;
   _at = order_Find(id);
   if ((_at != NULL)) {
     _at->occupied = false;
@@ -112,14 +112,14 @@ present-key branch rewrites nothing. checked by: `lake build` -/
 #include <stdbool.h>
 #include <stddef.h>
 
-typedef struct {
+typedef struct tag_row {
   uint32_t k;
   bool occupied;
 } tag_row;
 
-static tag_row g_tag[2];
+static struct tag_row g_tag[2];
 
-tag_row *tag_Find(uint32_t k) {
+struct tag_row *tag_Find(uint32_t k) {
   uint32_t _i = 0u;
   for (_i = 0u; _i < 2u; ++_i) {
     if ((g_tag[_i].occupied && (g_tag[_i].k == k))) {
@@ -130,7 +130,7 @@ tag_row *tag_Find(uint32_t k) {
 }
 
 bool tag_InsertMaybe(uint32_t k) {
-  tag_row *_at = NULL;
+  struct tag_row *_at = NULL;
   uint32_t _j = 0u;
   _at = tag_Find(k);
   if ((_at != NULL)) {
@@ -147,7 +147,7 @@ bool tag_InsertMaybe(uint32_t k) {
 }
 
 bool tag_Remove(uint32_t k) {
-  tag_row *_at = NULL;
+  struct tag_row *_at = NULL;
   _at = tag_Find(k);
   if ((_at != NULL)) {
     _at->occupied = false;

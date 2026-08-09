@@ -12,9 +12,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-typedef struct {
+typedef struct order_row {
   uint64_t id; uint64_t price; uint64_t qty;
-  uint32_t _freenext; uint32_t _slot;
+  struct order_row *_freenext;
 } order_row;
 
 void       OrderDb_row_Init(void);
