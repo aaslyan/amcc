@@ -926,6 +926,28 @@ theorem repInv_clearOccupied {glb glb' : Env} {i : Nat}
     obtain ⟨_, hrj'⟩ := hne j' rj hrj hoj
     exact R.distinct i' j' ri rj hri' hrj' hoi hoj hk
 
+/-! ## What an erase does to the abstraction -/
+
+/-- Replacing an element that the predicate already rejected, with another it
+also rejects, leaves `find?` alone. -/
+theorem find?_set_of_neg {α : Type _} {p : α → Bool} :
+    ∀ {l : List α} {i : Nat} {x : α}, p x = false →
+      (∀ y, l[i]? = some y → p y = false) → (l.set i x).find? p = l.find? p
+  | [], _, _, _, _ => rfl
+  | a :: as, 0, x, hx, hi => by
+    have ha : ¬ p a = true := by simp [hi a rfl]
+    have hx' : ¬ p x = true := by simp [hx]
+    show List.find? p (x :: as) = List.find? p (a :: as)
+    rw [List.find?_cons_of_neg hx', List.find?_cons_of_neg ha]
+  | a :: as, i + 1, x, hx, hi => by
+    show List.find? p (a :: as.set i x) = List.find? p (a :: as)
+    cases hpa : p a with
+    | true => rw [List.find?_cons_of_pos hpa, List.find?_cons_of_pos hpa]
+    | false =>
+      have hna : ¬ p a = true := by simp [hpa]
+      rw [List.find?_cons_of_neg hna, List.find?_cons_of_neg hna]
+      exact find?_set_of_neg hx (fun y hy => hi y (by simpa using hy))
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
@@ -939,9 +961,15 @@ representation invariant survives clearing a slot's occupancy flag, all four
 clauses. What is left for `erase` is:
 
 - the `absOf` equation — that clearing slot `i`, which held key `k`, makes
-  `absOf` become `Abs.erase (absOf ·) k`. The `k` case needs `distinct` (slot
-  `i` was the *only* occupied slot with that key, so nothing else answers for
-  it); every other key case is untouched because no other slot moved.
+  `absOf` become `Abs.erase (absOf ·) k`. Its list-level content is done
+  (`find?_set_of_neg`), and the shape of the argument is settled: the erased
+  key needs `distinct` (slot `i` was the *only* occupied slot holding it, so
+  nothing else answers for it once the flag is cleared), and every other key
+  is untouched because no other slot moved and slot `i` did not match them
+  before the clear either. What is not settled is the plumbing between
+  `Option Key`'s `BEq` and propositional equality, which is where the attempt
+  stalled — `LawfulBEq Key` is now available but `LawfulBEq (Option Key)` is
+  not, and `absOf` compares at `Option`.
 - assembling the call, which follows `findCorrect`'s pattern with one new
   wrinkle: `erase` *calls* `find`, so it goes through `execAt`'s `.call` case —
   frame save and restore, and writing the result into `_at`. `exec_findBody`
