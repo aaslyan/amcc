@@ -1020,6 +1020,55 @@ theorem absOf_clearOccupied {glb glb' : Env} {i : Nat}
       (by simp [hclr]) hpi
     simp only [absOf, hrows, hfind, if_neg hkk]
 
+/-! ## Calling `find` from another generated function
+
+`insert` and `erase` both begin with `_at = <t>_Find(pk);`. That goes through
+`execAt`'s `.call` case, which no proof has needed until now: it evaluates the
+arguments, builds the callee's frame, runs the body one call-depth down,
+**restores the caller's frame**, and writes the result into the destination
+local.
+
+The frame restore is the interesting part, and it is sound for the reason
+Phase 0 was designed around: no pointer can name a frame, so discarding the
+callee's frame wholesale cannot lose anything the caller could observe. -/
+
+/-- **Calling `find` binds `_at` to what `find` returned, and changes nothing
+else.**
+
+checked by: `lake build` -/
+theorem exec_callFind {p : Program} {d : Nat} {pk : Schema.Field}
+    {k : Interface.Key}
+    (hlook : lookupFun p (Schema.names s).find = .ok (findDef s pk))
+    (hpk : Schema.pkey? s = some pk) (hne : pk.name ≠ tmpI)
+    (hkty : k.ty = pk.ty)
+    (R : RepInv s σ.glb)
+    (hkloc : σ.getLocal pk.name = some k.toValue)
+    (hat : (σ.getLocal tmpAt).isSome = true)
+    (hcap : s.capacity ≤ (rowsOf s σ.glb).length)
+    (hrnd : ∀ j, j < (rowsOf s σ.glb).length → (UInt32.ofNat j).toNat = j) :
+    execAt p (execStmt p (d + 1))
+        (.call (some tmpAt) (Schema.names s).find [.rd (.var pk.name)]) σ
+      = .ok (σ.setLocal tmpAt
+              (match firstMatch s σ.glb k 0 s.capacity with
+               | some j => .ptr ⟨.glob (Schema.names s).storage, [.idx j]⟩
+               | none   => .null), .normal) := by
+  have hargs : [Expr.rd (.var pk.name)].mapM (evalExpr σ) = .ok [k.toValue] := by
+    simp [List.mapM_cons, read_local hkloc]
+    rfl
+  -- the callee runs one depth down, which is where `exec_findBody` applies
+  obtain ⟨σ', hbody, hmem⟩ :=
+    exec_findBody (p := p) (callee := execStmt p d) hpk hne hkty
+      (σ := (σ.toMem).toStore [(pk.name, k.toValue), (tmpI, .u32 0)]) R
+      (by simp [Mem.toStore, Store.getLocal, Env.get?])
+      (by simp [Mem.toStore, Store.getLocal, Env.get?, hne])
+      (by simpa using hcap) (by simpa using hrnd)
+  simp only [execAt, hlook, hargs, buildFrame_find, bind, Except.bind,
+    execStmt, hbody, hmem, Mem.toStore_toMem, Store.toMem_toStore,
+    Mem.toStore_glb, Store.toMem_glb]
+  cases hg : σ.getLocal tmpAt with
+  | none => rw [hg] at hat; exact absurd hat (by simp)
+  | some _ => simp only [writeLoc, hg]
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
@@ -1032,14 +1081,12 @@ For `erase` the state content is now done: `repInv_clearOccupied` says the
 representation invariant survives clearing a slot's occupancy flag, all four
 clauses. What is left for `erase` is:
 
-**`erase`'s state and abstraction content are both proved.**
-`repInv_clearOccupied` says the invariant survives, `absOf_clearOccupied` says
-the abstraction moves exactly the way `Abs.erase` says. What is left for
-`erase` is only the *assembly*: it follows `findCorrect`'s pattern with one new
-wrinkle — `erase` **calls** `find`, so it goes through `execAt`'s `.call`
-case, meaning frame save and restore and writing the result into `_at`.
-`exec_findBody` was deliberately stated for arbitrary `p` and `callee`, so it
-applies at the inner call depth unchanged.
+**Every piece `erase` needs is now proved separately.** Its state content is
+`repInv_clearOccupied`, its abstraction content is `absOf_clearOccupied`, its
+first statement is `exec_callFind`, and the write it performs is
+`write_slotField` through `resolve_ptrField`. What is left is threading them
+together through the `if _at != NULL` and the two returns — the same shape as
+`exec_findBody`, with no ingredient still missing.
 
 The reading half of the writers is done: `resolve_ptrField` and
 `read_ptrField` handle `_at->f` for a pointer that came from `find`, which is

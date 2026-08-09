@@ -411,6 +411,13 @@ def Store.toMem (σ : Store) : Mem :=
 @[simp] theorem Mem.toStore_glb (m : Mem) (loc : Env) :
     (m.toStore loc).glb = m.glb := rfl
 
+@[simp] theorem Store.toMem_glb (σ : Store) : σ.toMem.glb = σ.glb := rfl
+
+/-- Taking a store apart and putting it back with its own frame is the
+identity. This is what makes a call that changes no memory observably a no-op
+on the caller's store. -/
+@[simp] theorem Store.toMem_toStore (σ : Store) : σ.toMem.toStore σ.loc = σ := rfl
+
 /-- Writing a global leaves the frame untouched. Trivial here — and trivial is
 the point: it follows from `Store` having two independent components, which
 follows from no pointer being able to name a local.
