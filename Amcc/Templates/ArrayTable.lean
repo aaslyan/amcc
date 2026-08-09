@@ -255,6 +255,17 @@ structure RowOk (s : Schema) (r : Value) : Prop where
                           | .strct fs => Env.get? fs (Schema.names s).occupied
                           | _ => none) = some (.bool b)
   key      : (rowKey? s r).isSome
+  /-- **The stored key is at the primary key's declared type.**
+
+  Not decoration, and not derivable from `key`. The generated scan compares
+  the row's key against the argument with `==`, and `evalBin .eq` is defined
+  only on matching scalar constructors — so a store holding a `u32` key in a
+  `u64`-keyed table would make the comparison raise `typeErr` rather than
+  report a miss. Without this clause the invariant admits stores on which the
+  generated code gets stuck, which is exactly what the invariant exists to
+  rule out. Found by trying to prove the scan. -/
+  keyTy    : ∀ pk k, Schema.pkey? s = some pk → rowKey? s r = some k →
+               k.ty = pk.ty
   vals     : (rowVals? s r).isSome
 
 /-- **The representation invariant.**

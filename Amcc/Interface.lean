@@ -51,6 +51,16 @@ inductive Key where
   | bool : Bool → Key
   deriving DecidableEq, Repr, Inhabited, BEq
 
+/-- The scalar type a key stands at.
+
+`CSubset.evalBin .eq` is defined only on matching scalar constructors, so a
+comparison against a key of the wrong type does not evaluate to `false` — it
+raises `typeErr`. Anything that compares keys therefore has to know this. -/
+def Key.ty : Key → CSubset.ScalarTy
+  | .u32 _  => .u32
+  | .u64 _  => .u64
+  | .bool _ => .bool
+
 def Key.toValue : Key → Value
   | .u32 a  => .u32 a
   | .u64 a  => .u64 a

@@ -193,12 +193,6 @@ constructor. So the comparison only evaluates at all when the key argument has
 the primary key's type — which is a precondition `FindCorrect` does not
 currently carry. See the note at the bottom. -/
 
-/-- The scalar type a key stands at. -/
-def keyTy : Interface.Key → ScalarTy
-  | .u32 _  => .u32
-  | .u64 _  => .u64
-  | .bool _ => .bool
-
 /-- `Key.ofValue?` recovers exactly the value it was built from. The converse
 of `Interface.Key.ofValue_toValue`. -/
 theorem toValue_ofValue {v : Value} {k : Interface.Key}
@@ -217,11 +211,11 @@ theorem toValue_ofValue {v : Value} {k : Interface.Key}
 At *different* types it is not an equation at all — `evalBin .eq` errors —
 which is why the type agreement is a hypothesis rather than something to be
 wished away. -/
-theorem evalBin_eq_keys {k k' : Interface.Key} (hty : keyTy k' = keyTy k) :
+theorem evalBin_eq_keys {k k' : Interface.Key} (hty : k'.ty = k.ty) :
     evalBin .eq k'.toValue k.toValue = .ok (.bool (k' == k)) := by
   cases k' <;> cases k <;> first
     | rfl
-    | exact absurd hty (by simp [keyTy])
+    | exact absurd hty (by simp [Interface.Key.ty])
 
 /-! ## The loop guard
 
@@ -289,7 +283,7 @@ theorem eval_guard {i : Nat} {row : Value} {fs : List (Ident × Value)}
     (hocc : Env.get? fs (Schema.names s).occupied = some (.bool b))
     (hkfld : Env.get? fs pk.name = some kv)
     (hk' : Interface.Key.ofValue? kv = some k')
-    (hty : keyTy k' = keyTy k)
+    (hty : k'.ty = k.ty)
     (hkloc : σ.getLocal pk.name = some k.toValue) :
     evalExpr σ (.bin .land
         (.rd (field s tmpI (Schema.names s).occupied))
@@ -316,6 +310,50 @@ theorem eval_guard {i : Nat} {row : Value} {fs : List (Ident × Value)}
     simp only [evalExpr, hro, hlo, hrk, hlk, hrv, hlv, bind, Except.bind,
       evalBin_eq_keys hty, Bool.true_and]
 
+/-! ## What a well-formed row is, unpacked
+
+`RowOk` states its clauses existentially. The scan needs them as equations, and
+in particular needs to know that a live row **is** a struct — which the
+occupancy clause forces, since the match it quantifies over yields `none` on
+every other constructor. -/
+
+/-- A row satisfying `RowOk` is a struct with a boolean occupancy flag. -/
+theorem strct_of_rowOk {row : Value} (h : RowOk s row) :
+    ∃ fs b, row = .strct fs
+      ∧ Env.get? fs (Schema.names s).occupied = some (.bool b)
+      ∧ rowOccupied s row = b := by
+  obtain ⟨b, hb⟩ := h.occupied
+  cases row with
+  | strct fs =>
+    refine ⟨fs, b, rfl, hb, ?_⟩
+    simp only [rowOccupied, hb]
+  | u32 _ => exact Option.noConfusion hb
+  | u64 _ => exact Option.noConfusion hb
+  | bool _ => exact Option.noConfusion hb
+  | null => exact Option.noConfusion hb
+  | ptr _ => exact Option.noConfusion hb
+  | arr _ => exact Option.noConfusion hb
+
+/-- And its key field is present, converts, and stands at the primary key's
+declared type. -/
+theorem key_of_rowOk {row : Value} {fs : List (Ident × Value)} {pk : Schema.Field}
+    (h : RowOk s row) (hpk : Schema.pkey? s = some pk) (hstrct : row = .strct fs) :
+    ∃ kv k', Env.get? fs pk.name = some kv
+      ∧ Interface.Key.ofValue? kv = some k'
+      ∧ rowKey? s row = some k'
+      ∧ k'.ty = pk.ty := by
+  have hks := h.key
+  subst hstrct
+  cases hkv : Env.get? fs pk.name with
+  | none => simp [rowKey?, hpk, hkv] at hks
+  | some kv =>
+    cases hcv : Interface.Key.ofValue? kv with
+    | none => simp [rowKey?, hpk, hkv, hcv] at hks
+    | some k' =>
+      have hrk : rowKey? s (Value.strct fs) = some k' := by
+        simp [rowKey?, hpk, hkv, hcv]
+      exact ⟨kv, k', rfl, hcv, hrk, h.keyTy pk k' hpk hrk⟩
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
@@ -341,7 +379,7 @@ needs restating in those terms.
 no constraint relating the key to the primary key's type. `evalBin .eq` is
 defined only on matching scalar constructors, so searching a `u64`-keyed table
 with a `.bool` key does not return "absent" — it raises `typeErr`. The
-statement needs `keyTy k = pk.ty` as a hypothesis, which `eval_guard` above
+statement needs `k.ty = pk.ty` as a hypothesis, which `eval_guard` above
 already carries. A clause that cannot be discharged is worth more than one
 that looks discharged, and this one was hiding in plain sight until the
 comparison had to be evaluated. -/
