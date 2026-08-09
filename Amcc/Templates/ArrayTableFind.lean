@@ -36,8 +36,8 @@ arise rather than by a theorem that does not exist yet.
 4. `forLoop` induction: scanning `[i, i+rem)` returns the first match.
 5. `FindCorrect`.
 
-This file currently establishes (1), (2) and (3). What is *not* yet proved is
-recorded honestly at the bottom rather than stated as if it were.
+This file establishes (1) through (4). What is *not* yet proved is recorded
+honestly at the bottom rather than stated as if it were.
 -/
 
 namespace Templates
@@ -354,16 +354,133 @@ theorem key_of_rowOk {row : Value} {fs : List (Ident × Value)} {pk : Schema.Fie
         simp [rowKey?, hpk, hkv, hcv]
       exact ⟨kv, k', rfl, hcv, hrk, h.keyTy pk k' hpk hrk⟩
 
+/-! ## The scan
+
+`slotMatches` is the abstract test the generated guard implements, and
+`firstMatch` is what the whole loop computes: the first slot in a range that
+passes it. -/
+
+/-- Slot `i` is occupied and holds key `k`. -/
+def slotMatches (s : Schema) (glb : Env) (k : Interface.Key) (i : Nat) : Bool :=
+  match (rowsOf s glb)[i]? with
+  | some r => rowOccupied s r && (rowKey? s r == some k)
+  | none   => false
+
+/-- The first matching slot in `[i, i + rem)`. -/
+def firstMatch (s : Schema) (glb : Env) (k : Interface.Key) : Nat → Nat → Option Nat
+  | _, 0       => none
+  | i, rem + 1 =>
+    if slotMatches s glb k i then some i else firstMatch s glb k (i + 1) rem
+
+/-- **One iteration.** Either it returns a pointer to this slot, or it falls
+through — and either way it leaves the store alone. -/
+theorem exec_loopBody {p : Program} {callee} {pk : Schema.Field}
+    {k : Interface.Key} {i : Nat}
+    (R : RepInv s σ.glb)
+    (hpk : Schema.pkey? s = some pk)
+    (hlt : i < (rowsOf s σ.glb).length)
+    (hloc : σ.getLocal tmpI = some (.u32 (UInt32.ofNat i)))
+    (hround : (UInt32.ofNat i).toNat = i)
+    (hkloc : σ.getLocal pk.name = some k.toValue)
+    (hkty : k.ty = pk.ty) :
+    execAt p callee (findLoopBody s pk) σ
+      = .ok (σ, if slotMatches s σ.glb k i
+                then .ret (some (.ptr ⟨.glob (Schema.names s).storage, [.idx i]⟩))
+                else .normal) := by
+  have hrow : (rowsOf s σ.glb)[i]? = some ((rowsOf s σ.glb)[i]'hlt) :=
+    List.getElem?_eq_getElem hlt
+  have hok : RowOk s ((rowsOf s σ.glb)[i]'hlt) := R.rows _ (List.getElem_mem hlt)
+  obtain ⟨fs, b, hstrct, hocc, hrocc⟩ := strct_of_rowOk hok
+  obtain ⟨kv, k', hkfld, hcv, hrk, hkty'⟩ := key_of_rowOk hok hpk hstrct
+  have hg := eval_guard R hlt hloc hround hrow hstrct hocc hkfld hcv
+    (by rw [hkty', hkty]) hkloc
+  have hsm : slotMatches s σ.glb k i = (b && (k' == k)) := by
+    simp only [slotMatches, hrow, hrocc, hrk]
+    simp
+  simp only [findLoopBody, Stmt.when, execAt, findGuard, hg, bind, Except.bind,
+    hsm]
+  cases hb : b && (k' == k) with
+  | false => simp
+  | true =>
+    simp only [evalExpr, resolve_slot R hlt hloc hround, bind, Except.bind]
+    simp
+
+/-- **The scan is a search.**
+
+Running the generated loop over `[i, i + rem)` returns a pointer to the first
+matching slot, or falls through when there is none — and preserves the globals
+throughout, which is what keeps `RepInv` alive across iterations and makes the
+induction go.
+
+This is the step where per-iteration reasoning becomes a statement about the
+function: everything above it is one slot, this is the search.
+
+checked by: `lake build` -/
+theorem forLoop_scan {p : Program} {callee} {pk : Schema.Field}
+    {k : Interface.Key} (hpk : Schema.pkey? s = some pk) (hne : pk.name ≠ tmpI)
+    (hkty : k.ty = pk.ty) :
+    ∀ (rem i : Nat) (σ : Store),
+      RepInv s σ.glb →
+      σ.getLocal pk.name = some k.toValue →
+      (σ.getLocal tmpI).isSome = true →
+      i + rem ≤ (rowsOf s σ.glb).length →
+      (∀ j, j < (rowsOf s σ.glb).length → (UInt32.ofNat j).toNat = j) →
+      ∃ σ', forLoop (execAt p callee (findLoopBody s pk)) tmpI i rem σ
+              = .ok (σ', match firstMatch s σ.glb k i rem with
+                         | some j =>
+                           .ret (some (.ptr ⟨.glob (Schema.names s).storage,
+                                             [.idx j]⟩))
+                         | none => .normal)
+            ∧ σ'.glb = σ.glb := by
+  intro rem
+  induction rem with
+  | zero =>
+    intro i σ _ _ _ _ _
+    exact ⟨σ.setLocal tmpI (.u32 (UInt32.ofNat i)), rfl, Store.setLocal_glb _ _ _⟩
+  | succ rem ih =>
+    intro i σ R hkloc htmp hbnd hrnd
+    have hlt : i < (rowsOf s σ.glb).length := by omega
+    -- the loop writes only `_i`, so everything the invariant needs survives
+    have hglb : (σ.setLocal tmpI (.u32 (UInt32.ofNat i))).glb = σ.glb :=
+      Store.setLocal_glb _ _ _
+    have h0 : (σ.setLocal tmpI (.u32 (UInt32.ofNat i))).getLocal tmpI
+        = some (.u32 (UInt32.ofNat i)) := by
+      show (σ.loc.set tmpI _).get? tmpI = _
+      rw [Env.get?_set_self]
+      cases hg : σ.loc.get? tmpI with
+      | none => rw [Store.getLocal, hg] at htmp; exact absurd htmp (by simp)
+      | some _ => rfl
+    have hk0 : (σ.setLocal tmpI (.u32 (UInt32.ofNat i))).getLocal pk.name
+        = some k.toValue := by
+      show (σ.loc.set tmpI _).get? pk.name = _
+      rw [Env.get?_set_ne _ hne]; exact hkloc
+    have hbody := exec_loopBody (p := p) (callee := callee) (hglb ▸ R) hpk
+      (hglb ▸ hlt) h0 (hrnd i hlt) hk0 hkty
+    simp only [forLoop]
+    rw [hbody]
+    simp only [firstMatch, hglb]
+    cases hm : slotMatches s σ.glb k i with
+    | true =>
+      simp only [if_pos trivial]
+      exact ⟨_, rfl, hglb⟩
+    | false =>
+      obtain ⟨σ', heq, hgl⟩ := ih (i + 1)
+        (σ.setLocal tmpI (.u32 (UInt32.ofNat i))) (hglb ▸ R) hk0
+        (by rw [Store.getLocal, Store.setLocal, Env.isSome_get?_set]; exact htmp)
+        (by rw [hglb]; omega) (by rw [hglb]; exact hrnd)
+      rw [hglb] at heq
+      refine ⟨σ', ?_, by rw [hgl, hglb]⟩
+      simpa using heq
+
 /-! ## Still owed
 
 What this file does **not** prove, stated plainly so the gap is not mistaken
 for progress:
 
-- the `forLoop` induction — that scanning `[i, i+rem)` returns the first
-  matching slot and otherwise falls through. This is the real test; everything
-  above it is per-iteration reasoning, and the induction is where a scan
-  becomes a search.
-- `FindCorrect` itself.
+- `FindCorrect` itself: `forLoop_scan` covers the loop, but the function also
+  has a prologue (binding the parameter and zeroing `_i`) and an epilogue (the
+  `return NULL` the loop falls through to), and the result has to be related
+  to `absOf` rather than to `firstMatch`.
 
 ## Two findings about `FindCorrect` as currently stated
 

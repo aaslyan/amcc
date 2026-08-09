@@ -520,7 +520,8 @@ private theorem checkFun_find (F : Facts s)
   have hpw : ([pk.name, "_i"] : List Ident).Pairwise (· ≠ ·) := by simp [hne_i]
   have hland : Wf.binTy .land (.scalar .bool) (.scalar .bool)
       = some (.scalar .bool) := rfl
-  simp [Wf.checkFun, findDef, LocalDef.zeroed, rowStructDef, storageDef,
+  simp [Wf.checkFun, findDef, findLoopBody, findGuard, LocalDef.zeroed,
+    rowStructDef, storageDef,
     tmpI, field, slot, capLit,
     Wf.checkStmt, Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, Wf.indexOk,
     Wf.litTy, Wf.isValTy, Wf.Stmt.assigns, Wf.Stmt.alwaysReturns,

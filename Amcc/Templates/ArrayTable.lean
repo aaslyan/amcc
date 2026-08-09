@@ -100,6 +100,17 @@ def storageDef (s : Schema) : GlobalDef where
   name := (Schema.names s).storage
   ty   := .arr (.strct (Schema.names s).row) s.capacity
 
+/-- The scan's condition: this slot is occupied and holds the key we want.
+Named so the proof can be stated about the code that is actually emitted. -/
+def findGuard (s : Schema) (pk : Schema.Field) : Expr :=
+  .bin .land
+    (.rd (field s tmpI (Schema.names s).occupied))
+    (.bin .eq (.rd (field s tmpI pk.name)) (.rd (.var pk.name)))
+
+/-- One iteration of the scan. -/
+def findLoopBody (s : Schema) (pk : Schema.Field) : Stmt :=
+  .when (findGuard s pk) (.ret (some (.addr (slot s tmpI))))
+
 /-- ```c
 <t>_row* <t>_Find(<pkty> pk) {
   uint32_t _i = 0;
@@ -114,11 +125,7 @@ def findDef (s : Schema) (pk : Schema.Field) : FunDef where
   ret    := some (.ptr (rowTy s))
   locals := [LocalDef.zeroed tmpI .u32]
   body   := .block
-    [ .forN tmpI (.lit s.capacity) <|
-        .when (.bin .land
-                (.rd (field s tmpI (Schema.names s).occupied))
-                (.bin .eq (.rd (field s tmpI pk.name)) (.rd (.var pk.name)))) <|
-          .ret (some (.addr (slot s tmpI)))
+    [ .forN tmpI (.lit s.capacity) (findLoopBody s pk)
     , .ret (some (nullRow s)) ]
 
 /-- ```c
