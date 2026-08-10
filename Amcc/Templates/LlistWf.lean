@@ -486,11 +486,11 @@ theorem checkFun_simple {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
   simp only [List.mem_cons, List.not_mem_nil, or_false] at hfd
   rcases hfd with rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · simp only [Wf.checkFun, initDef, dbFld, Wf.checkStmt, Wf.addrChecks,
-      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy, Stmt.block]
+      Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block]
     simp [hg, hfH, hfC, Wf.isValTy, Wf.distinct, Wf.dups,
       Wf.litTy]
   · simp only [Wf.checkFun, firstDef, dbFld, Wf.checkStmt, Wf.addrChecks,
-      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+      Wf.inferExpr, Wf.inferLVal, ValTy.toTy]
     simp [hg, hfH, Wf.isValTy, Wf.distinct, Wf.dups,
       Wf.Stmt.alwaysReturns]
   · simp only [Wf.checkFun, nextDef, ptrFld, Wf.checkStmt, Wf.addrChecks,
@@ -506,13 +506,98 @@ theorem checkFun_simple {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     simp [hfI, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
       Wf.Stmt.alwaysReturns]
   · simp only [Wf.checkFun, emptyQDef, dbFld, Wf.checkStmt, Wf.addrChecks,
-      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+      Wf.inferExpr, Wf.inferLVal, ValTy.toTy]
     simp [hg, hfH, Wf.isValTy, Wf.distinct, Wf.dups, Wf.binTy,
       Wf.isPtrTy, Wf.Stmt.alwaysReturns]
   · simp only [Wf.checkFun, sizeDef, dbFld, Wf.checkStmt, Wf.addrChecks,
-      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+      Wf.inferExpr, Wf.inferLVal, ValTy.toTy]
     simp [hg, hfC, Wf.isValTy, Wf.distinct, Wf.dups,
       Wf.Stmt.alwaysReturns]
+
+/-! ## `Insert` and `Remove`
+
+Six and eight statements, with conditionals, and they read and write through
+the `_old` / `_prev` / `_next` pointer locals. Beyond the five field equations
+that is closed arithmetic on the frame the function fixes, so the shape is the
+same as the seven above with a longer `simp` set. -/
+
+theorem checkFun_insert {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hne : mangle dbC.name ≠ mangle elemC.name) {earlier : List FunDef} :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    Wf.checkFun (tableOf d dbN elemN nm) (genGlobals d) earlier
+      (insertDef nm elemN) = [] := by
+  intro nm elemN dbN
+  obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
+    field_lookups hchk hdb hdbs hfld helem hes hne (genGlobals d) earlier []
+  have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).global?
+          nm.dbGlobal = some { name := nm.dbGlobal, ty := .strct dbN } :=
+    fun locals => global_lookup hroot _ _ locals
+  have hfN : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.next = some (.ptr (.strct elemN)) := fun _ => hnext
+  have hfP : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.prev = some (.ptr (.strct elemN)) := fun _ => hprev
+  have hfI : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.inlist = some (.scalar .bool) := fun _ => hinl
+  have hfH : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.head = some (.ptr (.strct elemN)) := fun _ => hhead
+  have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.count = some (.scalar .u32) := fun _ => hcnt
+  simp only [Wf.checkFun, insertDef, dbFld, ptrFld, ptrLocal, Wf.checkStmt,
+    Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block, Stmt.when]
+  simp [hg, hfN, hfP, hfI, hfH, hfC, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
+    tmpOld, Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.unTy, Wf.litTy,
+    Wf.Stmt.alwaysReturns, Wf.Stmt.assigns, Wf.inferExpr, Wf.addrChecks,
+    Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+
+theorem checkFun_remove {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hne : mangle dbC.name ≠ mangle elemC.name) {earlier : List FunDef} :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    Wf.checkFun (tableOf d dbN elemN nm) (genGlobals d) earlier
+      (removeDef nm elemN) = [] := by
+  intro nm elemN dbN
+  obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
+    field_lookups hchk hdb hdbs hfld helem hes hne (genGlobals d) earlier []
+  have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).global?
+          nm.dbGlobal = some { name := nm.dbGlobal, ty := .strct dbN } :=
+    fun locals => global_lookup hroot _ _ locals
+  have hfN : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.next = some (.ptr (.strct elemN)) := fun _ => hnext
+  have hfP : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.prev = some (.ptr (.strct elemN)) := fun _ => hprev
+  have hfI : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.inlist = some (.scalar .bool) := fun _ => hinl
+  have hfH : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.head = some (.ptr (.strct elemN)) := fun _ => hhead
+  have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.count = some (.scalar .u32) := fun _ => hcnt
+  simp only [Wf.checkFun, removeDef, dbFld, ptrFld, ptrLocal, Wf.checkStmt,
+    Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block, Stmt.when]
+  simp [hg, hfN, hfP, hfI, hfH, hfC, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
+    tmpPrev, tmpNext, Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.unTy, Wf.litTy,
+    Wf.Stmt.alwaysReturns, Wf.Stmt.assigns, Wf.inferExpr, Wf.addrChecks,
+    Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
 
 end Llist
 end Templates
