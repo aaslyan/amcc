@@ -188,8 +188,17 @@ over the six lowering reftypes crossed with "is the `arg` scalar"),
 `Db.find?_name` and `Db.find?_of_mem_pairwise` in `Dmmeta`, and
 `layoutDeps_sub_allStructs`.
 
-**Not proved: the three templates' `GenWellFormed`.** The layout half is done,
-so each is left with only its own functions:
+**Not proved: the three templates' `GenWellFormed`.** The layout half is done
+and is available as two named lemmas — `Layout.checkStructs_gen` and
+`Layout.checkGlobals_gen`, both taking only `Dmmeta.check d = []` — so each
+template's proof opens with
+
+```lean
+simp only [Wf.check, genUpptr, List.append_eq_nil_iff]
+refine ⟨⟨⟨checkStructs_gen hchk, checkGlobals_gen hchk⟩, ?names⟩, ?funs⟩
+```
+
+and is left with only its own functions:
 
 1. `distinct "function"` over the template's generated names. The
    `<ctype>_<field>` uniqueness clause in `Dmmeta.check` is what makes it
