@@ -290,6 +290,53 @@ printer is correct" into "the C compiler agrees with our reading of C". Per
 `docs/GOALS.md`, difficulty is not grounds for carving this out permanently.
 It is owed.
 
+### 3.3 The output is split into `.h` and `.c`, not `.h` and `.cpp`
+
+`amc` emits `include/gen/<ns>_gen.h` and `cpp/gen/<ns>_gen.cpp` (plus an
+`<ns>_gen.inl.h` for the inline bodies). AMCC now emits the same two-file
+layout — the same banner shape, `#pragma once` as the include guard, struct
+definitions and the database global's `extern` and one prototype per function
+in the header; the header's `#include` first, the global's definition and the
+bodies in the implementation — but names the second file `<name>_gen.c`.
+
+**Why.** `docs/GOALS.md` puts AMCC in C rather than C++ by design ("same API
+shape, same operation vocabulary, same reftypes — in C rather than C++"), and
+the C subset has no member functions, no references and no overloading, so
+there is nothing in the emitted text that a C++ compiler would accept and a C
+compiler would not. Naming it `.cpp` would misdescribe the contents. There is
+no `.inl.h`: `amc` needs one because it marks small accessors `inline` in the
+header, and the subset has no `inline` — every function has exactly one
+definition, in the implementation file.
+
+**What would discharge it.** Nothing; this one is a consequence of the C target
+and is expected to stay. It is recorded because a reader comparing directory
+listings should not have to guess whether the missing `.cpp` means a missing
+feature.
+
+### 3.4 The header/implementation split is proved; the *rendering* still is not
+
+The partition itself is an AST operation (`Amcc/Codegen/Split.lean`) and
+`split_partition` proves the two halves together carry exactly the input's
+declarations, with `split_protos_match` proving every body has a prototype and
+every prototype a body. That was deliberate: a printer bug produces text that
+fails to compile, but a *partition* bug produces two files that each compile
+and a symbol that exists in neither — a failure the C toolchain only notices at
+link time, and only if something calls it.
+
+What is **not** proved is that `Print.header` and `Print.impl` render those
+declarations faithfully — that the prototype the header carries has the same
+signature as the body the implementation carries, as *text*. That is the same
+gap as §3.1 and has the same discharge; until then, `scripts/smoke.sh` compiles
+the two files together, and separately compiles a translation unit that
+includes only the header, so a header that does not stand alone fails visibly.
+
+**What would discharge it.** §3.1's theorem, applied twice: if
+`Print.funDef fd` and `Print.funProto fd` both denote `fd`, then a prototype
+that disagrees with its body is unreachable. A cheaper partial measure, worth
+having on its own, is to prove `Print.funSig` is the shared prefix of both —
+the printer is already written that way, so it is a statement about the code as
+it stands rather than a redesign.
+
 ---
 
 ## The honest summary

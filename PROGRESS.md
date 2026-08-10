@@ -2,10 +2,22 @@
 
 ## Now
 
-**`Thash.FindCorrect`**, over `CSubset.Chain`. A bucket is a chain, so the same
-`Reaches` applies with the bucket head in place of the list head.
+**An ssimfile reader** (`Amcc/Ssim/`), with the print-back round trip built
+alongside it. Then `Thash.FindCorrect`.
 
 ## Done
+
+- **G — the header/implementation split.** `Amcc/Codegen/Split.lean` partitions
+  a `Program` at the **AST** level, with `split_partition` proving the two
+  halves together carry exactly the input's declarations and
+  `split_protos_match` proving every body has a prototype and every prototype a
+  body. `Print.header`/`Print.impl` render the halves in `amc`'s layout;
+  `lake exe amcc all --out <dir>` writes them; `scripts/gen/` holds the
+  goldens; `scripts/smoke.sh` builds each template three ways — single file,
+  split with `-I`, and a translation unit that includes only the header — all
+  under `-Wall -Wextra -Werror`, and diffs the split output against the
+  goldens. Two `docs/DIVERGENCE.md` entries: §3.3 (`.c`, not `.cpp`) and §3.4
+  (the partition is proved, the rendering is not).
 
 - **F — `Llist.RemoveUnlinks`.** Proved, so both linking laws are closed.
   `exec_removeMiddle` is the branch where `row->prev` names a predecessor:
@@ -76,6 +88,7 @@
 
 ## Next
 
+- The ssimfile reader (`Amcc/Ssim/`) and its round trip
 - `Thash.FindCorrect`, over `CSubset.Chain`
 - The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
   `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
@@ -118,6 +131,33 @@ mention `post` while the goal mentions `q1 :: post0`. Every membership side
 goal is then `by rw [hpost]; simp` rather than `simp`.
 
 ## Decisions
+
+- **`#pragma once`, not a named include guard.** `amc`'s generated headers use
+  `#pragma once` (`include/gen/*_gen.h`, line 25 of every one), and the
+  instruction was to match what `amc` does rather than what seems reasonable.
+  It is also the mechanism with no name to collide.
+
+- **The prototype/definition markers carry the C name, because that is all the
+  AST has.** `amc` writes `// func:abt.FArch.msghdr.CopyOut` in the header and
+  `// --- abt.FArch.msghdr.CopyOut` in the `.cpp` — the *provenance*, ctype and
+  field and operation. `CSubset.FunDef` carries only the emitted C name, so the
+  markers carry that. Threading provenance through the AST would be a real
+  change to `Program` for a comment, and it is not free: it would have to be
+  maintained by every template and checked by nothing.
+
+- **The split's globals lose `static`.** Single-file output keeps
+  `static T g;` — internal linkage, zero-initialised, nothing else in the
+  program. A global declared `extern` in a header cannot be `static`, so the
+  split emits `extern T g;` and `T g;`. The two modes therefore differ in
+  linkage and only in linkage, which is why `smoke.sh` diffs the two modes'
+  *answers* against each other and not just against the expectations.
+
+- **The drivers were left declaring their own structs and prototypes rather
+  than including the generated header.** Redundant on its face — but it makes
+  the driver an *independent* transcription of the interface, so the split
+  build checks the header against a second opinion instead of against itself.
+  A driver that included the header could not catch a header that declared the
+  wrong signature.
 
 - **`Remove` is three lemmas, not one: `exec_removeHead`, `exec_removeMiddle`,
   `exec_removeBody`.** The generated `if (_prev != NULL)` is the branch, and

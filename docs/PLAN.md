@@ -17,7 +17,9 @@ allocator layer), `docs/ALLOCATOR_REQUIREMENT.md` (the allocator contract),
 
 ## Status
 
-**Emitted C** — five templates, twenty-five functions.
+**Emitted C** — five templates, twenty-five functions, in `amc`'s two-file
+layout (`<name>_gen.h` + `<name>_gen.c`; `lake exe amcc all --out <dir>`), with
+the single-file mode kept. The goldens are committed under `scripts/gen/`.
 
 | Template | Functions |
 |---|---|
@@ -77,6 +79,13 @@ tested against a real compiler by `scripts/smoke.sh`.
   claim `docs/DIVERGENCE.md` §3.2 makes. `accepted_bucket_facts` ties both to
   the generator's own guard. `Thash.FindCorrect` remains **stated and not
   proved**.
+- **`Codegen.split_partition`** — the header/implementation split is an AST
+  operation, and the two halves together carry exactly the input's
+  declarations: none dropped, none duplicated, order preserved.
+  `split_protos_match` adds that every body has a prototype and every prototype
+  a body. The printer stays trusted (`docs/DIVERGENCE.md` §3.1, §3.4); the
+  partition — the part that could silently lose a function — does not have to
+  be.
 - `Store.readPath_writePath_disjoint` — the frame law the above rests on, and
   the first thing that makes `Path.overlaps` mean something: a prefix test on
   access paths *is* a sufficient aliasing analysis, because a path names an
@@ -110,7 +119,9 @@ Two gaps remain against the full measure, both recorded in
 
 - **The pretty-printer is unverified.** `MilestoneTheorem` certifies the
   *AST*. `Codegen/Print.lean` turns that AST into C text and is covered only
-  by goldens and `scripts/smoke.sh`.
+  by goldens and `scripts/smoke.sh`. The *partition* into header and
+  implementation is proved (`Codegen.split_partition`); the *rendering* of
+  either half is not.
 - **The pool has a proved model and a tested implementation with no formal
   link between them.** `Spec/Pool.lean` proves the algorithm; `Templates/Pool`
   emits it; nothing connects the two the way `ArrayTableInsert` connects

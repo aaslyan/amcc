@@ -25,6 +25,7 @@ import Amcc.Templates.Upptr
 import Amcc.Templates.Llist
 import Amcc.Templates.Thash
 import Amcc.Templates.ArrayTableChecks
+import Amcc.Codegen.Split
 import Amcc.Codegen.Print
 import Amcc.Codegen.PrintChecks
 
@@ -120,7 +121,15 @@ that should fail does not.)
                           for a `dmmeta.reftype Upptr` field, with the
                           read-back law (`get_set`) and the frame law proved
                           for every program the names resolve in
-- `Codegen.Print`       — the pretty-printer to C text (trusted, unverified)
+- `Codegen.Split`       — the **header/implementation partition**, at the AST
+                          level: `split_partition` proves the two halves
+                          together carry exactly the input's declarations, and
+                          `split_protos_match` that every body has a prototype
+                          and every prototype a body. The printer stays
+                          trusted; the partition does not have to be
+- `Codegen.Print`       — the pretty-printer to C text (trusted, unverified),
+                          in three modes: one self-contained translation unit,
+                          or `<name>_gen.h` + `<name>_gen.c`
 - `Codegen.PrintChecks` — byte-for-byte golden tests of the printed output
 
 `lake exe amcc` prints the generated C for an example schema;
