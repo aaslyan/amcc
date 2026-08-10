@@ -2,11 +2,21 @@
 
 ## Now
 
-**Item B, the rest.** `Layout.LayoutWellFormed` and then the three templates'
-`GenWellFormed`. See "Where the every-schema gap stands" below for exactly what
-is proved and what is left.
+**Item B, the rest**: `Upptr.genWellFormed`, then `Thash`, then `Llist`. The
+layout half (`Layout.layoutWellFormed`) is done. See "Where the every-schema
+gap stands" below for the branch structure and the two hazards.
 
 ## Done
+
+- **L — `Layout.layoutWellFormed`.** Proved: every schema the lowering accepts
+  produces structs and globals `Wf.check` accepts. The hard clause is the one
+  the single-table `genWellFormed` never faced — struct nesting must be
+  acyclic — and it needed the transport of "declared earlier" from the *ctype*
+  index the schema checker speaks in to the *struct* index `Wf.checkStructs`
+  speaks in, across the filter that drops the scalar ctypes
+  (`getElem?_filterMap`, `mem_filterMap_take`). `fieldTy_shape` is the one
+  place the shape of a lowered field type is opened. `Db.find?_name` and
+  `Db.find?_of_mem_pairwise` landed in `Dmmeta` on the way.
 
 - **K — conformance measured against the real corpus.** `docs/CONFORMANCE.md`,
   from `amc`'s own `data/dmmeta`: 1420 ctypes, 5659 fields. **79.9% of fields
@@ -146,6 +156,9 @@ is proved and what is left.
 
 ## Where the every-schema gap stands
 
+*Updated: the layout half is proved. The three templates' own functions
+remain.*
+
 **Proved and committed** (`Amcc/Templates/LayoutWf.lean`, `CSubset/Wf.lean`):
 
 - the `Inlary` bound hole in `Dmmeta.check`, with two negative `rfl` examples;
@@ -163,44 +176,36 @@ is proved and what is left.
 - `filterMap_take_prefix` / `mem_filterMap_take` — the transport of "declared
   earlier" across the filter that drops the scalar ctypes.
 
-**Not proved.** `Layout.layoutWellFormed` itself, and the three templates'
-`GenWellFormed`. What each still needs:
+**`Layout.layoutWellFormed` is proved.** With it: `getElem?_filterMap` (the
+ctype-index-to-struct-index bridge), `fieldTy_shape` (the one case analysis
+over the six lowering reftypes crossed with "is the `arg` scalar"),
+`Db.find?_name` and `Db.find?_of_mem_pairwise` in `Dmmeta`, and
+`layoutDeps_sub_allStructs`.
 
-1. **`checkStructs_gen`.** A shell lemma turning `checkStructs structs = []`
-   into four membership-shaped hypotheses (names distinct, field names
-   distinct, `sizesOk`, `allStructs` resolve, `layoutDeps` earlier) —
-   mechanical, an unfold plus `List.flatMap_eq_nil_iff`.
-2. **The index correspondence.** `checkStructs`'s `earlier` at struct index
-   `i'` is `(structs.take i').map name`, and `facts_of_check` gives
-   declared-earlier at *ctype* index `j`. The missing bridge is
-   ```
-   getElem?_filterMap (f) : (l.filterMap f)[i]? = some b →
-     ∃ j (hj : j < l.length), f (l[j]'hj) = some b
-       ∧ ((l.take j).filterMap f).length = i
-   ```
-   provable by induction on `l` with `i` generalised, splitting on `f a`; the
-   `some`/`i+1` case is where `mem_filterMap_take` gets used. Do **not** try to
-   do this with `List.zipIdx` directly — use `List.mem_zipIdx_iff_getElem?`
-   first, which is how `facts_of_check` already gets at the ctype index.
-3. **`fieldTy_structs`.** One case analysis over the six lowering reftypes
-   crossed with "is the `arg` scalar": every generated type is `scalar`,
-   `strct n`, `ptr (strct n)` or `arr (strct n) k`, and
-   - `Ty.sizesOk` needs only the `Inlary` bound fact (now available),
-   - `Ty.allStructs` is `[]` or `[f.arg]`, and `f.arg` resolves to a
-     **non-scalar** ctype exactly when the result mentions a struct,
-   - `Ty.layoutDeps` is `[]` unless `f.reftype.layoutDep`, which is precisely
-     `Val`/`Base`/`Inlary` — the three that embed rather than point.
-4. **`checkGlobals`.** Small: one global, `sizesOk (.strct r) = true` by `rfl`,
-   and `r ∈ (genStructs d).map name` from the root clause of `Dmmeta.check`,
-   which `facts_of_check` does **not** currently expose and should.
-5. **Then the templates.** `Upptr` is four straight-line functions and should
-   go first; `Thash` is five, one with a loop; `Llist` is nine. Each needs
-   `distinct "function"` over its own generated names — the `<ctype>_<field>`
-   uniqueness clause in `Dmmeta.check` is what makes that reachable — plus
-   `checkFun` per function, which for these templates is
-   `simp [Wf.checkFun, …]` against a symbolic `Wf.Ctx`, exactly as
-   `ArrayTableWf`'s `checkFun_find`/`_insert`/`_erase` do. Reuse that shape;
-   do not re-derive it.
+**Not proved: the three templates' `GenWellFormed`.** The layout half is done,
+so each is left with only its own functions:
+
+1. `distinct "function"` over the template's generated names. The
+   `<ctype>_<field>` uniqueness clause in `Dmmeta.check` is what makes it
+   reachable — `Upptr.lookups_of_wf` already depends on it — but it has to be
+   pushed through the per-field `flatMap` that builds the function list, which
+   is where `pairwise_filterMap_map` will not be enough: the names are
+   `qualName ++ suffix`, so distinctness of the qualified names has to be
+   transported across a *non-injective-looking* but actually injective
+   suffixing. Prove `<c>_<f>_Init ≠ <c'>_<f'>_Get` from `<c>_<f> ≠ <c'>_<f'>`
+   once and reuse it four/nine/five times.
+2. `checkFun` per generated function. For these templates that is
+   `simp [Wf.checkFun, …]` against a **symbolic** `Wf.Ctx` with projection
+   equations as hypotheses — exactly `ArrayTableWf`'s `checkFun_find` /
+   `_insert` / `_erase`. Reuse that shape; do not re-derive it, and note the
+   hazard recorded there: full `simp` fuses `find?`/`flatMap` over `map`
+   before custom rewrites match, so decompose with `simp only`.
+3. Order: `Upptr` (four straight-line functions) first, then `Thash` (five,
+   one with a `forN`), then `Llist` (nine). Each is independent; commit each.
+
+**Then** restate each template's laws so `lookupFun p nm.x = .ok (xDef …)` is
+discharged from `Dmmeta.check` once, via `Upptr.lookups_of_wf` and
+`CSubset.lookupFun_of_mem`, rather than per-schema.
 
 **The finding.** `Dmmeta.check` accepted `Inlary max:0` and the generated
 program was rejected by `Wf.check`. Nothing was *relying* on a sample-schema

@@ -127,6 +127,8 @@ that ctype are distinct, the `arg` resolves, a layout-carrying field's `arg`
 was declared earlier, and an `Inlary`'s bound is a legal array size. -/
 theorem facts_of_check {d : Db} (h : check d = []) :
     dups d.withBuiltins.names = []
+    ∧ (∀ r, d.root = some r →
+        ∃ c, d.withBuiltins.find? r = some c ∧ c.scalar = none)
     ∧ ∀ i, ∀ hi : i < d.withBuiltins.ctypes.length,
         dups ((d.withBuiltins.ctypes[i]'hi).fields.map Field.name) = []
         ∧ ∀ f ∈ (d.withBuiltins.ctypes[i]'hi).fields,
@@ -137,8 +139,20 @@ theorem facts_of_check {d : Db} (h : check d = []) :
                 ∃ n, d.withBuiltins.inlaryMax? (d.withBuiltins.ctypes[i]'hi).name f.name = some n
                   ∧ 0 < n ∧ n < Wf.u32Bound) := by
   simp only [check, List.append_eq_nil_iff, List.map_eq_nil_iff] at h
-  obtain ⟨⟨⟨hdup, _⟩, _⟩, hcty⟩ := h
-  refine ⟨hdup, fun i hi => ?_⟩
+  obtain ⟨⟨⟨hdup, _⟩, hroot⟩, hcty⟩ := h
+  refine ⟨hdup, ?_, fun i hi => ?_⟩
+  · intro r hr
+    rw [hr] at hroot
+    simp only [] at hroot
+    cases hf : d.withBuiltins.find? r with
+    | none => rw [hf] at hroot; simp at hroot
+    | some c =>
+      rw [hf] at hroot
+      simp only [] at hroot
+      refine ⟨c, rfl, ?_⟩
+      cases hs : c.scalar with
+      | none   => rfl
+      | some t => rw [hs] at hroot; simp at hroot
   rw [List.flatMap_eq_nil_iff] at hcty
   have hmem : ((d.withBuiltins.ctypes[i]'hi), i) ∈ d.withBuiltins.ctypes.zipIdx := by
     rw [List.mem_zipIdx_iff_getElem?]
@@ -206,6 +220,284 @@ theorem mem_filterMap_take {α β : Type _} [BEq β] [LawfulBEq β]
     b ∈ (l.filterMap f).take ((l.take i).filterMap f).length := by
   rw [filterMap_take_prefix f l i]
   exact List.mem_filterMap.mpr ⟨a, ha, hfa⟩
+
+/-- **Where a filtered element ends up.** The bridge between the *ctype* index
+`Dmmeta.check` speaks in and the *struct* index `Wf.checkStructs` speaks in.
+
+By induction on `l` with `i` generalised, splitting on `f a`. Do not try to do
+this over `List.zipIdx` directly — `List.mem_zipIdx_iff_getElem?` turns the
+membership into this statement first, which is also how `facts_of_check` gets
+at the ctype index. -/
+theorem getElem?_filterMap {α β : Type _} (f : α → Option β) :
+    ∀ (l : List α) (i : Nat) (b : β), (l.filterMap f)[i]? = some b →
+      ∃ (j : Nat) (hj : j < l.length),
+        f (l[j]'hj) = some b ∧ ((l.take j).filterMap f).length = i
+  | [], i, b, h => by simp at h
+  | a :: l, i, b, h => by
+    cases hfa : f a with
+    | none =>
+      rw [List.filterMap_cons, hfa] at h
+      obtain ⟨j, hj, h1, h2⟩ := getElem?_filterMap f l i b h
+      exact ⟨j + 1, by simpa using hj, h1, by simpa [List.filterMap_cons, hfa] using h2⟩
+    | some b0 =>
+      rw [List.filterMap_cons, hfa] at h
+      cases i with
+      | zero =>
+        refine ⟨0, by simp, ?_, by simp⟩
+        show f a = some b
+        rw [hfa]
+        simpa using h
+      | succ i =>
+        simp only [List.getElem?_cons_succ] at h
+        obtain ⟨j, hj, h1, h2⟩ := getElem?_filterMap f l i b h
+        refine ⟨j + 1, by simpa using hj, h1, ?_⟩
+        simp [hfa, h2]
+
+/-! ## What a lowered field type can be
+
+One case analysis over the six reftypes with a lowering, crossed with "is the
+`arg` a scalar". It is the only place the shape of `fieldTy` is opened, and
+everything the struct obligations need is read off it here. -/
+
+/-- Every generated field type is a scalar, a struct, a pointer to one, or a
+bounded array of one — and in the last three cases the struct is the field's
+`arg`, which resolves to a *record* ctype. `layoutDeps` is non-empty only when
+the reftype embeds rather than points, which is exactly `Reftype.layoutDep`. -/
+theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
+    (ht : fieldTy full owner f = some t) :
+    (∀ n ∈ Wf.Ty.allStructs t,
+        n = f.arg ∧ ∃ ac, full.find? f.arg = some ac ∧ ac.scalar = none)
+    ∧ (∀ n ∈ Wf.Ty.layoutDeps t, n = f.arg ∧ f.reftype.layoutDep = true)
+    ∧ (f.reftype ≠ .Inlary → Wf.Ty.sizesOk t = true)
+    ∧ (∀ k, full.inlaryMax? owner f.name = some k → 0 < k → k < Wf.u32Bound →
+        Wf.Ty.sizesOk t = true) := by
+  simp only [fieldTy] at ht
+  obtain ⟨ac, hac, ht⟩ := Option.bind_eq_some_iff.mp ht
+  -- `base` is the argument's own type: a machine scalar, or the record struct
+  have hbase : ∀ (u : Ty),
+      (match ac.scalar with | some st => Ty.scalar st | none => Ty.strct ac.name) = u →
+      (∀ n ∈ Wf.Ty.allStructs u, n = f.arg ∧ ac.scalar = none)
+        ∧ Wf.Ty.layoutDeps u = Wf.Ty.allStructs u
+        ∧ Wf.Ty.sizesOk u = true := by
+    intro u hu
+    have hname : ac.name = f.arg := Db.find?_name hac
+    cases hs : ac.scalar with
+    | some st => rw [hs] at hu; subst hu; exact ⟨by simp [Wf.Ty.allStructs], rfl, rfl⟩
+    | none =>
+      rw [hs] at hu; subst hu
+      refine ⟨?_, rfl, rfl⟩
+      intro n hn
+      simp only [Wf.Ty.allStructs, List.mem_singleton] at hn
+      exact ⟨hn.trans hname, rfl⟩
+  cases hr : f.reftype with
+  | Val =>
+    rw [hr] at ht; simp only [Option.some.injEq] at ht
+    obtain ⟨h1, h2, h3⟩ := hbase t ht
+    exact ⟨fun n hn => ⟨(h1 n hn).1, ac, hac, (h1 n hn).2⟩,
+      fun n hn => ⟨(h1 n (h2 ▸ hn)).1, rfl⟩, fun _ => h3,
+      fun _ _ _ _ => h3⟩
+  | Base =>
+    rw [hr] at ht; simp only [Option.some.injEq] at ht
+    obtain ⟨h1, h2, h3⟩ := hbase t ht
+    exact ⟨fun n hn => ⟨(h1 n hn).1, ac, hac, (h1 n hn).2⟩,
+      fun n hn => ⟨(h1 n (h2 ▸ hn)).1, rfl⟩, fun _ => h3,
+      fun _ _ _ _ => h3⟩
+  | Pkey =>
+    rw [hr] at ht
+    cases hs : ac.scalar with
+    | some st =>
+      rw [hs] at ht; simp only [Option.isSome_some, if_true, Option.some.injEq] at ht
+      subst ht
+      exact ⟨by simp [Wf.Ty.allStructs], by simp [Wf.Ty.layoutDeps], fun _ => rfl,
+        fun _ _ _ _ => rfl⟩
+    | none =>
+      rw [hs] at ht
+      simp only [Option.isSome_none, Bool.false_eq_true, if_false,
+        Option.some.injEq] at ht
+      subst ht
+      have hname : ac.name = f.arg := Db.find?_name hac
+      refine ⟨?_, by simp [Wf.Ty.layoutDeps], fun _ => rfl, fun _ _ _ _ => rfl⟩
+      intro n hn
+      simp only [Wf.Ty.allStructs, List.mem_singleton] at hn
+      exact ⟨hn.trans hname, ac, hac, hs⟩
+  | Upptr | Ptr =>
+    all_goals (
+      rw [hr] at ht; simp only [Option.some.injEq] at ht
+      subst ht
+      obtain ⟨h1, _, h3⟩ := hbase _ rfl
+      refine ⟨?_, by simp [Wf.Ty.layoutDeps], fun _ => ?_, fun _ _ _ _ => ?_⟩
+      · intro n hn
+        simp only [Wf.Ty.allStructs] at hn
+        exact ⟨(h1 n hn).1, ac, hac, (h1 n hn).2⟩
+      · simpa [Wf.Ty.sizesOk] using h3
+      · simpa [Wf.Ty.sizesOk] using h3)
+  | Inlary =>
+    rw [hr] at ht
+    simp only [Option.map_eq_some_iff] at ht
+    obtain ⟨k, hk, ht⟩ := ht
+    subst ht
+    obtain ⟨h1, h2, h3⟩ := hbase _ rfl
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · intro n hn
+      simp only [Wf.Ty.allStructs] at hn
+      exact ⟨(h1 n hn).1, ac, hac, (h1 n hn).2⟩
+    · intro n hn
+      simp only [Wf.Ty.layoutDeps] at hn
+      rw [← h2] at h1
+      exact ⟨(h1 n hn).1, rfl⟩
+    · intro hne; exact absurd rfl hne
+    · intro k' hk' hpos hlt
+      rw [hk] at hk'
+      cases hk'
+      simp only [Wf.Ty.sizesOk, Bool.and_eq_true, decide_eq_true_eq]
+      exact ⟨⟨hpos, hlt⟩, h3⟩
+  | Lary | Tary | Tpool | Lpool | Blkpool | Malloc | Sbrk | Delptr | Thash
+  | Llist | Bheap | Atree | Ptrary | Count =>
+    all_goals (rw [hr] at ht; simp at ht)
+
+/-- A layout dependency is a mentioned struct — the inclusion the nesting
+obligation needs in order to reuse `allStructs`'s resolution fact. -/
+theorem layoutDeps_sub_allStructs : ∀ (t : Ty) (n : String),
+    n ∈ Wf.Ty.layoutDeps t → n ∈ Wf.Ty.allStructs t
+  | .scalar _, _, h => h
+  | .strct _,  _, h => h
+  | .arr t' _, n, h => layoutDeps_sub_allStructs t' n h
+  | .ptr _,    _, h => by simp [Wf.Ty.layoutDeps] at h
+
+/-! ## Assembling `LayoutWellFormed`
+
+The three obligations, one after the other, against the concatenation
+`Wf.check` is. -/
+
+/-- `genStructs` is a `filterMap` over the ctypes; naming the function once
+keeps the two views of it (here and in `structs_distinct`) from drifting. -/
+def structOf? (full : Db) (c : Ctype) : Option StructDef :=
+  if c.scalar.isSome then none else some (structOf full c)
+
+theorem genStructs_eq (d : Db) :
+    genStructs d = d.withBuiltins.ctypes.filterMap (structOf? d.withBuiltins) := rfl
+
+/-- Every struct AMCC emits is some ctype's, and its name is that ctype's. -/
+theorem structOf?_name {full : Db} {c : Ctype} {sd : StructDef}
+    (h : structOf? full c = some sd) : sd.name = c.name ∧ sd = structOf full c := by
+  simp only [structOf?] at h
+  cases hs : c.scalar with
+  | some t => rw [hs] at h; simp at h
+  | none =>
+    rw [hs] at h
+    simp only [Option.isSome_none, Bool.false_eq_true, if_false,
+      Option.some.injEq] at h
+    exact ⟨by rw [← h]; rfl, h.symm⟩
+
+/-- **The layout pass is well-formed for every accepted schema.**
+
+`layoutWf` is `layoutCheck`, which is `Dmmeta.check` plus the no-empty-struct
+clause; only the first half is used here, so the theorem is really about
+`Dmmeta.check` and the empty-struct clause is what keeps the *output* legal C
+rather than what keeps it well-formed in the subset's sense.
+
+checked by: `lake build` -/
+theorem layoutWellFormed : LayoutWellFormed := by
+  intro d hwf
+  have hchk : check d = [] := by
+    have h : layoutCheck d = [] := List.isEmpty_iff.mp hwf
+    simp only [layoutCheck, List.append_eq_nil_iff] at h
+    exact h.1
+  obtain ⟨hdup, hroot, hcty⟩ := facts_of_check hchk
+  -- the two struct-name facts, in the form the two obligations want
+  have hnames : (genStructs d).map StructDef.name
+      = (d.withBuiltins.ctypes.filterMap (structOf? d.withBuiltins)).map
+          StructDef.name := rfl
+  -- a struct's name is in the emitted list exactly when its ctype is a record
+  have hmemName : ∀ (c : Ctype), c ∈ d.withBuiltins.ctypes → c.scalar = none →
+      ((genStructs d).map StructDef.name).contains c.name = true := by
+    intro c hc hs
+    refine List.elem_eq_true_of_mem (List.mem_map.mpr ⟨structOf d.withBuiltins c, ?_, rfl⟩)
+    exact List.mem_filterMap.mpr ⟨c, hc, by simp [hs]⟩
+  simp only [Wf.check, genLayout, List.append_eq_nil_iff]
+  refine ⟨⟨⟨?structs, ?globals⟩, rfl⟩, rfl⟩
+  case globals =>
+    simp only [Wf.checkGlobals, genGlobals, List.append_eq_nil_iff]
+    cases hr : d.root with
+    | none => exact ⟨rfl, rfl⟩
+    | some r =>
+      obtain ⟨c, hc, hcs⟩ := hroot r hr
+      refine ⟨CSubset.distinct_eq_nil (by simp), ?_⟩
+      simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil,
+        List.append_eq_nil_iff]
+      refine ⟨rfl, ?_⟩
+      simp only [Wf.Ty.allStructs, List.flatMap_cons, List.flatMap_nil,
+        List.append_nil]
+      have hmem : c ∈ d.withBuiltins.ctypes :=
+        List.mem_of_find?_eq_some (by simpa [Db.find?] using hc)
+      have hname : c.name = r := Db.find?_name hc
+      rw [if_pos (by rw [← hname]; exact hmemName c hmem hcs)]
+  case structs =>
+    simp only [Wf.checkStructs, List.append_eq_nil_iff]
+    refine ⟨CSubset.distinct_eq_nil (structs_distinct hdup), ?_⟩
+    rw [List.flatMap_eq_nil_iff]
+    rintro ⟨sd, i⟩ hsdi
+    -- which ctype produced this struct, and where it sat
+    rw [List.mem_zipIdx_iff_getElem?] at hsdi
+    obtain ⟨j, hj, hsj, hlen⟩ :=
+      getElem?_filterMap (structOf? d.withBuiltins) d.withBuiltins.ctypes i sd
+        (by rw [← genStructs_eq]; exact hsdi)
+    obtain ⟨hsdname, hsdeq⟩ := structOf?_name hsj
+    obtain ⟨hfd, hff⟩ := hcty j hj
+    simp only [List.append_eq_nil_iff]
+    refine ⟨CSubset.distinct_eq_nil (hsdeq ▸ fields_distinct hfd), ?_⟩
+    rw [List.flatMap_eq_nil_iff]
+    rintro ⟨fn, ft⟩ hfv
+    -- the field this slot came from, and its lowering
+    rw [hsdeq] at hfv
+    simp only [structOf, List.mem_filterMap] at hfv
+    obtain ⟨f, hfmem, hfeq⟩ := hfv
+    obtain ⟨t, hty, hpair⟩ := Option.map_eq_some_iff.mp hfeq
+    injection hpair with hfn hft
+    subst hft
+    obtain ⟨hall, hdep, hsz, hszI⟩ := fieldTy_shape hty
+    obtain ⟨hargres, hargearly, hinl⟩ := hff f hfmem
+    simp only [List.append_eq_nil_iff]
+    refine ⟨⟨?_, ?_⟩, ?_⟩
+    · -- obligation 3: the size is legal
+      by_cases hI : f.reftype = .Inlary
+      · obtain ⟨k, hk, hpos, hlt⟩ := hinl hI
+        rw [if_pos (hszI k (by rw [← hsdname] at hk ⊢; exact hk) hpos hlt)]
+      · rw [if_pos (hsz hI)]
+    · -- obligation 2a: every struct the type mentions is emitted
+      rw [List.flatMap_eq_nil_iff]
+      intro n hn
+      obtain ⟨hnarg, ac, hac, hacs⟩ := hall n hn
+      have hmem : ac ∈ d.withBuiltins.ctypes :=
+        List.mem_of_find?_eq_some (by simpa [Db.find?] using hac)
+      rw [if_pos (by rw [hnarg, ← Db.find?_name hac]; exact hmemName ac hmem hacs)]
+    · -- obligation 2b: a layout dependency was emitted *earlier*
+      rw [List.flatMap_eq_nil_iff]
+      intro n hn
+      obtain ⟨hnarg, hld⟩ := hdep n hn
+      -- the ctype the checker says was declared before `j`
+      obtain ⟨ac, hacmem, hacname⟩ :=
+        List.mem_map.mp (List.mem_of_elem_eq_true (hargearly hld))
+      -- and the ctype `find?` resolves the `arg` to, which is a record
+      obtain ⟨_, ac', hac', hacs'⟩ :=
+        hall n (layoutDeps_sub_allStructs _ n hn)
+      -- they are the same, because ctype names are distinct
+      have hsame : ac = ac' := by
+        have hmem : ac ∈ d.withBuiltins.ctypes :=
+          List.mem_of_mem_take hacmem
+        have hfind : d.withBuiltins.find? ac.name = some ac :=
+          Db.find?_of_mem_pairwise _ (CSubset.dups_eq_nil_iff.mp hdup) ac hmem
+        rw [hacname] at hfind
+        exact Option.some.inj (hfind.symm.trans hac')
+      refine if_pos ?_
+      refine List.elem_eq_true_of_mem (List.mem_map.mpr
+        ⟨structOf d.withBuiltins ac, ?_, ?_⟩)
+      · rw [← hlen, genStructs_eq]
+        refine mem_filterMap_take (i := j) hacmem ?_
+        simp [structOf?, hsame ▸ hacs']
+      · show (structOf d.withBuiltins ac).name = n
+        rw [show (structOf d.withBuiltins ac).name = ac.name from rfl, hacname,
+          hnarg]
 
 end Layout
 end Templates

@@ -115,14 +115,19 @@ example : (structOf Examples.relational.withBuiltins Examples.childRow).fields
 
 /-! ## The obligation
 
-Stated, not proved — the same convention `ArrayTable.GenWellFormed` used
-before `ArrayTableWf` discharged it, so that the exact statement is on record
-and checkable by eye.
+**Proved**: `Templates.Layout.layoutWellFormed` in `LayoutWf.lean`.
 
 This is the multi-ctype form of `GenWellFormed`, and the interesting clause is
 the one the single-table version never had to face: struct **nesting** must be
 acyclic, which follows from `Reftype.layoutDep` together with the checker's
-declared-earlier rule. -/
+declared-earlier rule. Getting there needed one thing the statement does not
+show — the transport of "declared earlier" from the *ctype* index the checker
+speaks in to the *struct* index `Wf.checkStructs` speaks in, across the filter
+that drops the scalar ctypes.
+
+Proving it also found a hole: `Dmmeta.check` accepted an `Inlary` whose bound
+was `0`, and the generated program was then rejected by `Wf.check`. The
+checker was fixed, not the theorem. -/
 
 /-- **Every lowerable `Db` produces layout the C subset accepts.** -/
 def LayoutWellFormed : Prop :=

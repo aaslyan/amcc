@@ -108,6 +108,14 @@ tested against a real compiler by `scripts/smoke.sh`.
   a body. The printer stays trusted (`docs/DIVERGENCE.md` §3.1, §3.4); the
   partition — the part that could silently lose a function — does not have to
   be.
+- **`Layout.layoutWellFormed`** — every schema `layoutCheck` accepts lowers to
+  structs and globals `Wf.check` accepts: names distinct on both levels, sizes
+  legal, every mentioned struct emitted, and every layout dependency emitted
+  *earlier*. The multi-ctype form of `genWellFormed`, and the shared half of
+  the every-schema gap — `Upptr`, `Llist` and `Thash` all emit this layout, so
+  each is left with only its own functions. Proving it found and closed a hole
+  in `Dmmeta.check`: an `Inlary` bound of `0` was accepted by the schema
+  checker and rejected by the C-subset checker.
 - `Store.readPath_writePath_disjoint` — the frame law the above rests on, and
   the first thing that makes `Path.overlaps` mean something: a prefix test on
   access paths *is* a sufficient aliasing analysis, because a path names an
@@ -177,8 +185,9 @@ them is blocked by something else entirely.
    `Thash` each have `Wf.check … = []` only as a computational example on
    their sample schema. The array table has it for *every* accepted schema.
    Until the others do, `lookups_of_wf`'s hypothesis is discharged per-schema
-   rather than once. Partly landed — `Templates/LayoutWf.lean` has the shared
-   half; `PROGRESS.md` carries the handoff. Ahead of the reftypes because it
+   rather than once. The shared half is **done**
+   (`Layout.layoutWellFormed`); what remains is the per-template function
+   obligations, and `PROGRESS.md` carries the handoff. Ahead of the reftypes because it
    is about whether the *existing* templates' guarantee is what the generated
    headers claim.
 3. **Xref maintenance** tying the templates together, using the

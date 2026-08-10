@@ -152,6 +152,12 @@ that should fail does not.)
                           both directions, plus the exact rejection messages.
                           Nothing about the reader is proved; the round trip is
                           what stands in (`docs/DIVERGENCE.md` §3.6)
+- `Templates.LayoutWf`  — **proved**: `layoutWellFormed` — every schema the
+                          lowering accepts produces structs and globals
+                          `Wf.check` accepts, including that struct nesting is
+                          acyclic. The shared half of the every-schema
+                          well-formedness gap, since the three ctype-model
+                          templates all emit this layout
 - `Codegen.Split`       — the **header/implementation partition**, at the AST
                           level: `split_partition` proves the two halves
                           together carry exactly the input's declarations, and

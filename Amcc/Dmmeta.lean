@@ -218,6 +218,30 @@ def find? (d : Db) (n : Ident) : Option Ctype :=
 
 def names (d : Db) : List Ident := d.ctypes.map Ctype.name
 
+/-- A `find?` hit names what was asked for. Small, but every lowering proof
+needs it: `fieldTy` builds `.strct ac.name` and the obligations are about
+`f.arg`. -/
+theorem find?_name {d : Db} {n : Ident} {c : Ctype} (h : d.find? n = some c) :
+    c.name = n := by
+  simp only [find?] at h
+  have := List.find?_some h
+  simpa using this
+
+/-- **A ctype in a duplicate-free `Db` is what `find?` finds.** The converse of
+`find?_name`, and the one that needs distinctness: `find?` returns the *first*
+match, so without it a later ctype of the same name would be invisible. -/
+theorem find?_of_mem_pairwise : ∀ (l : List Ctype),
+    (l.map Ctype.name).Pairwise (· ≠ ·) → ∀ c ∈ l,
+      l.find? (fun x => x.name == c.name) = some c
+  | [], _, c, hc => absurd hc (by simp)
+  | a :: l, hp, c, hc => by
+    rw [List.map_cons, List.pairwise_cons] at hp
+    rcases List.mem_cons.mp hc with rfl | hc'
+    · simp [List.find?]
+    · have hne : a.name ≠ c.name := hp.1 c.name (List.mem_map_of_mem hc')
+      simp only [List.find?, beq_eq_false_iff_ne.mpr hne]
+      exact find?_of_mem_pairwise l hp.2 c hc'
+
 /-- The declared bound on one `Inlary` field. -/
 def inlaryMax? (d : Db) (owner f : Ident) : Option Nat :=
   (d.inlary.find? (fun i => i.ctype == owner && i.field == f)).map Inlary.max
