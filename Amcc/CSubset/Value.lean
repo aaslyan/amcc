@@ -96,6 +96,21 @@ instance : LawfulBEq Root where
         | exact congrArg _ (eq_of_beq h)
   rfl := by intro a; cases a <;> simp [BEq.beq, instBEqRoot.beq]
 
+/-- And `Path` itself, so that `List.erase` over paths can be reasoned about —
+which is how a template says "this row left the chain". -/
+instance : LawfulBEq Path where
+  eq_of_beq := by
+    intro a b h
+    obtain ⟨ra, sa⟩ := a
+    obtain ⟨rb, sb⟩ := b
+    simp only [BEq.beq, instBEqPath.beq, Bool.and_eq_true] at h
+    exact Path.mk.injEq .. ▸ ⟨eq_of_beq h.1, eq_of_beq h.2⟩
+  rfl := by
+    intro a
+    obtain ⟨r, ss⟩ := a
+    simp only [BEq.beq, instBEqPath.beq, Bool.and_eq_true]
+    exact ⟨beq_self_eq_true r, beq_self_eq_true ss⟩
+
 /-! ## Values -/
 
 /-- Runtime values.

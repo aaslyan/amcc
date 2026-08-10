@@ -6,6 +6,7 @@ import Amcc.CSubset.Examples
 import Amcc.CSubset.Value
 import Amcc.CSubset.Eval
 import Amcc.CSubset.Calls
+import Amcc.CSubset.Chain
 import Amcc.CSubset.Wf
 import Amcc.CSubset.WfChecks
 import Amcc.CSubset.SmallStep

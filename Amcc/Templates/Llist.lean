@@ -1,6 +1,7 @@
 import Amcc.Dmmeta
 import Amcc.CSubset.Wf
 import Amcc.CSubset.Calls
+import Amcc.CSubset.Chain
 
 /-!
 # AMCC — the `Llist` template
@@ -343,9 +344,6 @@ are what make the frame arguments go through — visible rather than buried. -/
 /-- `g_D.<x>` as a path. -/
 def dbPath (nm : Names) (x : Ident) : Path := ⟨.glob nm.dbGlobal, [.fld x]⟩
 
-/-- `<row>-><x>` as a path, given the path the row pointer names. -/
-def fldPath (q : Path) (x : Ident) : Path := ⟨q.root, q.steps ++ [.fld x]⟩
-
 /-! ## Resolving
 
 The two lvalue forms the template uses. Both discharge their traps from the
@@ -384,6 +382,139 @@ theorem exec_assign_path {p : Program} {callee} {σ : Store} {l : LVal} {pa : Pa
       ∧ σ.writePath pa w = some σ' := by
   obtain ⟨σ', hw⟩ := Store.writePath_isSome (w := w) hread
   exact ⟨σ', by simp only [execAt, hres, he, writeLoc, hw, bind, Except.bind], hw⟩
+
+/-! ## One write, packaged
+
+Each generated writer is a short sequence of assignments at pairwise-disjoint
+paths. These two lemmas do one assignment and hand back exactly what the next
+one needs: the value now at the written path, and the fact that every path not
+overlapping it is unchanged. Chaining them is then bookkeeping about
+disjointness rather than about the semantics. -/
+
+theorem step_ptr {p : Program} {callee} {σ : Store} {ptr x : Ident} {q : Path}
+    {e : Expr} {w v : Value}
+    (hloc : σ.getLocal ptr = some (.ptr q))
+    (hread : σ.readPath (fldPath q x) = some v)
+    (he : evalExpr σ e = .ok w) :
+    ∃ σ', execAt p callee (.assign (ptrFld ptr x) e) σ = .ok (σ', .normal)
+      ∧ σ'.loc = σ.loc
+      ∧ σ'.readPath (fldPath q x) = some w
+      ∧ ∀ r, (fldPath q x).overlaps r = false → σ'.readPath r = σ.readPath r := by
+  obtain ⟨σ', hex, hw⟩ := exec_assign_path (p := p) (callee := callee)
+    (resolve_ptrFld hloc hread) he hread
+  exact ⟨σ', hex, Store.writePath_loc hw, Store.readPath_writePath_self hw,
+    fun r hr => Store.readPath_writePath_disjoint hw hr⟩
+
+theorem step_db {p : Program} {callee} {σ : Store} {nm : Names} {x : Ident}
+    {e : Expr} {w v : Value}
+    (hread : σ.readPath (dbPath nm x) = some v)
+    (he : evalExpr σ e = .ok w) :
+    ∃ σ', execAt p callee (.assign (dbFld nm x) e) σ = .ok (σ', .normal)
+      ∧ σ'.loc = σ.loc
+      ∧ σ'.readPath (dbPath nm x) = some w
+      ∧ ∀ r, (dbPath nm x).overlaps r = false → σ'.readPath r = σ.readPath r := by
+  obtain ⟨σ', hex, hw⟩ := exec_assign_path (p := p) (callee := callee)
+    (resolve_dbFld hread) he hread
+  exact ⟨σ', hex, Store.writePath_loc hw, Store.readPath_writePath_self hw,
+    fun r hr => Store.readPath_writePath_disjoint hw hr⟩
+
+/-! ## The generated names are distinct
+
+True by construction — every one is the field name with a different literal
+suffix — but the invariant reasons about `row->next` not disturbing
+`row->prev`, so it has to be said. -/
+
+structure NamesOk (nm : Names) : Prop where
+  np : nm.next ≠ nm.prev
+  nf : nm.next ≠ nm.inlist
+  pf : nm.prev ≠ nm.inlist
+  hc : nm.head ≠ nm.count
+
+theorem namesOk (dbC fld : Ident) : NamesOk (names dbC fld) where
+  np := append_ne (by decide)
+  nf := append_ne (by decide)
+  pf := append_ne (by decide)
+  hc := append_ne (by decide)
+
+/-! ## The representation invariant
+
+`qs` is the chain, in order. `rows` is the universe of live rows the allocator
+has handed out — pairwise disjoint objects, and a superset of the chain. It is
+a parameter rather than something derived because a chain does not allocate;
+`Spec/Pool.lean`'s `alloc_frame` is the statement that a pool supplies it.
+
+Every clause is either a `CSubset.Chain` predicate or a disjointness fact
+about where the parent's own two fields sit relative to the rows. -/
+
+structure ListInv (m : Mem) (nm : Names) (rows qs : List Path) : Prop where
+  /-- The chain is a sublist of the live rows. -/
+  sub      : ∀ q ∈ qs, q ∈ rows
+  /-- Live rows are distinct objects. -/
+  disj     : RowsDisjoint rows
+  /-- The head pointer names the chain's first row. -/
+  head     : readMem m (dbPath nm nm.head) = some (headOf qs)
+  /-- Following `next` from it visits exactly the chain. -/
+  chain    : Reaches m nm.next (headOf qs) qs
+  /-- `prev` is its inverse. -/
+  back     : Backlinked m nm.prev qs .null
+  /-- The flag marks exactly the chain, among the live rows. -/
+  flags    : Flagged m nm.inlist rows qs
+  /-- The count is its length. -/
+  count    : Counted m (dbPath nm nm.count) qs
+  /-- Every live row has all three link fields, whether or not it is on the
+  chain — the writers touch them on rows they are about to link. -/
+  fields   : ∀ q ∈ rows, (readMem m (fldPath q nm.next)).isSome = true
+                       ∧ (readMem m (fldPath q nm.prev)).isSome = true
+                       ∧ (readMem m (fldPath q nm.inlist)).isSome = true
+  /-- The parent's own fields are not inside any row. -/
+  parent   : ∀ q ∈ rows, q.overlaps (dbPath nm nm.head) = false
+                       ∧ q.overlaps (dbPath nm nm.count) = false
+
+/-! ## Disjointness, read off the invariant
+
+Everything below is bookkeeping about which write can be seen where. It is
+short because `CSubset.Chain` already turned "these are different objects"
+into "these are different paths". -/
+
+theorem uint32_ofNat_succ (a : Nat) : UInt32.ofNat a + 1 = UInt32.ofNat (a + 1) := by
+  apply UInt32.toNat.inj
+  simp [UInt32.toNat_ofNat', UInt32.toNat_add, Nat.add_mod]
+
+theorem read_dbFld {σ : Store} {nm : Names} {x : Ident} {v : Value}
+    (h : σ.readPath (dbPath nm x) = some v) :
+    evalExpr σ (.rd (dbFld nm x)) = .ok v := by
+  simp only [evalExpr, resolve_dbFld h, readLoc, h, bind, Except.bind]
+
+theorem read_ptrFld {σ : Store} {ptr x : Ident} {q : Path} {v : Value}
+    (hloc : σ.getLocal ptr = some (.ptr q))
+    (h : σ.readPath (fldPath q x) = some v) :
+    evalExpr σ (.rd (ptrFld ptr x)) = .ok v := by
+  simp only [evalExpr, resolve_ptrFld hloc h, readLoc, h, bind, Except.bind]
+
+theorem dbPath_disjoint {nm : Names} {x y : Ident} (h : x ≠ y) :
+    (dbPath nm x).overlaps (dbPath nm y) = false :=
+  fldPath_ne_disjoint (q := ⟨.glob nm.dbGlobal, []⟩) h
+
+theorem step_local {p : Program} {callee} {σ : Store} {x : Ident} {e : Expr}
+    {w v : Value} (hloc : σ.getLocal x = some v) (he : evalExpr σ e = .ok w) :
+    execAt p callee (.assign (.var x) e) σ = .ok (σ.setLocal x w, .normal) := by
+  simp only [execAt, resolve, hloc, he, writeLoc, bind, Except.bind]
+
+theorem readPath_setLocal (σ : Store) (x : Ident) (v : Value) (p : Path) :
+    (σ.setLocal x v).readPath p = σ.readPath p := by
+  simp only [Store.readPath]
+  have h : (σ.setLocal x v).rootVal = σ.rootVal := by funext r; cases r <;> rfl
+  rw [h]
+
+theorem getLocal_setLocal_self {σ : Store} {x : Ident} {v w : Value}
+    (h : σ.getLocal x = some w) : (σ.setLocal x v).getLocal x = some v := by
+  simp only [Store.setLocal, Store.getLocal, Env.get?_set_self]
+  simp only [Store.getLocal] at h
+  rw [h]; rfl
+
+theorem getLocal_setLocal_ne {σ : Store} {x y : Ident} (h : y ≠ x) (v : Value) :
+    (σ.setLocal x v).getLocal y = σ.getLocal y := by
+  simp only [Store.setLocal, Store.getLocal, Env.get?_set_ne _ h]
 
 /-! ## The laws
 
@@ -639,62 +770,416 @@ theorem remove_noop
 
 end Laws
 
-/-! ## Still owed: the list invariant, and what the writers do to it
+/-! ## The linking laws
 
-The readers and the two idempotence guards above are proved. The *linking*
-laws are not, and the reason is worth stating precisely rather than leaving as
-a gap in a list of theorems.
+`InsertLinks` and `RemoveUnlinks` were first stated as purely local facts —
+"after `Insert`, the head is the row and its flag is set" — with no invariant
+in sight. Those statements are **not provable**, and the reason is instructive
+rather than technical: `Remove` reads `row->prev` and `row->next` and writes
+through them, so without knowing that the neighbours are rows disjoint from
+`row`, the second write can clobber the first. A statement whose hypotheses do
+not rule that out is describing code that does not exist.
 
-`RepInv` for the array table is a statement about a `List Value` — the storage
-array — and every clause is a quantifier over indices. A linked list has no
-such carrier: its shape is a property of a **graph in the heap**, and the
-invariant that makes `Remove` correct is
+Both are therefore restated over `ListInv`, and both **keep every conclusion
+they had** and add the abstract effect: the chain becomes `q :: qs`, or `qs`
+with `q` spliced out. See `PROGRESS.md` under Decisions. -/
 
-- the chain from `head` along `next` is finite, acyclic and `NULL`-terminated;
-- `prev` is its inverse on that chain, and `NULL` at the head;
-- `inlist` is `true` exactly on the chain's members;
-- `n` is the chain's length.
-
-Stating that needs a *reachability* predicate over the store, and proving that
-`Insert` and `Remove` preserve it needs the frame reasoning to be
-compositional over that predicate — which `Store.readPath_writePath_disjoint`
-supports but does not by itself supply. That is the missing piece, and it is a
-piece the `Thash` template will need in the same form (a bucket is a chain), so
-it is worth building once rather than twice.
-
-Until it exists, what stands behind the writers is `scripts/smoke.sh`, which
-runs the emitted C through a real compiler and checks link, unlink from the
-head, the middle and the tail, and both guards. That is a differential test,
-not a proof, and this section exists so that it is not mistaken for one.
-
-`docs/PLAN.md` carries this as the next proof obligation. -/
-
-/-- **What `Insert` should be proved to do.** Stated so the obligation is on
-record and can be cited, in the same style as the array table's milestone
-obligations were before they were discharged. -/
+/-- **`Insert` links a row at the head.** -/
 def InsertLinks (nm : Names) (elem : Ident) : Prop :=
-  ∀ (p : Program) (m : Mem) (q : Path),
+  ∀ (p : Program) (m : Mem) (rows qs : List Path) (q : Path),
     lookupFun p nm.insert = .ok (insertDef nm elem) →
     (∃ n, p.funs.length = n + 1) →
+    NamesOk nm → ListInv m nm rows qs → q ∈ rows →
     readMem m (fldPath q nm.inlist) = some (.bool false) →
     ∃ m', callFun p m nm.insert [.ptr q] = .ok (m', none)
-      -- the row is now the head, and is in the list
+      -- the abstract effect
+      ∧ ListInv m' nm rows (q :: qs)
+      -- and everything the original statement asked for
       ∧ readMem m' (dbPath nm nm.head) = some (.ptr q)
       ∧ readMem m' (fldPath q nm.inlist) = some (.bool true)
       ∧ readMem m' (fldPath q nm.prev) = some .null
-      -- and it points at what the head used to be
       ∧ readMem m' (fldPath q nm.next) = readMem m (dbPath nm nm.head)
 
-/-- **What `Remove` should be proved to do.** -/
+/-- **`Remove` splices a row out.** -/
 def RemoveUnlinks (nm : Names) (elem : Ident) : Prop :=
-  ∀ (p : Program) (m : Mem) (q : Path),
+  ∀ (p : Program) (m : Mem) (rows qs : List Path) (q : Path),
     lookupFun p nm.remove = .ok (removeDef nm elem) →
     (∃ n, p.funs.length = n + 1) →
+    NamesOk nm → ListInv m nm rows qs → q ∈ rows →
     readMem m (fldPath q nm.inlist) = some (.bool true) →
     ∃ m', callFun p m nm.remove [.ptr q] = .ok (m', none)
+      ∧ ListInv m' nm rows (qs.erase q)
       ∧ readMem m' (fldPath q nm.inlist) = some (.bool false)
       ∧ readMem m' (fldPath q nm.next) = some .null
       ∧ readMem m' (fldPath q nm.prev) = some .null
+
+/-! ## Proving the linking laws
+
+The shape is the same for both writers: run the assignments with `step_ptr` /
+`step_db`, carrying each one's frame fact forward, then read the new invariant
+off the results. All the difficulty is in the frame bookkeeping, and all of
+that is discharged from two facts — distinct rows are disjoint objects, and
+distinct field names give disjoint paths. -/
+
+section Proofs
+
+variable {p : Program} {n : Nat} {nm : Names} {elem : Ident}
+  {rows qs : List Path} {q : Path}
+
+/-- Every write `Insert` performs misses every `next` field on the old chain,
+every `prev` field except the old head's, and every flag but `q`'s. Collected
+once because each of the six steps needs the same three facts. -/
+theorem insert_disj (I : ListInv m nm rows qs)
+    (hqrow : q ∈ rows) {r : Path} (hr : r ∈ rows) (hrq : r ≠ q)
+    (x y : Ident) : (fldPath q x).overlaps (fldPath r y) = false :=
+  fldPath_disjoint (I.disj q hqrow r hr (fun e => hrq e.symm))
+
+theorem row_ne_parent (I : ListInv m nm rows qs) {r : Path} (hr : r ∈ rows)
+    (x : Ident) :
+    (fldPath r x).overlaps (dbPath nm nm.head) = false
+    ∧ (fldPath r x).overlaps (dbPath nm nm.count) = false :=
+  ⟨overlaps_ext (I.parent r hr).1, overlaps_ext (I.parent r hr).2⟩
+
+theorem parent_ne_row (I : ListInv m nm rows qs) {r : Path} (hr : r ∈ rows)
+    (x : Ident) :
+    (dbPath nm nm.head).overlaps (fldPath r x) = false
+    ∧ (dbPath nm nm.count).overlaps (fldPath r x) = false := by
+  obtain ⟨h1, h2⟩ := row_ne_parent I hr x
+  rw [overlaps_symm] at h1 h2
+  exact ⟨h1, h2⟩
+
+
+/-- **What `Insert`'s body does.** Six writes at pairwise-disjoint paths, and
+the invariant read off them.
+
+checked by: `lake build` -/
+theorem exec_insertBody {σ : Store}
+    (hno : NamesOk nm) (I : ListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
+    (hflag : σ.readPath (fldPath q nm.inlist) = some (.bool false))
+    (hlocRow : σ.getLocal parRow = some (.ptr q))
+    (hlocOld : (σ.getLocal tmpOld).isSome = true) :
+    ∃ σ', execAt p (execStmt p n) (insertDef nm elem).body σ = .ok (σ', .normal)
+      ∧ ListInv σ'.toMem nm rows (q :: qs)
+      ∧ σ'.readPath (dbPath nm nm.head) = some (.ptr q)
+      ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool true)
+      ∧ σ'.readPath (fldPath q nm.prev) = some .null
+      ∧ σ'.readPath (fldPath q nm.next) = some (headOf qs) := by
+  have RM : ∀ pth, readMem σ.toMem pth = σ.readPath pth := readMem_toMem σ
+  have hqnot : q ∉ qs := fun hmem => by
+    have h := (I.flags q hqrow).mpr hmem
+    rw [RM, hflag] at h
+    exact absurd h (by simp)
+  have hhead : σ.readPath (dbPath nm nm.head) = some (headOf qs) := by
+    rw [← RM]; exact I.head
+  have hcount : σ.readPath (dbPath nm nm.count)
+      = some (.u32 (UInt32.ofNat qs.length)) := by rw [← RM]; exact I.count
+  obtain ⟨nv, hqnext⟩ : ∃ v, σ.readPath (fldPath q nm.next) = some v := by
+    have h := (I.fields q hqrow).1; rw [RM] at h
+    exact Option.isSome_iff_exists.mp h
+  obtain ⟨pv, hqprev⟩ : ∃ v, σ.readPath (fldPath q nm.prev) = some v := by
+    have h := (I.fields q hqrow).2.1; rw [RM] at h
+    exact Option.isSome_iff_exists.mp h
+  -- the two field-name disjointness facts every step below spends
+  have dPN : (fldPath q nm.prev).overlaps (fldPath q nm.next) = false :=
+    fldPath_ne_disjoint (Ne.symm hno.np)
+  have dPF : (fldPath q nm.prev).overlaps (fldPath q nm.inlist) = false :=
+    fldPath_ne_disjoint hno.pf
+  have dNF : (fldPath q nm.next).overlaps (fldPath q nm.inlist) = false :=
+    fldPath_ne_disjoint hno.nf
+  have dHC : (dbPath nm nm.head).overlaps (dbPath nm nm.count) = false :=
+    dbPath_disjoint hno.hc
+  have hguard : evalExpr σ (.un .lnot (.rd (ptrFld parRow nm.inlist)))
+      = .ok (.bool true) := by
+    show (do let v ← evalExpr σ (.rd (ptrFld parRow nm.inlist));
+             evalUn .lnot v) = _
+    rw [read_ptrFld hlocRow hflag]
+    rfl
+  -- S1: `_old = g.head`
+  obtain ⟨ov, hov⟩ := Option.isSome_iff_exists.mp hlocOld
+  obtain ⟨σ1, hσ1⟩ : ∃ t, t = σ.setLocal tmpOld (headOf qs) := ⟨_, rfl⟩
+  have hS1 : execAt p (execStmt p n)
+      (.assign (.var tmpOld) (.rd (dbFld nm nm.head))) σ = .ok (σ1, .normal) := by
+    rw [hσ1]; exact step_local hov (read_dbFld hhead)
+  have hr1 : ∀ pth, σ1.readPath pth = σ.readPath pth := by
+    intro pth; rw [hσ1]; exact readPath_setLocal _ _ _ _
+  have hl1row : σ1.getLocal parRow = some (.ptr q) := by
+    rw [hσ1, getLocal_setLocal_ne (by decide)]; exact hlocRow
+  have hl1old : σ1.getLocal tmpOld = some (headOf qs) := by
+    rw [hσ1]; exact getLocal_setLocal_self hov
+  -- S2: `row->prev = NULL`
+  obtain ⟨σ2, hS2, hl2, hw2, hf2⟩ := step_ptr (p := p) (callee := execStmt p n)
+    (x := nm.prev) (e := .null (.strct elem)) (w := Value.null)
+    hl1row (by rw [hr1]; exact hqprev) rfl
+  have hl2row : σ2.getLocal parRow = some (.ptr q) := by
+    simp only [Store.getLocal, hl2]; exact hl1row
+  have hl2old : σ2.getLocal tmpOld = some (headOf qs) := by
+    simp only [Store.getLocal, hl2]; exact hl1old
+  -- S3: `row->next = _old`
+  obtain ⟨σ3, hS3, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := execStmt p n)
+    (x := nm.next) (e := .rd (.var tmpOld)) (w := headOf qs)
+    hl2row (by rw [hf2 _ dPN, hr1]; exact hqnext) (read_local' hl2old)
+  have hl3row : σ3.getLocal parRow = some (.ptr q) := by
+    simp only [Store.getLocal, hl3]; exact hl2row
+  have hl3old : σ3.getLocal tmpOld = some (headOf qs) := by
+    simp only [Store.getLocal, hl3]; exact hl2old
+  -- S4: `row->inlist = true`
+  obtain ⟨σ4, hS4, hl4, hw4, hf4⟩ := step_ptr (p := p) (callee := execStmt p n)
+    (x := nm.inlist) (e := .lit (.bool true)) (w := Value.bool true)
+    hl3row (by rw [hf3 _ dNF, hf2 _ dPF, hr1]; exact hflag) rfl
+  have hl4row : σ4.getLocal parRow = some (.ptr q) := by
+    simp only [Store.getLocal, hl4]; exact hl3row
+  have hl4old : σ4.getLocal tmpOld = some (headOf qs) := by
+    simp only [Store.getLocal, hl4]; exact hl3old
+  have hrowP : ∀ r ∈ rows, ∀ x,
+      (fldPath r x).overlaps (dbPath nm nm.head) = false
+      ∧ (fldPath r x).overlaps (dbPath nm nm.count) = false :=
+    fun r hr x => row_ne_parent I hr x
+  have hq0mem : ∀ q0 qs0, qs = q0 :: qs0 → q0 ∈ rows :=
+    fun q0 qs0 h => I.sub q0 (by rw [h]; simp)
+  have hq0ne : ∀ q0 qs0, qs = q0 :: qs0 → q0 ≠ q :=
+    fun q0 qs0 h e => hqnot (by rw [h, ← e]; simp)
+  -- S5: `if (_old != NULL) { _old->prev = row; }`
+  obtain ⟨σ5, hS5, hl5, hnew5, hf5⟩ :
+      ∃ σ5, execAt p (execStmt p n)
+          (Stmt.cond (.bin .ne (.rd (.var tmpOld)) (.null (.strct elem)))
+            (.assign (ptrFld tmpOld nm.prev) (.rd (.var parRow))) .skip) σ4
+            = .ok (σ5, .normal)
+        ∧ σ5.loc = σ4.loc
+        ∧ (∀ q0 qs0, qs = q0 :: qs0 →
+            σ5.readPath (fldPath q0 nm.prev) = some (.ptr q))
+        ∧ (∀ r, (∀ q0 qs0, qs = q0 :: qs0 →
+              (fldPath q0 nm.prev).overlaps r = false) →
+            σ5.readPath r = σ4.readPath r) := by
+    cases hqs : qs with
+    | nil =>
+      refine ⟨σ4, ?_, rfl, ?_, fun r _ => rfl⟩
+      · rw [execAt_cond']
+        have hg : evalExpr σ4 (.bin .ne (.rd (.var tmpOld)) (.null (.strct elem)))
+            = .ok (.bool false) := by
+          simp only [evalExpr, resolve, readLoc, bind, Except.bind, evalBin,
+            show σ4.getLocal tmpOld = some Value.null from by
+              rw [hl4old, hqs]; rfl]
+        rw [hg]; rfl
+      · intro q0 qs0 h; exact absurd h (by simp)
+    | cons q0 qs0 =>
+      have hq0r : q0 ∈ rows := hq0mem q0 qs0 hqs
+      have hq0q : q0 ≠ q := hq0ne q0 qs0 hqs
+      obtain ⟨pv0, hpv0⟩ : ∃ v, σ.readPath (fldPath q0 nm.prev) = some v := by
+        have h := (I.fields q0 hq0r).2.1; rw [RM] at h
+        exact Option.isSome_iff_exists.mp h
+      have dq0 : ∀ x y, (fldPath q x).overlaps (fldPath q0 y) = false :=
+        fun x y => insert_disj I hqrow hq0r hq0q x y
+      obtain ⟨σ5, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := execStmt p n)
+        (ptr := tmpOld) (x := nm.prev) (q := q0) (e := .rd (.var parRow))
+        (w := Value.ptr q) (by rw [hl4old, hqs]; rfl)
+        (by rw [hf4 _ (dq0 _ _), hf3 _ (dq0 _ _), hf2 _ (dq0 _ _), hr1]; exact hpv0)
+        (read_local' hl4row)
+      refine ⟨σ5, ?_, hl, ?_, ?_⟩
+      · rw [execAt_cond']
+        have hg : evalExpr σ4 (.bin .ne (.rd (.var tmpOld)) (.null (.strct elem)))
+            = .ok (.bool true) := by
+          simp only [evalExpr, resolve, readLoc, bind, Except.bind, evalBin,
+            show σ4.getLocal tmpOld = some (Value.ptr q0) from by
+              rw [hl4old, hqs]; rfl]
+        rw [hg]; exact hS
+      · intro q0' qs0' h
+        cases h; exact hw
+      · intro r hr; exact hf r (hr q0 qs0 rfl)
+  -- everything untouched by the first five writes
+  have hUnch : ∀ r : Path,
+      (fldPath q nm.prev).overlaps r = false →
+      (fldPath q nm.next).overlaps r = false →
+      (fldPath q nm.inlist).overlaps r = false →
+      (∀ q0 qs0, qs = q0 :: qs0 → (fldPath q0 nm.prev).overlaps r = false) →
+      σ5.readPath r = σ.readPath r := by
+    intro r h1 h2 h3 h4
+    rw [hf5 r h4, hf4 r h3, hf3 r h2, hf2 r h1, hr1]
+  have hParH : ∀ q0 qs0, qs = q0 :: qs0 →
+      (fldPath q0 nm.prev).overlaps (dbPath nm nm.head) = false :=
+    fun q0 qs0 h => (hrowP q0 (hq0mem q0 qs0 h) nm.prev).1
+  have hParC : ∀ q0 qs0, qs = q0 :: qs0 →
+      (fldPath q0 nm.prev).overlaps (dbPath nm nm.count) = false :=
+    fun q0 qs0 h => (hrowP q0 (hq0mem q0 qs0 h) nm.prev).2
+  have hhead5 : σ5.readPath (dbPath nm nm.head) = some (headOf qs) := by
+    rw [hUnch _ (hrowP q hqrow nm.prev).1 (hrowP q hqrow nm.next).1
+      (hrowP q hqrow nm.inlist).1 hParH]
+    exact hhead
+  have hcount5 : σ5.readPath (dbPath nm nm.count)
+      = some (.u32 (UInt32.ofNat qs.length)) := by
+    rw [hUnch _ (hrowP q hqrow nm.prev).2 (hrowP q hqrow nm.next).2
+      (hrowP q hqrow nm.inlist).2 hParC]
+    exact hcount
+  -- S6: `g.head = row`
+  obtain ⟨σ6, hS6, hl6, hw6, hf6⟩ := step_db (p := p) (callee := execStmt p n)
+    (x := nm.head) (e := .rd (.var parRow)) (w := Value.ptr q) hhead5
+    (read_local' (by simp only [Store.getLocal, hl5]; exact hl4row))
+  have hcount6 : σ6.readPath (dbPath nm nm.count)
+      = some (.u32 (UInt32.ofNat qs.length)) := by
+    rw [hf6 _ dHC]; exact hcount5
+  -- S7: `g.n = g.n + 1`
+  obtain ⟨σ7, hS7, hl7, hw7, hf7⟩ := step_db (p := p) (callee := execStmt p n)
+    (x := nm.count) (e := .bin .add (.rd (dbFld nm nm.count)) (.lit (.u32 1)))
+    (w := Value.u32 (UInt32.ofNat qs.length + 1)) hcount6
+    (by
+      show (do evalBin .add (← evalExpr σ6 (.rd (dbFld nm nm.count)))
+                 (← evalExpr σ6 (.lit (.u32 1)))) = _
+      rw [read_dbFld hcount6]
+      rfl)
+  -- the four written row fields and the two parent fields, in the final store
+  have dNP : (fldPath q nm.next).overlaps (fldPath q nm.prev) = false :=
+    fldPath_ne_disjoint hno.np
+  have dFP : (fldPath q nm.inlist).overlaps (fldPath q nm.prev) = false :=
+    fldPath_ne_disjoint (Ne.symm hno.pf)
+  have dFN : (fldPath q nm.inlist).overlaps (fldPath q nm.next) = false :=
+    fldPath_ne_disjoint (Ne.symm hno.nf)
+  have d5 : ∀ x, ∀ q0 qs0, qs = q0 :: qs0 →
+      (fldPath q0 nm.prev).overlaps (fldPath q x) = false :=
+    fun x q0 qs0 h =>
+      fldPath_disjoint (I.disj q0 (hq0mem q0 qs0 h) q hqrow (hq0ne q0 qs0 h))
+  have hqprev7 : σ7.readPath (fldPath q nm.prev) = some .null := by
+    rw [hf7 _ (parent_ne_row I hqrow nm.prev).2,
+      hf6 _ (parent_ne_row I hqrow nm.prev).1,
+      hf5 _ (d5 nm.prev), hf4 _ dFP, hf3 _ dNP]
+    exact hw2
+  have hqnext7 : σ7.readPath (fldPath q nm.next) = some (headOf qs) := by
+    rw [hf7 _ (parent_ne_row I hqrow nm.next).2,
+      hf6 _ (parent_ne_row I hqrow nm.next).1,
+      hf5 _ (d5 nm.next), hf4 _ dFN]
+    exact hw3
+  have hqflag7 : σ7.readPath (fldPath q nm.inlist) = some (.bool true) := by
+    rw [hf7 _ (parent_ne_row I hqrow nm.inlist).2,
+      hf6 _ (parent_ne_row I hqrow nm.inlist).1, hf5 _ (d5 nm.inlist)]
+    exact hw4
+  have hhead7 : σ7.readPath (dbPath nm nm.head) = some (.ptr q) := by
+    rw [hf7 _ (dbPath_disjoint (Ne.symm hno.hc))]; exact hw6
+  have hU7 : ∀ r : Path,
+      (fldPath q nm.prev).overlaps r = false →
+      (fldPath q nm.next).overlaps r = false →
+      (fldPath q nm.inlist).overlaps r = false →
+      (∀ q0 qs0, qs = q0 :: qs0 → (fldPath q0 nm.prev).overlaps r = false) →
+      (dbPath nm nm.head).overlaps r = false →
+      (dbPath nm nm.count).overlaps r = false →
+      σ7.readPath r = σ.readPath r := by
+    intro r h1 h2 h3 h4 h5 h6
+    rw [hf7 r h6, hf6 r h5]; exact hUnch r h1 h2 h3 h4
+  have RM7 : ∀ pth, readMem σ7.toMem pth = σ7.readPath pth := readMem_toMem σ7
+  -- a row other than `q` sees none of the writes, except the old head's `prev`
+  have hOther : ∀ r ∈ rows, r ≠ q → ∀ x : Ident,
+      (∀ q0 qs0, qs = q0 :: qs0 →
+        (fldPath q0 nm.prev).overlaps (fldPath r x) = false) →
+      readMem σ7.toMem (fldPath r x) = readMem σ.toMem (fldPath r x) := by
+    intro r hr hrq x h5
+    rw [RM7, RM]
+    exact hU7 _ (insert_disj I hqrow hr hrq nm.prev x)
+      (insert_disj I hqrow hr hrq nm.next x)
+      (insert_disj I hqrow hr hrq nm.inlist x) h5
+      (parent_ne_row I hr x).1 (parent_ne_row I hr x).2
+  have hNotPrev : ∀ r ∈ rows, ∀ x : Ident, x ≠ nm.prev → ∀ q0 qs0,
+      qs = q0 :: qs0 → (fldPath q0 nm.prev).overlaps (fldPath r x) = false := by
+    intro r hr x hx q0 qs0 h
+    by_cases hq0r : q0 = r
+    · subst hq0r; exact fldPath_ne_disjoint (Ne.symm hx)
+    · exact fldPath_disjoint (I.disj q0 (hq0mem q0 qs0 h) r hr hq0r)
+  refine ⟨σ7, ?_, ?_, hhead7, hqflag7, hqprev7, hqnext7⟩
+  · simp only [insertDef, Stmt.when]
+    rw [execAt_cond', hguard]
+    simp only [bind, Except.bind, Stmt.block]
+    rw [execAt_seq', hS1]; simp only [bind, Except.bind]
+    rw [execAt_seq', hS2]; simp only [bind, Except.bind]
+    rw [execAt_seq', hS3]; simp only [bind, Except.bind]
+    rw [execAt_seq', hS4]; simp only [bind, Except.bind]
+    rw [execAt_seq', hS5]; simp only [bind, Except.bind]
+    rw [execAt_seq', hS6]; simp only [bind, Except.bind]
+    exact hS7
+  refine ⟨?_, I.disj, by rw [RM7]; exact hhead7, ?_, ?_, ?_, ?_, ?_, I.parent⟩
+  · intro r hr
+    rcases List.mem_cons.mp hr with rfl | h
+    · exact hqrow
+    · exact I.sub r h
+  · -- the chain
+    refine Reaches.cons (by rw [RM7]; exact hqnext7) (I.chain.frame ?_)
+    intro r hr
+    exact hOther r (I.sub r hr) (fun e => hqnot (e ▸ hr)) nm.next
+      (hNotPrev r (I.sub r hr) nm.next hno.np)
+  · -- prev is the inverse
+    refine ⟨by rw [RM7]; exact hqprev7, ?_⟩
+    cases hqs : qs with
+    | nil => trivial
+    | cons q0 qs0 =>
+      have hq0r : q0 ∈ rows := hq0mem q0 qs0 hqs
+      refine ⟨?_, ?_⟩
+      · rw [RM7, hf7 _ (parent_ne_row I hq0r nm.prev).2,
+          hf6 _ (parent_ne_row I hq0r nm.prev).1, hnew5 q0 qs0 hqs]
+      · have hb := I.back
+        rw [hqs] at hb
+        refine Backlinked.frame qs0 (.ptr q0) hb.2 ?_
+        intro r hr
+        have hrmem : r ∈ qs := by rw [hqs]; exact List.mem_cons_of_mem _ hr
+        have hnd := I.chain.nodup
+        rw [hqs] at hnd
+        have hrq0 : r ≠ q0 := Ne.symm ((List.pairwise_cons.mp hnd).1 r hr)
+        refine hOther r (I.sub r hrmem) (fun e => hqnot (e ▸ hrmem)) nm.prev ?_
+        intro q0' qs0' h
+        rw [hqs] at h
+        cases h
+        exact fldPath_disjoint (I.disj q0 hq0r r (I.sub r hrmem) (Ne.symm hrq0))
+  · -- the flag
+    refine Flagged.cons I.flags hqrow (by rw [RM7]; exact hqflag7) ?_
+    intro r hr hrq
+    exact hOther r hr hrq nm.inlist (hNotPrev r hr nm.inlist (Ne.symm hno.pf))
+  · -- the count
+    show readMem σ7.toMem (dbPath nm nm.count) = _
+    rw [RM7, hw7, List.length_cons, uint32_ofNat_succ]
+  · -- every live row still has its three fields
+    intro r hr
+    by_cases hrq : r = q
+    · subst hrq
+      exact ⟨by rw [RM7, hqnext7]; rfl, by rw [RM7, hqprev7]; rfl,
+        by rw [RM7, hqflag7]; rfl⟩
+    · refine ⟨?_, ?_, ?_⟩
+      · rw [hOther r hr hrq nm.next (hNotPrev r hr nm.next hno.np)]
+        exact (I.fields r hr).1
+      · cases hqs : qs with
+        | nil =>
+          rw [hOther r hr hrq nm.prev (by intro q0 qs0 h; rw [hqs] at h; simp at h)]
+          exact (I.fields r hr).2.1
+        | cons q0 qs0 =>
+          by_cases hq0r : q0 = r
+          · subst hq0r
+            rw [RM7, hf7 _ (parent_ne_row I hr nm.prev).2,
+              hf6 _ (parent_ne_row I hr nm.prev).1, hnew5 q0 qs0 hqs]
+            rfl
+          · rw [hOther r hr hrq nm.prev (by
+              intro q0' qs0' h
+              rw [hqs] at h
+              cases h
+              exact fldPath_disjoint (I.disj q0 (hq0mem q0 qs0 hqs) r hr hq0r))]
+            exact (I.fields r hr).2.1
+      · rw [hOther r hr hrq nm.inlist (hNotPrev r hr nm.inlist (Ne.symm hno.pf))]
+        exact (I.fields r hr).2.2
+
+
+/-- **`Insert` links a row at the head.**
+
+checked by: `lake build` -/
+theorem insertLinks {nm : Names} {elem : Ident} : InsertLinks nm elem := by
+  intro p m rows qs q hlook hn hno I hqrow hflag
+  obtain ⟨n, hn⟩ := hn
+  have hI : ListInv (m.toStore [(parRow, Value.ptr q),
+      (tmpOld, Value.null)]).toMem nm rows qs := by rw [Mem.toStore_toMem]; exact I
+  obtain ⟨σ', hbody, I', hhead', hflag', hprev', hnext'⟩ :=
+    exec_insertBody (p := p) (n := n) (elem := elem)
+      (σ := m.toStore [(parRow, Value.ptr q), (tmpOld, Value.null)])
+      hno hI hqrow (by rw [readMem_toStore]; exact hflag) rfl rfl
+  refine ⟨σ'.toMem, ?_, I', ?_, ?_, ?_, ?_⟩
+  · exact callFun_normal (p := p) (m := m) (fd := insertDef nm elem)
+      (args := [Value.ptr q]) hlook hn rfl hbody
+  · rw [readMem_toMem]; exact hhead'
+  · rw [readMem_toMem]; exact hflag'
+  · rw [readMem_toMem]; exact hprev'
+  · rw [readMem_toMem, hnext', I.head]
+
+end Proofs
 
 /-! ## Checked -/
 

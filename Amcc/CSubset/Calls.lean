@@ -99,6 +99,19 @@ theorem readMem_toMem (σ : Store) (p : Path) :
   have h : (σ.toMem.toStore []).rootVal = σ.rootVal := by funext r; cases r <;> rfl
   rw [h]
 
+/-! ## Generated names
+
+Every generator builds its names by appending a literal suffix to a shared
+prefix, so inequality of generated names reduces to inequality of suffixes. -/
+
+theorem append_cancel_left {s a b : String} (h : s ++ a = s ++ b) : a = b := by
+  have hd := congrArg String.toList h
+  simp only [String.toList_append] at hd
+  exact String.ext (List.append_cancel_left hd)
+
+theorem append_ne {s a b : String} (h : a ≠ b) : s ++ a ≠ s ++ b :=
+  fun e => h (append_cancel_left e)
+
 /-! ## Resolving a name to a definition -/
 
 theorem find?_of_mem_pairwise {α : Type _} {f : α → Ident} :
