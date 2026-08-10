@@ -254,6 +254,36 @@ Do this next, in this order:
    `Wf.Ctx` whose `structs` is the doubly-extended table — the `UpptrWf`
    `hfield` shape, five entries instead of one. Write it before any
    `checkFun`; every one of the nine consumes it and nothing else varies.
+
+   **This was attempted and reverted; everything but the last step works.**
+   What is proved and reusable: `Layout.find?_addFields` composes resolution
+   through *both* extensions (`struct?_addFields` handles only one, which is
+   the trap — the templates apply two), `Layout.ext_name`, and
+   `NameWf.find?_field`. The working shape, verified up to the final step:
+
+   ```lean
+   have hen : (structOf d.withBuiltins elemC).name = elemN := Layout.structOf_name _ _
+   have hne' : dbN ≠ elemN := hne          -- restate on the let-bound names;
+                                           -- `▸` cannot see through the `let`
+   have hinnerE := Layout.find?_addFields _ hbase      -- element gains links
+   have hinnerD := Layout.find?_addFields _ hdbase     -- parent untouched
+   have helemS  := Layout.find?_addFields _ hinnerE    -- then the outer pass
+   have hdbS    := Layout.find?_addFields _ hinnerD
+   ```
+   with `if_pos (beq_iff_eq.mpr hen)` / `if_neg (fun e => hne' (hen ▸ …))`
+   picking the branches. **Order matters**: `find?_addFields` peels the
+   *outer* extension, so the inner `if` must be resolved first. `hdist_db`
+   must be applied to the **unextended** parent struct — it quantifies over
+   the singly-extended table, not the doubly-extended one.
+
+   **Where it stops.** After
+   `simp only [Wf.Ctx.field?, Wf.Ctx.struct?, ctx, helemS, hdbS]` the goal is
+   `do let sd ← some {…}; let fv ← List.find? … sd.fields; some fv.2`, and the
+   outer bind will not reduce: `simp only []`, `simp only [Option.bind]` and
+   `Option.some_bind` all make no progress. `NameWf.ctx_field?` hit the same
+   thing and solved it with an explicit `show` of the peeled form — five of
+   them here, one per field, since the field name and type differ. Write the
+   five `show`s; do not look for a lemma.
 2. **The seven one-statement bodies** — `initDef`, `firstDef`, `nextDef`,
    `prevDef`, `inQDef`, `emptyQDef`, `sizeDef`. These follow `UpptrWf`'s
    `checkFun_defsFor` verbatim: `simp only [Wf.checkFun, <def>, names, …,
@@ -373,6 +403,12 @@ mention `post` while the goal mentions `q1 :: post0`. Every membership side
 goal is then `by rw [hpost]; simp` rather than `simp`.
 
 ## Decisions
+
+- **Resolution through a *repeated* extension needs `find?_addFields`, not
+  `struct?_addFields`.** The latter was written when only one `addFields` was
+  in play and silently does not compose; the structure templates apply two.
+  Stating the composing version on `List.find?` rather than on `Wf.Ctx.struct?`
+  is what makes it iterate.
 
 - **Mangling happens at the generator's boundary, not in the reader.** The
   `Db` stores the schema's own names — `abt.FArch` — and `Dmmeta.mangle` is
