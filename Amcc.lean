@@ -21,6 +21,7 @@ import Amcc.Templates.ArrayTableErase
 import Amcc.Templates.ArrayTableInsert
 import Amcc.Templates.Layout
 import Amcc.Templates.LayoutWf
+import Amcc.Templates.NameWf
 import Amcc.Templates.Pool
 import Amcc.Templates.Upptr
 import Amcc.Templates.Llist
