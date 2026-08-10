@@ -445,6 +445,11 @@ array table never used.
 checked by: `lake build` -/
 example : CSubset.Wf.check (genUpptr Examples.upDb) = [] := rfl
 
+/-- ...and **for every accepted schema**, not just this one:
+`Templates.Upptr.genWellFormed` in `UpptrWf.lean`. The instance above is
+subsumed by it and kept because it also pins a concrete output. -/
+example : True := trivial
+
 /-- Four accessors, in `amc`'s naming.
 
 checked by: `lake build` -/

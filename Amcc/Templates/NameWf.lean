@@ -115,20 +115,42 @@ theorem append_ne_of_prefix_ne {q q' s : String} (h : q ≠ q') :
   simp only [String.toList_append] at hd
   exact List.append_cancel_right hd
 
+/-- Two character lists disagree before either runs out — so neither is a
+prefix of the other, however they are extended. Decidable, which is the point:
+every instance is `by decide` on two string literals. -/
+def prefixIncompat : List Char → List Char → Bool
+  | [], _ => false
+  | _ :: _, [] => false
+  | a :: as, b :: bs => if a == b then prefixIncompat as bs else true
+
+theorem append_ne_of_incompat : ∀ (a b : List Char),
+    prefixIncompat a b = true → ∀ (l l' : List Char), a ++ l ≠ b ++ l'
+  | [], _, h, _, _ => by simp [prefixIncompat] at h
+  | _ :: _, [], h, _, _ => by simp [prefixIncompat] at h
+  | a :: as, b :: bs, h, l, l' => by
+    simp only [prefixIncompat] at h
+    by_cases hab : a = b
+    · simp only [hab, beq_self_eq_true, if_true] at h
+      simp only [List.cons_append, ne_eq, List.cons.injEq, not_and]
+      intro _
+      exact append_ne_of_incompat as bs h l l'
+    · simp only [List.cons_append, ne_eq, List.cons.injEq, not_and]
+      intro heq
+      exact absurd heq hab
+
 /-- **Different suffixes, whatever the prefixes.** The hypothesis is stated on
 the *reversed* character lists, because that turns "is one suffix a suffix of
-the other" — which needs length reasoning — into "do they differ within the
-first few characters", which `simp` peels off with `List.cons`.
+the other" — which needs length reasoning — into "do they disagree within the
+first few characters", which is decidable on literals.
 
-Every instance below is discharged by `by intro l l'; simp`. -/
+Every instance is `NameWf.append_ne_rev (by decide)`. -/
 theorem append_ne_rev {q q' s s' : String}
-    (h : ∀ (l l' : List Char),
-      s.toList.reverse ++ l ≠ s'.toList.reverse ++ l') :
+    (h : prefixIncompat s.toList.reverse s'.toList.reverse = true) :
     q ++ s ≠ q' ++ s' := by
   intro e
   have hd := congrArg (fun t : String => t.toList.reverse) e
   simp only [String.toList_append, List.reverse_append] at hd
-  exact h _ _ hd
+  exact append_ne_of_incompat _ _ h _ _ hd
 
 /-! ## The qualified names a schema declares
 

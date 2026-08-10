@@ -108,6 +108,10 @@ tested against a real compiler by `scripts/smoke.sh`.
   a body. The printer stays trusted (`docs/DIVERGENCE.md` §3.1, §3.4); the
   partition — the part that could silently lose a function — does not have to
   be.
+- **`Upptr.genWellFormed`** — every schema `Dmmeta.check` accepts generates a
+  program `Wf.check` accepts. The first of the three ctype-model templates to
+  match what the generated headers already claim. `Templates/NameWf.lean`
+  carries the function-name half for all three.
 - **`Layout.layoutWellFormed`** — every schema `layoutCheck` accepts lowers to
   structs and globals `Wf.check` accepts: names distinct on both levels, sizes
   legal, every mentioned struct emitted, and every layout dependency emitted

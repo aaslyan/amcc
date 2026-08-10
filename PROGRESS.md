@@ -8,6 +8,17 @@ gap stands" below for the branch structure and the two hazards.
 
 ## Done
 
+- **N — `Upptr.genWellFormed`.** Proved, so the banner in
+  `scripts/gen/upptr_gen.h` is now true of this template. `Templates/NameWf.lean`
+  is the shared half: sublist-descent of the schema's qualified-name
+  distinctness, `pairwise_flatMap` for the block structure, and
+  `append_ne_rev` — which reverses both strings so the suffix comparison
+  becomes a *decidable prefix* comparison (`prefixIncompat`, `by decide` per
+  pair) rather than one needing length reasoning. `LawfulBEq Reftype` landed
+  in `Dmmeta` on the way: the derive handler registers `BEq` and not the
+  lawfulness, and every template selects its fields with `==` while its laws
+  are stated with `=`.
+
 - **M — `Reftype.needsRecordArg`.** Second hole of the same shape as the
   `Inlary` one: `Dmmeta.check` accepted an `Upptr` at `u64` and the generated
   accessors failed `Wf.check` with four type errors. Found by starting

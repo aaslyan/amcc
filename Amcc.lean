@@ -24,6 +24,7 @@ import Amcc.Templates.LayoutWf
 import Amcc.Templates.NameWf
 import Amcc.Templates.Pool
 import Amcc.Templates.Upptr
+import Amcc.Templates.UpptrWf
 import Amcc.Templates.Llist
 import Amcc.Templates.Thash
 import Amcc.Templates.ThashFind
@@ -159,6 +160,16 @@ that should fail does not.)
                           acyclic. The shared half of the every-schema
                           well-formedness gap, since the three ctype-model
                           templates all emit this layout
+- `Templates.NameWf`    — distinctness of generated **function names**, once
+                          for all three ctype-model templates: a template's
+                          filtered field list is a sublist of `qualNames`, so
+                          the schema's `<ctype>_<field>` uniqueness clause
+                          descends, and `append_ne_rev` settles the suffixes by
+                          reversing them into a decidable prefix comparison
+- `Templates.UpptrWf`   — **proved**: `Upptr.genWellFormed` — every schema
+                          `Dmmeta.check` accepts generates a program
+                          `Wf.check` accepts. The header's banner is now true
+                          of this template too
 - `Codegen.Split`       — the **header/implementation partition**, at the AST
                           level: `split_partition` proves the two halves
                           together carry exactly the input's declarations, and

@@ -131,13 +131,17 @@ theorem facts_of_check {d : Db} (h : check d = []) :
         ∃ c, d.withBuiltins.find? r = some c ∧ c.scalar = none)
     ∧ ∀ i, ∀ hi : i < d.withBuiltins.ctypes.length,
         dups ((d.withBuiltins.ctypes[i]'hi).fields.map Field.name) = []
+        ∧ ((d.withBuiltins.ctypes[i]'hi).scalar.isSome = true →
+            (d.withBuiltins.ctypes[i]'hi).fields = [])
         ∧ ∀ f ∈ (d.withBuiltins.ctypes[i]'hi).fields,
             (∃ ac, d.withBuiltins.find? f.arg = some ac)
             ∧ (f.reftype.layoutDep = true →
                 ((d.withBuiltins.ctypes.take i).map Ctype.name).contains f.arg = true)
             ∧ (f.reftype = .Inlary →
                 ∃ n, d.withBuiltins.inlaryMax? (d.withBuiltins.ctypes[i]'hi).name f.name = some n
-                  ∧ 0 < n ∧ n < Wf.u32Bound) := by
+                  ∧ 0 < n ∧ n < Wf.u32Bound)
+            ∧ (f.reftype.needsRecordArg = true →
+                ∃ ac, d.withBuiltins.find? f.arg = some ac ∧ ac.scalar = none) := by
   simp only [check, List.append_eq_nil_iff, List.map_eq_nil_iff] at h
   obtain ⟨⟨⟨hdup, _⟩, hroot⟩, hcty⟩ := h
   refine ⟨hdup, ?_, fun i hi => ?_⟩
@@ -159,8 +163,14 @@ theorem facts_of_check {d : Db} (h : check d = []) :
     exact List.getElem?_eq_getElem hi
   have hc := hcty _ hmem
   simp only [checkCtype, List.append_eq_nil_iff, List.map_eq_nil_iff] at hc
-  obtain ⟨⟨⟨⟨_, hfd⟩, _⟩, _⟩, hfl⟩ := hc
-  refine ⟨hfd, fun f hf => ?_⟩
+  obtain ⟨⟨⟨⟨_, hfd⟩, _⟩, hsf⟩, hfl⟩ := hc
+  refine ⟨hfd, ?_, fun f hf => ?_⟩
+  · intro hsc
+    cases hfs : (d.withBuiltins.ctypes[i]'hi).fields with
+    | nil => rfl
+    | cons a l =>
+      rw [hsc, hfs] at hsf
+      simp at hsf
   rw [List.flatMap_eq_nil_iff] at hfl
   have hcf := hfl f hf
   simp only [checkField, List.append_eq_nil_iff] at hcf
@@ -170,8 +180,8 @@ theorem facts_of_check {d : Db} (h : check d = []) :
   | some ac =>
     rw [ha] at harg
     simp only [List.append_eq_nil_iff] at harg
-    obtain ⟨⟨hdep, _⟩, hinl⟩ := harg
-    refine ⟨⟨ac, rfl⟩, ?_, ?_⟩
+    obtain ⟨⟨⟨hdep, _⟩, hneed⟩, hinl⟩ := harg
+    refine ⟨⟨ac, rfl⟩, ?_, ?_, ?_⟩
     · intro hld
       cases hcon : ((d.withBuiltins.ctypes.take i).map Ctype.name).contains f.arg with
       | true  => rfl
@@ -179,7 +189,7 @@ theorem facts_of_check {d : Db} (h : check d = []) :
     · intro hinlary
       rw [hinlary] at hinl
       cases hm : d.withBuiltins.inlaryMax? (d.withBuiltins.ctypes[i]'hi).name f.name with
-      | none => rw [hm] at hinl; simp at hinl; exact absurd hinl (by decide)
+      | none => rw [hm] at hinl; simp at hinl
       | some n =>
         rw [hm] at hinl
         simp only [] at hinl
@@ -189,7 +199,16 @@ theorem facts_of_check {d : Db} (h : check d = []) :
               simp only [Bool.and_eq_true, decide_eq_true_eq] at hr
               first | exact hr.1 | exact hr.2
             | false =>
-              rw [hr] at hinl; simp at hinl; exact absurd hinl (by decide)
+              rw [hr] at hinl; simp at hinl
+    · -- a pointer or an index resolves to a record
+      intro hnr
+      refine ⟨ac, rfl, ?_⟩
+      cases hsc : ac.scalar with
+      | none   => rfl
+      | some t =>
+        rw [hnr, hsc] at hneed
+        simp only [Option.isSome_some, Bool.and_true, if_true] at hneed
+        exact absurd hneed (by simp)
 
 /-! ## An order-preserving `filterMap` preserves "declared earlier"
 
@@ -413,7 +432,7 @@ theorem checkStructs_gen {d : Db} (hchk : check d = []) :
     getElem?_filterMap (structOf? d.withBuiltins) d.withBuiltins.ctypes i sd
       (by rw [← genStructs_eq]; exact hsdi)
   obtain ⟨hsdname, hsdeq⟩ := structOf?_name hsj
-  obtain ⟨hfd, hff⟩ := hcty j hj
+  obtain ⟨hfd, _, hff⟩ := hcty j hj
   simp only [List.append_eq_nil_iff]
   refine ⟨CSubset.distinct_eq_nil (hsdeq ▸ fields_distinct hfd), ?_⟩
   rw [List.flatMap_eq_nil_iff]
@@ -426,7 +445,7 @@ theorem checkStructs_gen {d : Db} (hchk : check d = []) :
   injection hpair with hfn hft
   subst hft
   obtain ⟨hall, hdep, hsz, hszI⟩ := fieldTy_shape hty
-  obtain ⟨hargres, hargearly, hinl⟩ := hff f hfmem
+  obtain ⟨hargres, hargearly, hinl, _⟩ := hff f hfmem
   simp only [List.append_eq_nil_iff]
   refine ⟨⟨?_, ?_⟩, ?_⟩
   · -- obligation 3: the size is legal

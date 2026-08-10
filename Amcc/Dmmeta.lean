@@ -91,6 +91,15 @@ inductive Reftype where
   | Count
   deriving DecidableEq, Repr, Inhabited, BEq
 
+/-- The `deriving` handler registers `BEq` but not `LawfulBEq`, and without it
+`f.reftype == r` cannot be turned back into `f.reftype = r` — which every
+template's well-formedness proof needs, because the generators select their
+fields with `==` and the laws are stated with `=`. The same gap
+`Amcc/CSubset/Value.lean` closes for `PathStep`, `Root` and `Path`. -/
+instance : LawfulBEq Reftype where
+  eq_of_beq {a b} h := by revert h; cases a <;> cases b <;> decide
+  rfl {a} := by cases a <;> rfl
+
 namespace Reftype
 
 /-- `dmmeta.reftype.isval` — the field stores its value inline. -/
