@@ -693,6 +693,36 @@ theorem mem_addFields {n : CSubset.Ident} {extra : List (CSubset.Ident × Ty)}
   obtain ⟨sd0, hsd0, he⟩ := h
   exact ⟨sd0, hsd0, he.symm⟩
 
+/-- Extending one struct leaves its name alone. -/
+theorem ext_name (n : CSubset.Ident) (extra : List (CSubset.Ident × Ty))
+    (b : StructDef) :
+    (if b.name == n then ({ b with fields := b.fields ++ extra } : StructDef)
+     else b).name = b.name := by
+  by_cases hc : b.name = n
+  · rw [if_pos (beq_iff_eq.mpr hc)]
+  · rw [if_neg (fun e => hc (eq_of_beq e))]
+
+/-- **Resolution composes through an extension.** `struct?_addFields` handles
+one `addFields`; the structure templates apply two, so what is actually needed
+is this — `find?` on an extended table, given `find?` on the table under it.
+Stated on `find?` rather than on `Ctx.struct?` so it iterates. -/
+theorem find?_addFields {n : CSubset.Ident} {extra : List (CSubset.Ident × Ty)} :
+    ∀ (L : List StructDef) {nm : CSubset.Ident} {sd0 : StructDef},
+      L.find? (fun sd => sd.name == nm) = some sd0 →
+      (addFields n extra L).find? (fun sd => sd.name == nm)
+        = some (if sd0.name == n
+                then { sd0 with fields := sd0.fields ++ extra } else sd0)
+  | [], _, _, h => by simp at h
+  | a :: L, nm, sd0, h => by
+    simp only [addFields, List.map_cons]
+    by_cases hb : a.name = nm
+    · rw [List.find?_cons_of_pos (by simp [hb])] at h
+      cases h
+      rw [List.find?_cons_of_pos (by rw [ext_name]; simp [hb])]
+    · rw [List.find?_cons_of_neg (by simp [hb])] at h
+      rw [List.find?_cons_of_neg (by rw [ext_name]; simp [hb])]
+      exact find?_addFields L h
+
 /-! ## Extending a well-formed struct table
 
 `Llist`, `Thash` and `Pool` emit `addFields … (genStructs d)`, so
