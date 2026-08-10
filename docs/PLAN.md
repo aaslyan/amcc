@@ -51,9 +51,17 @@ tested against a real compiler by `scripts/smoke.sh`.
   `Set` returns exactly what was set, and the `Set` is invisible at every path
   that does not overlap the field. `init_correct`, `test_null` and `test_ptr`
   cover the other three functions.
-- `Llist.init_correct`, the five readers, and both idempotence guards
-  (`insert_noop`, `remove_noop`). The linking laws are **stated and not
-  proved** — `InsertLinks` / `RemoveUnlinks`; see below.
+- `Llist.init_correct`, the five readers, both idempotence guards, and
+  **`Llist.insertLinks`** — `Insert` links the row at the head and preserves
+  the representation invariant, with the chain becoming `q :: qs`.
+  `RemoveUnlinks` is **stated and not yet proved**: its last four statements
+  are (`exec_removeTail`), the two branch assemblies are not. `PROGRESS.md`
+  has the remaining steps.
+- **The chain invariant** (`CSubset.Chain`): `Reaches` with `det`, `nodup`,
+  `frame`, `tail`, `splice`, `next_of_mem`; `Backlinked` with `split`;
+  `Flagged` with `cons`/`erase`; `Counted`; `RowsDisjoint`; and the
+  path-disjointness lemmas that turn "different objects" into "different
+  paths". `Thash` uses it unchanged.
 - `Thash.size_correct` and both idempotence guards.
 - **`Thash.bucketInRange`** — the bucket subscript is always in range, so the
   only partial operation the hash index introduced cannot trap. Needs only
@@ -105,25 +113,18 @@ Two gaps remain against the full measure, both recorded in
 
 ## Next, in order
 
-1. **The chain invariant, and with it `Llist.InsertLinks` / `RemoveUnlinks`
-   and `Thash.FindCorrect`.**
-   A linked list's shape is a property of a graph in the heap, not of a
-   carrier list, so the invariant needs a *reachability* predicate over the
-   store — the chain from a head along `next` is finite, acyclic and
-   `NULL`-terminated, `prev` is its inverse, the membership flag marks exactly
-   its members, the count is its length.
-   `Store.readPath_writePath_disjoint` supports the frame reasoning but does
-   not supply that predicate. A `Thash` bucket *is* a chain, so one predicate
-   serves both templates — which is the whole argument for building it in its
-   own module rather than inside either.
-2. **The C-name uniqueness obligation the `Upptr` laws push onto the checker.**
+1. **`Llist.RemoveUnlinks`** — the two branch assemblies. Every ingredient is
+   proved; `PROGRESS.md` lists the steps.
+2. **`Thash.FindCorrect`**, over `CSubset.Chain` — a bucket is a chain, so the
+   same `Reaches` applies with `nm.next` and the bucket head.
+3. **The C-name uniqueness obligation the `Upptr` laws push onto the checker.**
    Those laws assume a program in which the field name resolves.
    `child ++ "_" ++ fld` is not injective in the pair, so `a`/`b_c` and
    `a_b`/`c` generate the same C name. If `Dmmeta.check` does not reject that,
    the laws are vacuous for a legal schema and nothing would notice.
-3. **Xref maintenance** tying the templates together, using the
+4. **Xref maintenance** tying the templates together, using the
    prepare/commit design from `Spec/Algebra.lean`.
-4. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other
+5. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other
    seven `Llist` flavours, and cursors for all of them. `docs/GOALS.md` puts
    the whole vocabulary in scope; `docs/DIVERGENCE.md` §3 is the standing list
    of what is not attempted.

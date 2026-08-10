@@ -2,10 +2,22 @@
 
 ## Now
 
-**The chain invariant** — one reachability predicate over the store, in its own
-module, used unchanged by `Llist` and `Thash`.
+**`Llist.RemoveUnlinks`** — the two branch assemblies. Everything they need is
+proved; see "Where Remove stands" below.
 
 ## Done
+
+- **B — the chain invariant.** `Amcc/CSubset/Chain.lean`. `Reaches` is
+  inductive, so finiteness/acyclicity/NULL-termination are consequences of
+  inhabitation rather than clauses; `det`, `nodup`, `frame`, `tail`, `splice`,
+  `next_of_mem`, `mem_sub` are proved, as are `Backlinked` (+ `frame`,
+  `split`), `Flagged` (+ `frame`, `cons`, `erase`), `Counted`, `RowsDisjoint`,
+  and the path-disjointness lemmas (`fldPath_disjoint`, `fldPath_ne_disjoint`,
+  `overlaps_ext`, `overlaps_symm`). `Thash` will use the same module unchanged.
+
+- **C (half) — `Llist.InsertLinks`.** Proved over `ListInv`. `RemoveUnlinks` is
+  restated the same way and its last four statements are proved
+  (`exec_removeTail`); the two branch assemblies remain.
 
 - **A — `Thash.BucketInRange`.** Proved, together with `mask_eq_mod` and
   `accepted_bucket_facts`. `PLAN.md`'s "Next, in order" corrected in the same
@@ -43,11 +55,53 @@ module, used unchanged by `Llist` and `Thash`.
 
 ## Next
 
-- The chain invariant, and with it `Llist.InsertLinks` / `RemoveUnlinks` and
-  `Thash.FindCorrect`
+- `Llist.RemoveUnlinks` — the two branch assemblies (see below)
+- `Thash.FindCorrect`, over `CSubset.Chain`
 - The C-name uniqueness obligation the `Upptr` laws push onto `Dmmeta.check`
 
+## Where `Remove` stands
+
+Determinate, not open-ended. `Backlinked.split` says a row on the chain is
+either the head or has a predecessor the chain splits around — which is
+exactly what the generated `if (_prev != NULL)` branches on.
+
+- **Head case.** `qs = q :: post`. A3 writes `g.head = _next`; the new chain is
+  `Reaches.tail`; `erase_cons_self` gives `qs.erase q = post`. A3 is already
+  proved in this shape (it was written and then cut back with the rest of the
+  branch, since a half-assembled theorem cannot be committed).
+- **Middle case.** `qs = pre ++ pp :: q :: post`. A3 writes
+  `_prev->next = _next`; the new chain is `Reaches.splice`;
+  `erase_append_cons_cons` gives `qs.erase q = pre ++ pp :: post`.
+- **Both.** A4 (`if (_next != NULL) _next->prev = _prev`) splits on whether
+  `post` is empty, exactly as `Insert`'s `if (_old != NULL)` does — copy that
+  packaging. Then `exec_removeTail`, which is proved. The invariant clauses
+  come out as they do for `Insert`: `Flagged.erase`, `Counted` via
+  `uint32_ofNat_pred`, and `fields` by cases on whether the row is `q` or the
+  successor whose `prev` A4 wrote.
+
+
 ## Decisions
+
+- **`InsertLinks` and `RemoveUnlinks` were not provable as first stated, and
+  are restated over `ListInv`.** The originals were purely local — "after
+  `Insert` the head is the row and its flag is set" — with no hypothesis
+  ruling out the neighbours aliasing the row. `Remove` reads `row->prev` and
+  `row->next` and writes *through* them, so without disjointness the second
+  write can clobber the first: the old statements describe code that does not
+  exist. Both restatements keep every conclusion the originals had and add the
+  abstract effect (the chain becomes `q :: qs`, or `qs.erase q`). Strictly
+  more is claimed about the result; strictly more is assumed about the input,
+  and what is assumed is what an allocator supplies.
+
+- **`Flagged` is indexed by a universe of live rows, not by all paths.** The
+  backward direction is what makes the guards sound, and it cannot be
+  maintained over all paths: a write to one row's flag is invisible only where
+  it does not overlap, and an arbitrary path may be a prefix of a row.
+
+- **`Reaches` is inductive rather than a fixpoint with an acyclicity clause.**
+  A cyclic structure then admits no finite derivation, so no witness list
+  exists for it at all — sharper than carrying "no cycle" as an invariant,
+  because nothing has to maintain it, and it makes `nodup` a theorem.
 
 - **`BucketInRange` was false as stated and is now correct.** It quantified
   over every `nb` including `0`, where `Nat` subtraction makes the mask `0` and

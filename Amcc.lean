@@ -57,6 +57,12 @@ that should fail does not.)
 ## Phase 1 — semantics
 - `CSubset.Value`     — values, access paths, stores, the frame lemmas
 - `CSubset.Eval`      — the executable big-step semantics (`execStmt`)
+- `CSubset.Chain`     — chains in the store: `Reaches` (inductive, so
+                        acyclicity is a consequence of inhabitation rather
+                        than a clause), `Backlinked`, `Flagged`, `Counted`,
+                        `RowsDisjoint`, and the path-disjointness lemmas.
+                        Used unchanged by `Llist` and `Thash` — a bucket is a
+                        chain
 - `CSubset.Calls`     — template-independent reasoning about a call: peeling
                         one statement, resolving a name to a definition, and
                         getting in and out of `callFun`
@@ -101,9 +107,9 @@ that should fail does not.)
                           power-of-two requirement actually buys. `FindCorrect`
                           is stated and owed
 - `Templates.Llist`     — the **intrusive doubly-linked list** (`amc`'s `zdl`
-                          flavour): nine functions, with the readers and both
-                          idempotence guards proved and the linking laws
-                          stated as `InsertLinks`/`RemoveUnlinks`
+                          flavour): nine functions, with the readers, both
+                          idempotence guards and **`insertLinks`** proved over
+                          `ListInv`. `RemoveUnlinks` is stated and owed
 - `Templates.Upptr`     — the **up-pointer template**: `Init`/`Get`/`Set`/`Q`
                           for a `dmmeta.reftype Upptr` field, with the
                           read-back law (`get_set`) and the frame law proved
@@ -123,10 +129,9 @@ from `RepInv` where it arises, so `MilestoneTheorem` is proved without it. It
 remains owed as the general bridge a template that cannot argue locally would
 need.
 
-`Templates.Llist.InsertLinks` / `RemoveUnlinks` and `Templates.Thash`'s
-`FindCorrect`. All three need the same missing piece — a reachability
-predicate over the store, because a chain's shape is a property of a graph in
-the heap rather than of a carrier list. `Templates.Thash.BucketInRange` is closed.
+`Templates.Llist.RemoveUnlinks` and `Templates.Thash.FindCorrect`. The
+predicate they need — `CSubset.Chain` — now exists and `insertLinks` is proved
+over it; what remains is the assembly in each. `Templates.Thash.BucketInRange` is closed.
 
 `Codegen.Print` is unverified — see `docs/DIVERGENCE.md` §3. A closed
 `MilestoneTheorem` certifies the generated **AST**; the C text is covered by

@@ -480,6 +480,13 @@ theorem uint32_ofNat_succ (a : Nat) : UInt32.ofNat a + 1 = UInt32.ofNat (a + 1) 
   apply UInt32.toNat.inj
   simp [UInt32.toNat_ofNat', UInt32.toNat_add, Nat.add_mod]
 
+theorem uint32_ofNat_pred (a : Nat) (h : 0 < a) :
+    UInt32.ofNat a - 1 = UInt32.ofNat (a - 1) := by
+  have hs := uint32_ofNat_succ (a - 1)
+  rw [Nat.sub_add_cancel h] at hs
+  rw [← hs]
+  simp
+
 theorem read_dbFld {σ : Store} {nm : Names} {x : Ident} {v : Value}
     (h : σ.readPath (dbPath nm x) = some v) :
     evalExpr σ (.rd (dbFld nm x)) = .ok v := by
@@ -1158,6 +1165,99 @@ theorem exec_insertBody {σ : Store}
       · rw [hOther r hr hrq nm.inlist (hNotPrev r hr nm.inlist (Ne.symm hno.pf))]
         exact (I.fields r hr).2.2
 
+
+/-- The last four statements of `Remove`: clear the row's three fields and
+decrement the count. Factored out because both branches of the relink run it
+unchanged. -/
+theorem exec_removeTail {σ : Store} {c : Nat}
+    (hlocRow : σ.getLocal parRow = some (.ptr q))
+    (hnextS : (σ.readPath (fldPath q nm.next)).isSome = true)
+    (hprevS : (σ.readPath (fldPath q nm.prev)).isSome = true)
+    (hflagS : (σ.readPath (fldPath q nm.inlist)).isSome = true)
+    (hcnt : σ.readPath (dbPath nm nm.count) = some (.u32 (UInt32.ofNat c)))
+    (dNP : (fldPath q nm.next).overlaps (fldPath q nm.prev) = false)
+    (dNF : (fldPath q nm.next).overlaps (fldPath q nm.inlist) = false)
+    (dPF : (fldPath q nm.prev).overlaps (fldPath q nm.inlist) = false)
+    (dNC : (fldPath q nm.next).overlaps (dbPath nm nm.count) = false)
+    (dPC : (fldPath q nm.prev).overlaps (dbPath nm nm.count) = false)
+    (dFC : (fldPath q nm.inlist).overlaps (dbPath nm nm.count) = false)
+    (hc : 0 < c) :
+    ∃ σ', execAt p (execStmt p n) (Stmt.block
+        [ .assign (ptrFld parRow nm.next) (.null (.strct elem))
+        , .assign (ptrFld parRow nm.prev) (.null (.strct elem))
+        , .assign (ptrFld parRow nm.inlist) (.lit (.bool false))
+        , .assign (dbFld nm nm.count)
+            (.bin .sub (.rd (dbFld nm nm.count)) (.lit (.u32 1))) ]) σ
+        = .ok (σ', .normal)
+      ∧ σ'.loc = σ.loc
+      ∧ σ'.readPath (fldPath q nm.next) = some .null
+      ∧ σ'.readPath (fldPath q nm.prev) = some .null
+      ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
+      ∧ σ'.readPath (dbPath nm nm.count) = some (.u32 (UInt32.ofNat (c - 1)))
+      ∧ ∀ r, (fldPath q nm.next).overlaps r = false →
+             (fldPath q nm.prev).overlaps r = false →
+             (fldPath q nm.inlist).overlaps r = false →
+             (dbPath nm nm.count).overlaps r = false →
+             σ'.readPath r = σ.readPath r := by
+  obtain ⟨nv, hnv⟩ := Option.isSome_iff_exists.mp hnextS
+  obtain ⟨σa, hEa, hla, hwa, hfa⟩ := step_ptr (p := p) (callee := execStmt p n)
+    (x := nm.next) (e := .null (.strct elem)) (w := Value.null) hlocRow hnv rfl
+  have hlaRow : σa.getLocal parRow = some (.ptr q) := by
+    simp only [Store.getLocal, hla]; exact hlocRow
+  obtain ⟨pv, hpv⟩ := Option.isSome_iff_exists.mp hprevS
+  obtain ⟨σb, hEb, hlb, hwb, hfb⟩ := step_ptr (p := p) (callee := execStmt p n)
+    (x := nm.prev) (e := .null (.strct elem)) (w := Value.null) hlaRow
+    (by rw [hfa _ dNP]; exact hpv) rfl
+  have hlbRow : σb.getLocal parRow = some (.ptr q) := by
+    simp only [Store.getLocal, hlb]; exact hlaRow
+  obtain ⟨fv, hfv⟩ := Option.isSome_iff_exists.mp hflagS
+  obtain ⟨σc, hEc, hlc, hwc, hfc⟩ := step_ptr (p := p) (callee := execStmt p n)
+    (x := nm.inlist) (e := .lit (.bool false)) (w := Value.bool false) hlbRow
+    (by rw [hfb _ dPF, hfa _ dNF]; exact hfv) rfl
+  have hcntc : σc.readPath (dbPath nm nm.count) = some (.u32 (UInt32.ofNat c)) := by
+    rw [hfc _ dFC, hfb _ dPC, hfa _ dNC]; exact hcnt
+  obtain ⟨σd, hEd, hld, hwd, hfd⟩ := step_db (p := p) (callee := execStmt p n)
+    (x := nm.count) (e := .bin .sub (.rd (dbFld nm nm.count)) (.lit (.u32 1)))
+    (w := Value.u32 (UInt32.ofNat c - 1)) hcntc
+    (by
+      show (do evalBin .sub (← evalExpr σc (.rd (dbFld nm nm.count)))
+                 (← evalExpr σc (.lit (.u32 1)))) = _
+      rw [read_dbFld hcntc]
+      rfl)
+  refine ⟨σd, ?_, by rw [hld, hlc, hlb, hla], ?_, ?_, ?_, ?_, ?_⟩
+  · rw [execAt_block_cons', execAt_seq', hEa]; simp only [bind, Except.bind]
+    rw [execAt_block_cons', execAt_seq', hEb]; simp only [bind, Except.bind]
+    rw [execAt_block_cons', execAt_seq', hEc]; simp only [bind, Except.bind]
+    exact hEd
+  · rw [hfd _ (by rw [overlaps_symm]; exact dNC),
+      hfc _ (by rw [overlaps_symm]; exact dNF),
+      hfb _ (by rw [overlaps_symm]; exact dNP)]
+    exact hwa
+  · rw [hfd _ (by rw [overlaps_symm]; exact dPC),
+      hfc _ (by rw [overlaps_symm]; exact dPF)]
+    exact hwb
+  · rw [hfd _ (by rw [overlaps_symm]; exact dFC)]; exact hwc
+  · rw [hwd, uint32_ofNat_pred c hc]
+  · intro r h1 h2 h3 h4
+    rw [hfd r h4, hfc r h3, hfb r h2, hfa r h1]
+
+/-! ### `Remove`: where it stands
+
+`exec_removeTail` above is the last four statements — clear the row's three
+fields, decrement — and it is proved. What is not yet assembled is the relink
+in front of it, and the remaining work is entirely determinate:
+
+`Backlinked.split` (in `CSubset.Chain`) says a row on the chain is either the
+head or has a predecessor the chain splits around, and which case holds is
+exactly what the generated `if (_prev != NULL)` branches on. In the head case
+the write is `g.head = _next` and the new chain is `Reaches.tail`; in the other
+it is `_prev->next = _next` and the new chain is `Reaches.splice`. Both then
+run `exec_removeTail`, and `erase_cons_self` / `erase_append_cons_cons` are
+what turn the two shapes into the single `qs.erase q` the law states.
+
+Every one of those pieces is proved. What is missing is the two branch
+assemblies. `PROGRESS.md` carries this; `docs/PLAN.md` lists it as the next
+obligation. -/
 
 /-- **`Insert` links a row at the head.**
 

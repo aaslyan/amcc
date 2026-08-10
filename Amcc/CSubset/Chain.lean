@@ -248,6 +248,58 @@ theorem Reaches.readable {m : Mem} {nx : Ident} :
     · rw [hq]; rfl
     · exact ih q hmem'
 
+theorem headOf_append_cons (pre : List Path) (a : Path) (l1 l2 : List Path) :
+    headOf (pre ++ a :: l1) = headOf (pre ++ a :: l2) := by
+  cases pre <;> rfl
+
+/-- **Dropping the head.** What `Remove` does when the row it unlinks is the
+first one. -/
+theorem Reaches.tail {m m' : Mem} {nx : Ident} {q : Path} {qs : List Path}
+    (hr : Reaches m nx (.ptr q) (q :: qs))
+    (hag : ∀ r ∈ qs, readMem m' (fldPath r nx) = readMem m (fldPath r nx)) :
+    Reaches m' nx (headOf qs) qs := by
+  cases hr with
+  | cons _ hc => exact (hc.head_eq ▸ hc).frame hag
+
+/-- **Splicing a row out.** The predecessor's link now names the successor,
+and nothing else on the chain moved. This is the whole content of an O(1)
+unlink, and it is where the doubly-linked flavour pays for its extra field. -/
+theorem Reaches.splice {m m' : Mem} {nx : Ident} :
+    ∀ (pre : List Path) (h : Value) (pp q : Path) (post : List Path),
+      Reaches m nx h (pre ++ pp :: q :: post) →
+      (∀ r ∈ pre, readMem m' (fldPath r nx) = readMem m (fldPath r nx)) →
+      readMem m' (fldPath pp nx) = some (headOf post) →
+      (∀ r ∈ post, readMem m' (fldPath r nx) = readMem m (fldPath r nx)) →
+      Reaches m' nx h (pre ++ pp :: post)
+  | [], _, pp, q, post, hr, _, hpp, hpost => by
+    cases hr with
+    | cons _ hc =>
+      exact .cons hpp (Reaches.tail (hc.head_eq ▸ hc) hpost)
+  | a :: pre, _, pp, q, post, hr, hpre, hpp, hpost => by
+    cases hr with
+    | cons hq hc =>
+      refine .cons (?_ : readMem m' (fldPath a nx)
+        = some (headOf (pre ++ pp :: post))) ?_
+      · rw [hpre a (by simp), hq, hc.head_eq]
+        exact congrArg some (headOf_append_cons pre pp (q :: post) post)
+      · have he : headOf (pre ++ pp :: q :: post) = headOf (pre ++ pp :: post) :=
+          headOf_append_cons pre pp (q :: post) post
+        have hc0 : Reaches m nx (headOf (pre ++ pp :: post))
+            (pre ++ pp :: q :: post) := by rw [← he]; exact hc.head_eq ▸ hc
+        exact Reaches.splice pre _ pp q post hc0
+          (fun r hr' => hpre r (List.mem_cons_of_mem _ hr')) hpp hpost
+
+/-- A row's link names whatever follows it on the chain. -/
+theorem Reaches.next_of_mem {m : Mem} {nx : Ident} :
+    ∀ (pre : List Path) (h : Value) (q : Path) (post : List Path),
+      Reaches m nx h (pre ++ q :: post) →
+      readMem m (fldPath q nx) = some (headOf post)
+  | [], _, q, post, hr => by
+    cases hr with | cons hq hc => rw [hq, hc.head_eq]
+  | a :: pre, _, q, post, hr => by
+    cases hr with
+    | cons _ hc => exact Reaches.next_of_mem pre _ q post (hc.head_eq ▸ hc)
+
 /-! ## The clauses a chain does not imply -/
 
 /-- `pv` is the inverse of the link along the chain: each row's `pv` points at
@@ -333,6 +385,41 @@ allocator guarantees, and `Spec/Pool.lean`'s `alloc_frame` is the statement
 that a pool does. -/
 def RowsDisjoint (qs : List Path) : Prop :=
   ∀ q ∈ qs, ∀ r ∈ qs, q ≠ r → q.overlaps r = false
+
+/-- **Where a row sits on the chain**, read off its back-pointer: it is either
+the head, or its `prev` names the predecessor the chain splits around. This is
+what lets `Remove` do surgery without walking. -/
+theorem Backlinked.split {m : Mem} {pv : Ident} :
+    ∀ (qs : List Path) (back : Value) (q : Path), Backlinked m pv qs back →
+      q ∈ qs →
+      (readMem m (fldPath q pv) = some back ∧ ∃ post, qs = q :: post)
+      ∨ (∃ pp pre post, qs = pre ++ pp :: q :: post
+           ∧ readMem m (fldPath q pv) = some (.ptr pp))
+  | [], _, _, _, hm => absurd hm (by simp)
+  | q0 :: qs0, back, q, hb, hm => by
+    rcases List.mem_cons.mp hm with rfl | hm'
+    · exact Or.inl ⟨hb.1, ⟨qs0, rfl⟩⟩
+    · rcases Backlinked.split qs0 (.ptr q0) q hb.2 hm' with ⟨h1, post, h2⟩ | ⟨pp, pre, post, h1, h2⟩
+      · exact Or.inr ⟨q0, [], post, by simp [h2], h1⟩
+      · exact Or.inr ⟨pp, q0 :: pre, post, by simp [h1], h2⟩
+
+/-! ## Erasing a row from the chain -/
+
+theorem erase_cons_self (q : Path) (post : List Path) :
+    (q :: post).erase q = post := by simp
+
+theorem erase_append_cons_cons :
+    ∀ (pre : List Path) (pp q : Path) (post : List Path),
+      q ∉ pre → q ≠ pp → (pre ++ pp :: q :: post).erase q = pre ++ pp :: post
+  | [], pp, q, post, _, hqp => by
+    simp only [List.nil_append, List.erase_cons]
+    rw [if_neg (by simp [Ne.symm hqp])]
+    simp
+  | a :: pre, pp, q, post, hq, hqp => by
+    have hqa : ¬ (a = q) := fun e => hq (by rw [e]; simp)
+    simp only [List.cons_append, List.erase_cons]
+    rw [if_neg (by simp [hqa])]
+    rw [erase_append_cons_cons pre pp q post (fun hm => hq (List.mem_cons_of_mem _ hm)) hqp]
 
 theorem RowsDisjoint.sublist {qs : List Path} {q : Path}
     (h : RowsDisjoint (q :: qs)) : RowsDisjoint qs :=
