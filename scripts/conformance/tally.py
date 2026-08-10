@@ -190,6 +190,16 @@ field-level verdict this census could produce:
   `Print`/`ReadStrptrMaybe`, `CopyIn`/`CopyOut`. AMCC reads ssim as a *front
   end* and generates none of the machinery `amc` generates for handling it.
 
+**The census is per-record and misses the whole-schema clauses.**
+`Dmmeta.check` has three checks that need every ctype and field at once — two
+mangled names colliding, two qualified names colliding, and a field named what
+a template would generate — and `Ssim.Conformance.classify` decides one tuple
+at a time. So the generated count above is an **upper bound** on that axis too.
+The last of the three is known to bite in the corpus: `c_next` alongside a
+field `c`, and `line_n` alongside `line` (5 of those), are exactly the shape
+`clashesGenerated` rejects. Under ten fields, but not zero, and the census
+does not currently show them.
+
 Two further caveats on the reading of the table:
 
 - A "generated" verdict is about the reftype and the names, not about the
