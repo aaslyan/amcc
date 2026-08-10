@@ -464,6 +464,20 @@ theorem structOf?_name {full : Db} {c : Ctype} {sd : StructDef}
       Option.some.injEq] at h
     exact ⟨by rw [← h]; exact structOf_name _ _, h.symm⟩
 
+/-- **A record ctype's struct is in the emitted table, by its mangled name.**
+Lifted out of `checkStructs_gen`, where it was a `have`, because the templates
+that *extend* the table need it to discharge `checkStructs_addFields`'s `hres`
+— the added fields point at the element struct, and this is what says that
+struct is emitted.
+
+checked by: `lake build` -/
+theorem mem_genStructs_name {d : Db} {c : Ctype}
+    (hc : c ∈ d.withBuiltins.ctypes) (hs : c.scalar = none) :
+    ((genStructs d).map StructDef.name).contains (mangle c.name) = true := by
+  refine List.elem_eq_true_of_mem (List.mem_map.mpr
+    ⟨structOf d.withBuiltins c, ?_, structOf_name _ _⟩)
+  exact List.mem_filterMap.mpr ⟨c, hc, by simp [hs]⟩
+
 /-- **The struct table a schema lowers to is well-formed.** Named separately
 from `layoutWellFormed` because the three ctype-model templates emit exactly
 this struct table alongside their own functions, and each needs this half on
@@ -474,11 +488,8 @@ theorem checkStructs_gen {d : Db} (hchk : check d = []) :
     Wf.checkStructs (genStructs d) = [] := by
   obtain ⟨⟨hdup, hmdup, hqdup⟩, _, hcty⟩ := facts_of_check hchk
   have hmemName : ∀ (c : Ctype), c ∈ d.withBuiltins.ctypes → c.scalar = none →
-      ((genStructs d).map StructDef.name).contains (mangle c.name) = true := by
-    intro c hc hs
-    refine List.elem_eq_true_of_mem (List.mem_map.mpr
-      ⟨structOf d.withBuiltins c, ?_, structOf_name _ _⟩)
-    exact List.mem_filterMap.mpr ⟨c, hc, by simp [hs]⟩
+      ((genStructs d).map StructDef.name).contains (mangle c.name) = true :=
+    fun c hc hs => mem_genStructs_name hc hs
   simp only [Wf.checkStructs, List.append_eq_nil_iff]
   refine ⟨CSubset.distinct_eq_nil
     (structs_distinct (nf := fun c => mangle c.name) (fun _ => rfl) hmdup), ?_⟩
@@ -569,6 +580,69 @@ theorem checkGlobals_gen {d : Db} (hchk : check d = []) :
       ⟨structOf d.withBuiltins c, ?_, ?_⟩)
     · exact List.mem_filterMap.mpr ⟨c, hmem, by simp [hcs]⟩
     · rw [structOf_name]; exact hname
+
+/-! ## No declared field is named what a template generates
+
+`Dmmeta.check`'s `clashesGenerated` clause is what makes the *extended* struct
+table's field names distinct: the added fields are `<field>_<suffix>`, and the
+clause says no declared field has such a name. Turning the clause into the
+`Pairwise` that `checkStructs_addFields` wants is the one genuinely new step in
+`Llist.genWellFormed`, and it is here rather than in the template because
+`Thash` and `Pool` need the same. -/
+
+theorem isPrefixOf_self_append {α : Type _} [BEq α] [LawfulBEq α] :
+    ∀ (a b : List α), a.isPrefixOf (a ++ b) = true
+  | [], _ => rfl
+  | x :: a, b => by simpa [List.isPrefixOf] using isPrefixOf_self_append a b
+
+/-- Stripping a suffix that really is one gives back the prefix. -/
+theorem dropSuffix_append (g sfx : String) :
+    dropSuffix sfx.toList (g ++ sfx).toList = some g.toList := by
+  have hrev : (g ++ sfx).toList.reverse = sfx.toList.reverse ++ g.toList.reverse := by
+    rw [String.toList_append, List.reverse_append]
+  simp only [dropSuffix, String.toList_append, List.length_append]
+  rw [if_pos (by rw [List.reverse_append]; exact isPrefixOf_self_append _ _)]
+  have hl : g.toList.length + sfx.toList.length - sfx.toList.length
+      = g.toList.length := by omega
+  rw [hl, List.take_left]
+
+/-- **Acceptance says no declared field carries a generated name.** -/
+theorem no_clash_of_check {d : Db} (hchk : check d = []) :
+    ∀ c ∈ d.withBuiltins.ctypes, ∀ f ∈ c.fields,
+      clashesGenerated (fieldCNames d.withBuiltins) (mangle f.name) = false := by
+  simp only [check, List.append_eq_nil_iff] at hchk
+  obtain ⟨_, hcl⟩ := hchk
+  rw [List.flatMap_eq_nil_iff] at hcl
+  intro c hc f hf
+  have h := hcl c hc
+  rw [List.filterMap_eq_nil_iff] at h
+  have := h f hf
+  cases hb : clashesGenerated (fieldCNames d.withBuiltins) (mangle f.name) with
+  | false => rfl
+  | true => rw [hb] at this; simp at this
+
+/-- **The form the struct obligation wants.** A declared field's C name is
+never a declared field's C name with a generated suffix appended — which is
+exactly "the element struct's own fields do not collide with the links a
+template adds to it".
+
+checked by: `lake build` -/
+theorem field_ne_generated {d : Db} (hchk : check d = [])
+    {m g : Dmmeta.Ident} (hm : m ∈ fieldCNames d.withBuiltins)
+    (hg : g ∈ fieldCNames d.withBuiltins) {sfx : String} (hsfx : sfx ∈ genSuffixes) :
+    m ≠ g ++ sfx := by
+  intro hme
+  -- `m` came from some field, and acceptance says it does not clash
+  simp only [fieldCNames, List.mem_flatMap, List.mem_map] at hm
+  obtain ⟨c, hc, f, hf, hfm⟩ := hm
+  have hno := no_clash_of_check hchk c hc f hf
+  rw [hfm, hme] at hno
+  have hyes : clashesGenerated (fieldCNames d.withBuiltins) (g ++ sfx) = true := by
+    refine List.any_eq_true.mpr ⟨sfx, hsfx, ?_⟩
+    rw [dropSuffix_append]
+    simpa using List.elem_eq_true_of_mem hg
+  rw [hyes] at hno
+  exact absurd hno (by simp)
 
 /-! ## Extending a well-formed struct table
 
