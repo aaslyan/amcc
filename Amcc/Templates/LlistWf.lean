@@ -282,5 +282,153 @@ theorem checkGlobals_gen_llist {d : Db} (hchk : check d = [])
   Layout.checkGlobals_addFields (Layout.checkGlobals_addFields
     (Layout.checkGlobals_gen hchk))
 
+/-! ## The five field lookups
+
+Every one of the nine bodies touches only the fields the template *added* and
+the database global — never the element's lowered fields — so the whole
+`checkFun` obligation depends on the schema through these five equations. They
+are proved once against a **symbolic** `Wf.Ctx`, and each body consumes the
+bundle and nothing else varies.
+
+Two things about the shape, both of which cost an attempt. `Layout.find?_addFields`
+peels the **outer** extension, so the inner one has to be resolved first; and
+after `Wf.Ctx.field?` unfolds, the outer `Option` bind over `some {…}` will not
+reduce by `simp` — the peeled form has to be written out with `show`. -/
+
+/-- The doubly-extended table `genLlist` emits. -/
+def tableOf (d : Db) (dbN elemN : CSubset.Ident) (nm : Names) : List StructDef :=
+  Layout.addFields dbN (dbFields nm elemN)
+    (Layout.addFields elemN (elemFields nm elemN) (genStructs d))
+
+/-- **The element's three links and the parent's head and count resolve.**
+
+checked by: `lake build` -/
+theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hne : mangle dbC.name ≠ mangle elemC.name)
+    (globals : List GlobalDef) (funs : List FunDef)
+    (locals : List (CSubset.Ident × ValTy)) :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    let ctx : Wf.Ctx := ⟨tableOf d dbN elemN nm, globals, funs, locals⟩
+    ctx.field? elemN nm.next = some (.ptr (.strct elemN))
+    ∧ ctx.field? elemN nm.prev = some (.ptr (.strct elemN))
+    ∧ ctx.field? elemN nm.inlist = some (.scalar .bool)
+    ∧ ctx.field? dbN nm.head = some (.ptr (.strct elemN))
+    ∧ ctx.field? dbN nm.count = some (.scalar .u32) := by
+  intro nm elemN dbN ctx
+  have hne' : dbN ≠ elemN := hne
+  have hen : (structOf d.withBuiltins elemC).name = elemN := Layout.structOf_name _ _
+  have hdn : (structOf d.withBuiltins dbC).name = dbN := Layout.structOf_name _ _
+  obtain ⟨⟨_, hmdup, _⟩, _, _⟩ := Layout.facts_of_check hchk
+  have hsd : ((genStructs d).map StructDef.name).Pairwise (· ≠ ·) :=
+    Layout.structs_distinct (nf := fun c => mangle c.name) (fun _ => rfl) hmdup
+  have hbase : (genStructs d).find? (fun sd => sd.name == elemN)
+      = some (structOf d.withBuiltins elemC) := by
+    have h := CSubset.find?_of_mem_pairwise (f := StructDef.name) (genStructs d)
+      (structOf d.withBuiltins elemC)
+      (List.mem_filterMap.mpr ⟨elemC, helem, by simp [hes]⟩) hsd
+    rwa [hen] at h
+  have hdbase : (genStructs d).find? (fun sd => sd.name == dbN)
+      = some (structOf d.withBuiltins dbC) := by
+    have h := CSubset.find?_of_mem_pairwise (f := StructDef.name) (genStructs d)
+      (structOf d.withBuiltins dbC)
+      (List.mem_filterMap.mpr ⟨dbC, hdb, by simp [hdbs]⟩) hsd
+    rwa [hdn] at h
+  -- inner extension: the element gains its links, the parent is untouched
+  have hinnerE : (Layout.addFields elemN (elemFields nm elemN) (genStructs d)).find?
+      (fun sd => sd.name == elemN)
+      = some { structOf d.withBuiltins elemC with
+               fields := (structOf d.withBuiltins elemC).fields
+                         ++ elemFields nm elemN } := by
+    rw [Layout.find?_addFields _ hbase, if_pos (beq_iff_eq.mpr hen)]
+  have hinnerD : (Layout.addFields elemN (elemFields nm elemN) (genStructs d)).find?
+      (fun sd => sd.name == dbN) = some (structOf d.withBuiltins dbC) := by
+    rw [Layout.find?_addFields _ hdbase,
+      if_neg (fun e => hne' (hdn ▸ eq_of_beq e))]
+  -- outer extension: the parent gains head and count, the element is untouched
+  have helemS : (tableOf d dbN elemN nm).find? (fun sd => sd.name == elemN)
+      = some { structOf d.withBuiltins elemC with
+               fields := (structOf d.withBuiltins elemC).fields
+                         ++ elemFields nm elemN } := by
+    simp only [tableOf]
+    rw [Layout.find?_addFields _ hinnerE,
+      if_neg (fun e => hne' (hen ▸ (eq_of_beq e).symm))]
+  have hdbS : (tableOf d dbN elemN nm).find? (fun sd => sd.name == dbN)
+      = some { structOf d.withBuiltins dbC with
+               fields := (structOf d.withBuiltins dbC).fields
+                         ++ dbFields nm elemN } := by
+    simp only [tableOf]
+    rw [Layout.find?_addFields _ hinnerD, if_pos (beq_iff_eq.mpr hdn)]
+  -- the two `hdist` lemmas, in the `Pairwise` form `find?_field` wants
+  have hpe : (((structOf d.withBuiltins elemC).fields
+      ++ elemFields nm elemN).map Prod.fst).Pairwise (· ≠ ·) := by
+    simpa using hdist_elem hchk hdb hfld elemN (structOf d.withBuiltins elemC)
+      (List.mem_filterMap.mpr ⟨elemC, helem, by simp [hes]⟩) hen
+  have hpd : (((structOf d.withBuiltins dbC).fields
+      ++ dbFields nm elemN).map Prod.fst).Pairwise (· ≠ ·) := by
+    simpa using hdist_db hchk hdb hfld elemN (structOf d.withBuiltins dbC)
+      (by
+        refine List.mem_map.mpr ⟨structOf d.withBuiltins dbC, ?_, ?_⟩
+        · exact List.mem_filterMap.mpr ⟨dbC, hdb, by simp [hdbs]⟩
+        · rw [if_neg (fun e => hne' (hdn ▸ eq_of_beq e))])
+      hdn
+  -- and the five field lookups within the extended structs
+  have hnext : ((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN).find?
+      (fun fv : CSubset.Ident × Ty => fv.1 == nm.next) = some (nm.next, Ty.ptr (.strct elemN)) :=
+    NameWf.find?_field (p := (nm.next, Ty.ptr (.strct elemN)))
+      (by simp [elemFields]) hpe
+  have hprev : ((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN).find?
+      (fun fv : CSubset.Ident × Ty => fv.1 == nm.prev) = some (nm.prev, Ty.ptr (.strct elemN)) :=
+    NameWf.find?_field (p := (nm.prev, Ty.ptr (.strct elemN)))
+      (by simp [elemFields]) hpe
+  have hinl : ((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN).find?
+      (fun fv : CSubset.Ident × Ty => fv.1 == nm.inlist) = some (nm.inlist, Ty.scalar .bool) :=
+    NameWf.find?_field (p := (nm.inlist, Ty.scalar .bool))
+      (by simp [elemFields]) hpe
+  have hhead : ((structOf d.withBuiltins dbC).fields ++ dbFields nm elemN).find?
+      (fun fv : CSubset.Ident × Ty => fv.1 == nm.head) = some (nm.head, Ty.ptr (.strct elemN)) :=
+    NameWf.find?_field (p := (nm.head, Ty.ptr (.strct elemN)))
+      (by simp [dbFields]) hpd
+  have hcnt : ((structOf d.withBuiltins dbC).fields ++ dbFields nm elemN).find?
+      (fun fv : CSubset.Ident × Ty => fv.1 == nm.count) = some (nm.count, Ty.scalar .u32) :=
+    NameWf.find?_field (p := (nm.count, Ty.scalar .u32))
+      (by simp [dbFields]) hpd
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;>
+    simp only [Wf.Ctx.field?, Wf.Ctx.struct?, ctx, helemS, hdbS]
+  · show (do
+      let fv ← ((structOf d.withBuiltins elemC).fields
+        ++ elemFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.next)
+      some fv.2) = _
+    rw [hnext]
+    rfl
+  · show (do
+      let fv ← ((structOf d.withBuiltins elemC).fields
+        ++ elemFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.prev)
+      some fv.2) = _
+    rw [hprev]
+    rfl
+  · show (do
+      let fv ← ((structOf d.withBuiltins elemC).fields
+        ++ elemFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.inlist)
+      some fv.2) = _
+    rw [hinl]
+    rfl
+  · show (do
+      let fv ← ((structOf d.withBuiltins dbC).fields
+        ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.head)
+      some fv.2) = _
+    rw [hhead]
+    rfl
+  · show (do
+      let fv ← ((structOf d.withBuiltins dbC).fields
+        ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.count)
+      some fv.2) = _
+    rw [hcnt]
+    rfl
+
 end Llist
 end Templates
