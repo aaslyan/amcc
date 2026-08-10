@@ -570,6 +570,89 @@ theorem checkGlobals_gen {d : Db} (hchk : check d = []) :
     · exact List.mem_filterMap.mpr ⟨c, hmem, by simp [hcs]⟩
     · rw [structOf_name]; exact hname
 
+/-! ## Extending a well-formed struct table
+
+`Llist`, `Thash` and `Pool` emit `addFields … (genStructs d)`, so
+`checkStructs_gen` is no longer the whole struct obligation. This is the rest
+of it, stated so a template supplies only facts about the fields **it** adds.
+
+`layoutDeps = []` on every added field is a real restriction and a true one:
+every field any template adds is a pointer, a `bool`, a `u32`, or an array of
+pointers, and none of those carries layout. It is what keeps the
+declared-earlier obligation from having to be re-established — `addFields`
+does not reorder, so `earlier` is the same list it was. -/
+
+theorem addFields_take (n : CSubset.Ident) (extra : List (CSubset.Ident × Ty))
+    (structs : List StructDef) (i : Nat) :
+    (addFields n extra structs).take i = addFields n extra (structs.take i) := by
+  simp only [addFields, List.map_take]
+
+/-- **Extending preserves the struct obligations.** -/
+theorem checkStructs_addFields {n : CSubset.Ident}
+    {extra : List (CSubset.Ident × Ty)} {structs : List StructDef}
+    (hok : Wf.checkStructs structs = [])
+    (hdist : ∀ sd ∈ structs, sd.name = n →
+      ((sd.fields.map Prod.fst) ++ extra.map Prod.fst).Pairwise (· ≠ ·))
+    (hsz : ∀ fv ∈ extra, Wf.Ty.sizesOk fv.2 = true)
+    (hres : ∀ fv ∈ extra, ∀ m ∈ Wf.Ty.allStructs fv.2,
+      (structs.map StructDef.name).contains m = true)
+    (hdep : ∀ fv ∈ extra, Wf.Ty.layoutDeps fv.2 = []) :
+    Wf.checkStructs (addFields n extra structs) = [] := by
+  simp only [Wf.checkStructs, List.append_eq_nil_iff] at hok ⊢
+  obtain ⟨hnm, hfl⟩ := hok
+  refine ⟨by rw [addFields_names]; exact hnm, ?_⟩
+  rw [List.flatMap_eq_nil_iff] at hfl ⊢
+  rintro ⟨sd', i⟩ hsdi
+  rw [List.mem_zipIdx_iff_getElem?] at hsdi
+  -- the struct at `i` is the original one, possibly extended
+  have hlen : i < structs.length := by
+    rcases Nat.lt_or_ge i structs.length with h | h
+    · exact h
+    · rw [addFields, List.getElem?_eq_none (by simpa using h)] at hsdi
+      exact absurd hsdi (by simp)
+  have hget : sd' = (if (structs[i]'hlen).name == n
+      then { (structs[i]'hlen) with
+             fields := (structs[i]'hlen).fields ++ extra }
+      else (structs[i]'hlen)) := by
+    rw [addFields, List.getElem?_map, List.getElem?_eq_getElem hlen] at hsdi
+    exact (Option.some.inj hsdi).symm
+  have horig := hfl ((structs[i]'hlen), i)
+    (List.mem_zipIdx_iff_getElem?.mpr (List.getElem?_eq_getElem hlen))
+  simp only [List.append_eq_nil_iff] at horig ⊢
+  -- `earlier` and `allNames` are the same lists they were
+  rw [addFields_take, addFields_names, addFields_names]
+  obtain ⟨hfd, hff⟩ := horig
+  by_cases hn : (structs[i]'hlen).name = n
+  · rw [hget, if_pos (by simp [hn])]
+    refine ⟨?_, ?_⟩
+    · exact CSubset.distinct_eq_nil
+        (by simpa using hdist _ (List.getElem_mem hlen) hn)
+    · rw [List.flatMap_eq_nil_iff]
+      intro fv hfv
+      simp only [List.mem_append] at hfv
+      rcases hfv with hfv | hfv
+      · rw [List.flatMap_eq_nil_iff] at hff
+        exact hff fv hfv
+      · simp only [List.append_eq_nil_iff]
+        refine ⟨⟨by rw [if_pos (hsz fv hfv)], ?_⟩, ?_⟩
+        · rw [List.flatMap_eq_nil_iff]
+          intro m hm
+          rw [if_pos (hres fv hfv m hm)]
+        · rw [hdep fv hfv]; rfl
+  · rw [hget, if_neg (by simp [hn])]
+    exact ⟨hfd, hff⟩
+
+/-- **Extending changes nothing the global obligation looks at.**
+`checkGlobals` reads only the struct *names*, and `addFields` preserves them.
+
+checked by: `lake build` -/
+theorem checkGlobals_addFields {n : CSubset.Ident}
+    {extra : List (CSubset.Ident × Ty)} {structs : List StructDef}
+    {globals : List GlobalDef} (hok : Wf.checkGlobals structs globals = []) :
+    Wf.checkGlobals (addFields n extra structs) globals = [] := by
+  simp only [Wf.checkGlobals, addFields_names]
+  simpa only [Wf.checkGlobals] using hok
+
 /-- **The layout pass is well-formed for every accepted schema.**
 
 `layoutWf` is `layoutCheck`, which is `Dmmeta.check` plus the no-empty-struct
