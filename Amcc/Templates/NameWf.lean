@@ -279,6 +279,54 @@ theorem ctx_field? {d : Db} (hchk : check d = []) {c : Ctype} {f : Field} {t : T
   rw [struct_field? hfd hf hty]
   rfl
 
+/-! ## Looking up a field a template *added*
+
+`struct_field?` finds a field the layout pass lowered. The structure templates
+also need the fields they add themselves, which sit after the lowered ones in
+the extended struct — so what makes `find?` return the right one is precisely
+the distinctness the `hdist` obligation already established. -/
+
+/-- The extended struct resolves by name, given the table's names are
+distinct. -/
+theorem struct?_addFields {d : Db} (hchk : check d = []) {c : Ctype}
+    (hc : c ∈ d.withBuiltins.ctypes) (hs : c.scalar = none)
+    (n : CSubset.Ident) (extra : List (CSubset.Ident × Ty)) :
+    (Layout.addFields n extra (genStructs d)).find?
+        (fun sd => sd.name == mangle c.name)
+      = some (if (structOf d.withBuiltins c).name == n
+              then { structOf d.withBuiltins c with
+                     fields := (structOf d.withBuiltins c).fields ++ extra }
+              else structOf d.withBuiltins c) := by
+  obtain ⟨⟨_, hmdup, _⟩, _, _⟩ := Layout.facts_of_check hchk
+  have hpw : (((Layout.addFields n extra (genStructs d)).map StructDef.name)).Pairwise
+      (· ≠ ·) := by
+    rw [Layout.addFields_names]
+    exact Layout.structs_distinct (nf := fun c => mangle c.name) (fun _ => rfl) hmdup
+  have hmem : (if (structOf d.withBuiltins c).name == n
+      then { structOf d.withBuiltins c with
+             fields := (structOf d.withBuiltins c).fields ++ extra }
+      else structOf d.withBuiltins c)
+      ∈ Layout.addFields n extra (genStructs d) := by
+    refine List.mem_map.mpr ⟨structOf d.withBuiltins c, ?_, rfl⟩
+    exact List.mem_filterMap.mpr ⟨c, hc, by simp [hs]⟩
+  have h := CSubset.find?_of_mem_pairwise (f := StructDef.name) _ _ hmem hpw
+  have hname : (if (structOf d.withBuiltins c).name == n
+      then ({ structOf d.withBuiltins c with
+              fields := (structOf d.withBuiltins c).fields ++ extra } : StructDef)
+      else structOf d.withBuiltins c).name = mangle c.name := by
+    by_cases hb : (structOf d.withBuiltins c).name = n
+    · rw [if_pos (beq_iff_eq.mpr hb)]; exact Layout.structOf_name d.withBuiltins c
+    · rw [if_neg (fun e => hb (eq_of_beq e))]; exact Layout.structOf_name d.withBuiltins c
+  rw [hname] at h
+  exact h
+
+/-- A field in a distinct-keyed list resolves to itself — the appended case
+included, which is what an added field needs. -/
+theorem find?_field {l : List (CSubset.Ident × Ty)} {p : CSubset.Ident × Ty}
+    (hmem : p ∈ l) (hpw : (l.map Prod.fst).Pairwise (· ≠ ·)) :
+    l.find? (fun fv => fv.1 == p.1) = some p :=
+  CSubset.find?_of_mem_pairwise (f := Prod.fst) l p hmem hpw
+
 /-- An `Upptr` at a record `arg` lowers to a pointer to that record's struct —
 the exact type the four accessors assign and return. -/
 theorem fieldTy_upptr {full : Db} {owner : Dmmeta.Ident} {f : Field} {ac : Ctype}
