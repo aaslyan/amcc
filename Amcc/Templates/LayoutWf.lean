@@ -593,7 +593,7 @@ clause says no declared field has such a name. Turning the clause into the
 theorem isPrefixOf_self_append {α : Type _} [BEq α] [LawfulBEq α] :
     ∀ (a b : List α), a.isPrefixOf (a ++ b) = true
   | [], _ => rfl
-  | x :: a, b => by simpa [List.isPrefixOf] using isPrefixOf_self_append a b
+  | x :: a, b => by simp [isPrefixOf_self_append a b]
 
 /-- Stripping a suffix that really is one gives back the prefix. -/
 theorem dropSuffix_append (g sfx : String) :
@@ -643,6 +643,55 @@ theorem field_ne_generated {d : Db} (hchk : check d = [])
     simpa using List.elem_eq_true_of_mem hg
   rw [hyes] at hno
   exact absurd hno (by simp)
+
+/-- Every emitted struct is some record ctype's. -/
+theorem struct_of_mem {d : Db} {sd : StructDef} (hsd : sd ∈ genStructs d) :
+    ∃ c, c ∈ d.withBuiltins.ctypes ∧ c.scalar = none ∧ sd = structOf d.withBuiltins c := by
+  rw [genStructs_eq, List.mem_filterMap] at hsd
+  obtain ⟨c, hc, hsc⟩ := hsd
+  obtain ⟨_, heq⟩ := structOf?_name hsc
+  refine ⟨c, hc, ?_, heq⟩
+  simp only [structOf?] at hsc
+  cases hs : c.scalar with
+  | none   => rfl
+  | some t => rw [hs] at hsc; simp at hsc
+
+/-- The membership form of `mangled_fields_pairwise`. -/
+theorem mangled_fields_pairwise_mem {d : Db}
+    (hq : dups (qualNames d.withBuiltins) = [])
+    {c : Ctype} (hc : c ∈ d.withBuiltins.ctypes) :
+    ((c.fields.map (fun f => mangle f.name)).Pairwise (· ≠ ·)) := by
+  obtain ⟨i, hi⟩ := List.mem_iff_getElem.mp hc
+  rw [← hi.2]
+  exact mangled_fields_pairwise hq hi.1
+
+/-- **An emitted struct's field names are declared field names.** What the
+extended table's distinctness argument needs on the left of the append. -/
+theorem mem_fieldCNames_of_struct {d : Db} {sd : StructDef}
+    (hsd : sd ∈ genStructs d) {m : Dmmeta.Ident}
+    (hm : m ∈ sd.fields.map Prod.fst) : m ∈ fieldCNames d.withBuiltins := by
+  obtain ⟨c, hc, _, rfl⟩ := struct_of_mem hsd
+  simp only [structOf, List.mem_map, List.mem_filterMap] at hm
+  obtain ⟨fv, ⟨f, hf, hfe⟩, hfv⟩ := hm
+  obtain ⟨t, _, hpair⟩ := Option.map_eq_some_iff.mp hfe
+  refine List.mem_flatMap.mpr ⟨c, hc, List.mem_map.mpr ⟨f, hf, ?_⟩⟩
+  rw [← hfv, ← hpair]
+
+/-- ...and a declared field's C name is one. -/
+theorem mem_fieldCNames {d : Db} {c : Ctype} (hc : c ∈ d.withBuiltins.ctypes)
+    {f : Field} (hf : f ∈ c.fields) :
+    mangle f.name ∈ fieldCNames d.withBuiltins :=
+  List.mem_flatMap.mpr ⟨c, hc, List.mem_map.mpr ⟨f, hf, rfl⟩⟩
+
+/-- Membership in an extended table, with the preimage. -/
+theorem mem_addFields {n : CSubset.Ident} {extra : List (CSubset.Ident × Ty)}
+    {structs : List StructDef} {sd : StructDef}
+    (h : sd ∈ addFields n extra structs) :
+    ∃ sd0, sd0 ∈ structs ∧
+      sd = (if sd0.name == n then { sd0 with fields := sd0.fields ++ extra } else sd0) := by
+  rw [addFields, List.mem_map] at h
+  obtain ⟨sd0, hsd0, he⟩ := h
+  exact ⟨sd0, hsd0, he.symm⟩
 
 /-! ## Extending a well-formed struct table
 
