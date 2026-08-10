@@ -502,26 +502,6 @@ theorem dbPath_disjoint {nm : Names} {x y : Ident} (h : x ≠ y) :
     (dbPath nm x).overlaps (dbPath nm y) = false :=
   fldPath_ne_disjoint (q := ⟨.glob nm.dbGlobal, []⟩) h
 
-theorem step_local {p : Program} {callee} {σ : Store} {x : Ident} {e : Expr}
-    {w v : Value} (hloc : σ.getLocal x = some v) (he : evalExpr σ e = .ok w) :
-    execAt p callee (.assign (.var x) e) σ = .ok (σ.setLocal x w, .normal) := by
-  simp only [execAt, resolve, hloc, he, writeLoc, bind, Except.bind]
-
-theorem readPath_setLocal (σ : Store) (x : Ident) (v : Value) (p : Path) :
-    (σ.setLocal x v).readPath p = σ.readPath p := by
-  simp only [Store.readPath]
-  have h : (σ.setLocal x v).rootVal = σ.rootVal := by funext r; cases r <;> rfl
-  rw [h]
-
-theorem getLocal_setLocal_self {σ : Store} {x : Ident} {v w : Value}
-    (h : σ.getLocal x = some w) : (σ.setLocal x v).getLocal x = some v := by
-  simp only [Store.setLocal, Store.getLocal, Env.get?_set_self]
-  simp only [Store.getLocal] at h
-  rw [h]; rfl
-
-theorem getLocal_setLocal_ne {σ : Store} {x y : Ident} (h : y ≠ x) (v : Value) :
-    (σ.setLocal x v).getLocal y = σ.getLocal y := by
-  simp only [Store.setLocal, Store.getLocal, Env.get?_set_ne _ h]
 
 /-! ## The laws
 

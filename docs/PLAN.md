@@ -81,13 +81,20 @@ tested against a real compiler by `scripts/smoke.sh`.
   path-disjointness lemmas that turn "different objects" into "different
   paths". `Thash` uses it unchanged.
 - `Thash.size_correct` and both idempotence guards.
+- **`Thash.findCorrect`** — `Find` returns *the first row on the bucket's chain
+  whose key matches*, over `CSubset.Chain`'s `Reaches` with the bucket head in
+  place of a list head. `find_hit` and `find_miss` turn either answer back into
+  a statement about the store: a pointer is a row on the chain with that key,
+  and `NULL` means **no** row on the chain has it. The original statement of
+  `FindCorrect` claimed only "null or something with the right key" and was
+  satisfied by a function that always returns `NULL`; it is strengthened, not
+  weakened, to close.
 - **`Thash.bucketInRange`** — the bucket subscript is always in range, so the
   only partial operation the hash index introduced cannot trap. Needs only
   `0 < NB`, not the power-of-two condition. `Thash.mask_eq_mod` proves what
   the power-of-two condition *does* buy: the mask is the modulus, which is the
   claim `docs/DIVERGENCE.md` §3.2 makes. `accepted_bucket_facts` ties both to
-  the generator's own guard. `Thash.FindCorrect` remains **stated and not
-  proved**.
+  the generator's own guard.
 - **`Codegen.split_partition`** — the header/implementation split is an AST
   operation, and the two halves together carry exactly the input's
   declarations: none dropped, none duplicated, order preserved.
@@ -147,16 +154,14 @@ Three gaps remain against the full measure, all recorded in
 
 ## Next, in order
 
-1. **`Thash.FindCorrect`**, over `CSubset.Chain` — a bucket is a chain, so the
-   same `Reaches` applies with `nm.next` and the bucket head.
-2. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and
+1. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and
    `Thash` each have `Wf.check … = []` only as a computational example on
    their sample schema. The array table has it for *every* accepted schema.
    Until the others do, `lookups_of_wf`'s hypothesis is discharged per-schema
    rather than once.
-3. **Xref maintenance** tying the templates together, using the
+2. **Xref maintenance** tying the templates together, using the
    prepare/commit design from `Spec/Algebra.lean`.
-4. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other
+3. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other
    seven `Llist` flavours, and cursors for all of them. `docs/GOALS.md` puts
    the whole vocabulary in scope; `docs/DIVERGENCE.md` §3 is the standing list
    of what is not attempted.

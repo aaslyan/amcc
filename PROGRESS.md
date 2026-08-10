@@ -2,10 +2,22 @@
 
 ## Now
 
-**`Thash.FindCorrect`**, over `CSubset.Chain`. A bucket is a chain, so the same
-`Reaches` applies with the bucket head in place of the list head.
+**The every-schema gap.** `Upptr`, `Llist` and `Thash` have `Wf.check … = []`
+only as a computation on their sample schema; the array table has
+`genWellFormed` for every accepted schema. Prove the equivalent for each, then
+restate the laws so their well-formedness hypotheses discharge once.
 
 ## Done
+
+- **I — `Thash.findCorrect`.** Proved, over `CSubset.Chain`. The statement was
+  **strengthened** first: the original `FindCorrect` said "null, or a pointer
+  to something with the right key", which a function that always returns `NULL`
+  satisfies. It now says `Find` returns `firstSat (keyAt m key k) qs` — *the
+  first row on the bucket's chain whose key matches* — and `find_hit` /
+  `find_miss` read either answer back into the store. New general machinery in
+  `Chain.lean` (`Reaches.drop`, `Reaches.next_at`, `firstSat` and its lemmas,
+  `keyAt`/`keyAt_iff`, `ptrOf`), and the local-store lemmas moved from `Llist`
+  into `CSubset.Calls` where both templates can reach them.
 
 - **H — the ssim front end.** `Amcc/Ssim/Tuple.lean` reads `amc`'s tuple format
   — `txt/ssim.md`'s grammar, `algo::PickSsimQuoteChar`'s quoting rule and
@@ -101,7 +113,8 @@
 
 ## Next
 
-- `Thash.FindCorrect`, over `CSubset.Chain`
+- The every-schema `Wf.check` gap for `Upptr`, `Llist`, `Thash`
+- Conformance measurement against `~/openacr-mine`
 - The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
   `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
   on their sample schema; the array table has it for *every* accepted schema
@@ -143,6 +156,34 @@ mention `post` while the goal mentions `q1 :: post0`. Every membership side
 goal is then `by rw [hpost]; simp` rather than `simp`.
 
 ## Decisions
+
+- **`FindCorrect` was too weak to be worth proving, and was strengthened
+  before being closed.** As first stated it said `Find` returns `NULL` or a
+  pointer to a row with the right key — which `return NULL;` satisfies. It now
+  says `Find` returns the *first* row on the bucket's chain whose key matches,
+  so the miss case carries information too. Strengthening a statement to close
+  it is the opposite of the failure mode the standing rule warns about, and the
+  weak version is worth recording because it looked complete.
+
+- **The chain-search test is a `Path → Bool`, not a proposition.** `Value` has
+  no `DecidableEq` — the derive handler does not apply to its nested `List`
+  recursion, and adding one by hand needs a mutual induction — and the
+  generated guard is a Boolean expression anyway. `keyAt` is the Bool test and
+  `keyAt_iff` converts, which is also why the guard proof lines up with
+  `evalBin .eq` on two `u32`s with no lemma in between.
+
+- **`_p`'s clause in the walk invariant is conditional.** Once `_hit` is set
+  the outer `if (_hit == NULL)` fails and the body stops running *entirely*,
+  including the advance — so `_p` freezes and does not track `qs.drop j`. The
+  invariant states the `_p` clause under `firstSat … = none`, which is exactly
+  when the body still runs. Stating it unconditionally is the version that does
+  not go through, and it was the first thing that went wrong here.
+
+- **The local-store lemmas moved from `Llist` to `CSubset.Calls`.** `step_local`,
+  `readPath_setLocal`, `getLocal_setLocal_self`/`_ne` are about the subset, not
+  about lists; `Thash`'s walk needed the same four. `Store.setLocal_toMem`
+  joined `Store.setLocal_glb` in `Value.lean` for the same reason — it is the
+  whole frame argument for a function that touches only its own temporaries.
 
 - **The front end is `List Char`, not `String`.** `String.splitOn`,
   `String.trim`, `String.toNat?` and `String.startsWith` are well-founded
@@ -328,6 +369,18 @@ goal is then `by rw [hpost]; simp` rather than `simp`.
   once, for both, beats improvising it twice.
 
 ## Dead ends
+
+- **`simp only [execAt]` in a `.seq` collapses the goal past `step_local`.**
+  Reducing the first statement of a block by unfolding `execAt` leaves a term
+  in which `execAt p callee` no longer appears, so the next `step_local` cannot
+  unify its `p`/`callee`. Prove the first statement's execution as a named
+  `have` and `rw` it instead — that is what both branches of
+  `exec_findLoopBody` do.
+
+- **A `show (do match ← … with | …)` breaks if the `match ←` wraps.** The
+  continuation line is indented past the `|` arms, which ends the `do` block's
+  layout and produces `unexpected token '|'`. Keep the `match ←` on one line,
+  however long.
 
 - **`set`, `by_contra`, `List.Forall₂` are unavailable** — no mathlib. `set`
   in particular is easy to reach for and fails with a bare "unknown tactic";

@@ -1,6 +1,7 @@
 import Amcc.Dmmeta
 import Amcc.CSubset.Wf
 import Amcc.CSubset.Calls
+import Amcc.CSubset.Chain
 
 /-!
 # AMCC — the `Thash` template
@@ -128,6 +129,17 @@ def initDef (nm : Names) (elem : Ident) (nb : Nat) : FunDef where
     [ .forN tmpI (.lit nb) (.assign (bucket nm tmpI) (.null (.strct elem)))
     , .assign (dbFld nm nm.count) (.lit (.u32 0)) ]
 
+/-- One iteration of `Find`'s walk, named so the loop-invariant proof in
+`Templates/ThashFind.lean` has something to induct over. Inlining it in
+`findDef` changes nothing about the emitted C — `Stmt` is a value — but it
+makes the loop body a term the proof can quote rather than repeat. -/
+def findLoopBody (nm : Names) (elem : Ident) (key : Ident) : Stmt :=
+  .when (.bin .eq (.rd (.var tmpHit)) (.null (.strct elem))) <|
+    .when (.bin .ne (.rd (.var tmpP)) (.null (.strct elem))) <| .block
+      [ .when (.bin .eq (.rd (ptrFld tmpP key)) (.rd (.var parKey)))
+          (.assign (.var tmpHit) (.rd (.var tmpP)))
+      , .assign (.var tmpP) (.rd (ptrFld tmpP nm.next)) ]
+
 /-- ```c
 E* D_f_Find(uint32_t key) {
   uint32_t _b = 0; E *_p = NULL; E *_hit = NULL; uint32_t _i = 0;
@@ -158,12 +170,7 @@ def findDef (nm : Names) (elem : Ident) (key : Ident) (mask cap : Nat) : FunDef 
     [ .assign (.var tmpB)
         (.bin .band (.rd (.var parKey)) (.lit (.u32 (UInt32.ofNat mask))))
     , .assign (.var tmpP) (.rd (bucket nm tmpB))
-    , .forN tmpI (.lit cap) <|
-        .when (.bin .eq (.rd (.var tmpHit)) (.null (.strct elem))) <|
-          .when (.bin .ne (.rd (.var tmpP)) (.null (.strct elem))) <| .block
-            [ .when (.bin .eq (.rd (ptrFld tmpP key)) (.rd (.var parKey)))
-                (.assign (.var tmpHit) (.rd (.var tmpP)))
-            , .assign (.var tmpP) (.rd (ptrFld tmpP nm.next)) ]
+    , .forN tmpI (.lit cap) (findLoopBody nm elem key)
     , .ret (some (.rd (.var tmpHit))) ]
 
 /-- ```c
@@ -356,7 +363,6 @@ def genThash (d : Dmmeta.Db) : Option Program := do
 /-! ## Where the index's state lives -/
 
 def dbPath (nm : Names) (x : Ident) : Path := ⟨.glob nm.dbGlobal, [.fld x]⟩
-def fldPath (q : Path) (x : Ident) : Path := ⟨q.root, q.steps ++ [.fld x]⟩
 
 theorem resolve_dbFld {σ : Store} {nm : Names} {x : Ident} {v : Value}
     (hread : σ.readPath (dbPath nm x) = some v) :
@@ -571,13 +577,52 @@ theorem accepted_bucket_facts {nb e : Nat} (h : pow2Exp? pow2Fuel nb = some e) :
   have hpos : 0 < nb := by rw [hpow]; exact Nat.two_pow_pos e
   exact ⟨hpos, fun k => ⟨mask_eq_mod hpow hle k, bucketInRange nb hpos k⟩⟩
 
-/-- **What `Find` should be proved to do**, once the index invariant exists. -/
+/-! ## The bucket invariant
+
+`Find` looks in exactly one bucket, so what it needs is not the whole index
+invariant but the *chain* hanging off one subscript. Every clause is a
+`CSubset.Chain` predicate with the bucket head in place of a list head — which
+is the sense in which `Llist` and `Thash` share a proof: the `Reaches` here is
+the same `Reaches`, instantiated at `nm.next` and `buckets[b]`. -/
+
+/-- `g_D.f_buckets[b]` as a path. -/
+def bucketPath (nm : Names) (b : Nat) : Path :=
+  ⟨.glob nm.dbGlobal, [.fld nm.buckets, .idx b]⟩
+
+/-- **One bucket, as a chain.** A hash index is `NB` of these plus the clauses
+that tie them together; `Find` needs only this one.
+
+`fits` is the clause the subset forces: the walk is a `forN` bounded by the
+capacity, because there is no `while` and no `break`
+(`docs/DIVERGENCE.md` §3.2). It is not an artifact of the proof — a chain
+longer than `cap` really would be walked incompletely by the emitted C. -/
+structure BucketInv (m : Mem) (nm : Names) (key : Ident) (b cap : Nat)
+    (qs : List Path) : Prop where
+  /-- The bucket array holds this chain's head. -/
+  head  : readMem m (bucketPath nm b) = some (headOf qs)
+  /-- Following `next` from it visits exactly the chain. -/
+  chain : Reaches m nm.next (headOf qs) qs
+  /-- Every row on it has a readable `u32` key. -/
+  keys  : ∀ q ∈ qs, ∃ k', readMem m (fldPath q key) = some (.u32 k')
+  /-- The chain fits in the capacity the emitted walk is bounded by. -/
+  fits  : qs.length ≤ cap
+
+/-- **What `Find` computes.** Not "null or something with the right key" — that
+was the first statement here and it is satisfied by a function that always
+returns `NULL`. This says `Find` returns *the first row on the bucket's chain
+whose key matches*, which pins both the hit and the miss.
+
+`firstSat (keyAt m key k)` is `CSubset.Chain`'s search over a list; the content
+of the theorem is that the generated counted walk computes it. `firstSat_spec`
+and `firstSat_none` then turn either answer back into a statement about the
+store. -/
 def FindCorrect (nm : Names) (elem key : Ident) (mask cap : Nat) : Prop :=
-  ∀ (p : Program) (m : Mem) (k : UInt32),
+  ∀ (p : Program) (m : Mem) (k : UInt32) (qs : List Path),
     lookupFun p nm.find = .ok (findDef nm elem key mask cap) →
     (∃ n, p.funs.length = n + 1) →
-    ∃ r, callFun p m nm.find [.u32 k] = .ok (m, some r)
-      ∧ (r = .null ∨ ∃ q, r = .ptr q ∧ readMem m (fldPath q key) = some (.u32 k))
+    BucketInv m nm key (k &&& UInt32.ofNat mask).toNat cap qs →
+    callFun p m nm.find [.u32 k]
+      = .ok (m, some (ptrOf (firstSat (keyAt m key k) qs)))
 
 /-! ## Checked -/
 

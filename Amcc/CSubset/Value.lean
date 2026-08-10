@@ -656,6 +656,12 @@ checked by: `lake build` -/
 theorem Store.setLocal_glb (σ : Store) (x : Ident) (v : Value) :
     (σ.setLocal x v).glb = σ.glb := rfl
 
+/-- **Writing a local changes no memory at all.** `Mem` is the globals, the
+heap and the counter; the frame is not part of it. This is the whole frame
+argument for a generated function that only touches its own temporaries. -/
+@[simp] theorem Store.setLocal_toMem (σ : Store) (x : Ident) (v : Value) :
+    (σ.setLocal x v).toMem = σ.toMem := rfl
+
 /-- Reading back a path you just wrote gives what you wrote.
 
 checked by: `lake build` -/

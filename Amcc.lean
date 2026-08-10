@@ -24,6 +24,7 @@ import Amcc.Templates.Pool
 import Amcc.Templates.Upptr
 import Amcc.Templates.Llist
 import Amcc.Templates.Thash
+import Amcc.Templates.ThashFind
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Ssim.Tuple
 import Amcc.Ssim.Schema
@@ -109,8 +110,14 @@ that should fail does not.)
                           and both idempotence guards are proved, and so is
                           `bucketInRange` — the bucket subscript cannot trap —
                           together with `mask_eq_mod`, which is what the
-                          power-of-two requirement actually buys. `FindCorrect`
-                          is stated and owed
+                          power-of-two requirement actually buys
+- `Templates.ThashFind` — **proved**: `findCorrect` — `Find` returns the first
+                          row on the bucket's chain whose key matches, with
+                          `find_hit`/`find_miss` reading either answer back as
+                          a statement about the store. The same `Reaches` the
+                          list uses, with the bucket head in place of the list
+                          head, and the same loop packaging the array table's
+                          scan uses
 - `Templates.Llist`     — the **intrusive doubly-linked list** (`amc`'s `zdl`
                           flavour): nine functions, with the readers, both
                           idempotence guards, **`insertLinks`** and
