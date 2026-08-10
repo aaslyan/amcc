@@ -158,7 +158,12 @@ already emits, which is exactly why `amc` gets away with nineteen lines. -/
 def genUpptr (d : Dmmeta.Db) : Program :=
   { structs := Dmmeta.genStructs d
   , globals := Dmmeta.genGlobals d
-  , funs    := (upFields d).flatMap (fun cf => defsFor cf.1 cf.2.name cf.2.arg) }
+  -- the schema's names become C names here, at the generator's boundary:
+  -- `Dmmeta.mangle` is `amc::strptr_PrintCppIdent`, and `Dmmeta.check` has
+  -- already rejected any schema whose mangled names collide
+  , funs    := (upFields d).flatMap (fun cf =>
+      defsFor (Dmmeta.mangle cf.1) (Dmmeta.mangle cf.2.name)
+        (Dmmeta.mangle cf.2.arg)) }
 
 /-! ## Reading memory between calls
 
@@ -178,7 +183,8 @@ resolves to it" is `CSubset.lookupFun_of_mem` plus the two facts below. -/
 /-- The four accessors of an `Upptr` field are in the generated program. -/
 theorem defsFor_subset {d : Dmmeta.Db} {c : Dmmeta.Ctype} {f : Dmmeta.Field}
     (hc : c ∈ d.ctypes) (hf : f ∈ c.fields) (hr : f.reftype = .Upptr) :
-    ∀ fd ∈ defsFor c.name f.name f.arg, fd ∈ (genUpptr d).funs := by
+    ∀ fd ∈ defsFor (Dmmeta.mangle c.name) (Dmmeta.mangle f.name)
+        (Dmmeta.mangle f.arg), fd ∈ (genUpptr d).funs := by
   intro fd hfd
   refine List.mem_flatMap.mpr ⟨(c.name, f), ?_, hfd⟩
   refine List.mem_flatMap.mpr ⟨c, hc, ?_⟩

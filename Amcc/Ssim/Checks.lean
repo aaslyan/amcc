@@ -169,6 +169,44 @@ example : parseFile "\n# a comment\ndmmeta.ctype  ctype:x  comment:\"\"\n"
     = .ok [(3, { head := "dmmeta.ctype"
                , attrs := [⟨"ctype", "x"⟩, ⟨"comment", ""⟩] })] := rfl
 
+/-! ## Qualified names
+
+`dmmeta` names carry a namespace. The reader stores them **verbatim** — the
+`Db` is the schema, not the C — and `Dmmeta.mangle` turns them into C
+identifiers at the generator's boundary. So the round trip is unaffected by
+mangling, which is the property this section pins. -/
+
+/-- A namespace-qualified schema, as `amc` would write it. -/
+def qualText : String :=
+  "dmmeta.ctype  ctype:dev.Arch  comment:\"\"\n" ++
+  "dmmeta.ctype  ctype:abt.FArch  comment:\"\"\n" ++
+  "dmmeta.field  field:dev.Arch.arch  arg:u64  reftype:Pkey  comment:\"\"\n" ++
+  "dmmeta.field  field:abt.FArch.p_arch  arg:dev.Arch  reftype:Upptr  comment:\"\"\n"
+
+/-- **It round-trips**, dots and all: `splitQual` splits at the *last* dot, so
+`abt.FArch.p_arch` is field `p_arch` of ctype `abt.FArch`.
+
+checked by: `lake build` -/
+example : roundTrip qualText = .ok qualText := rfl
+
+-- `Dmmeta.check` mangles every name, and `mangle` is a character fold with a
+-- keyword scan; running it under the *kernel* on top of the reader's own
+-- reduction is past the boundary `CLAUDE.md` draws. These two are `#guard`:
+-- compiled evaluation, still failing `lake build` on a wrong answer.
+deriving instance BEq for Except
+
+-- **And it is accepted**, which it was not before mangling existed: every
+-- ctype name here fails `isCIdent` on its own.  checked by: `lake build`
+#guard (readDb qualText).map Dmmeta.check == .ok []
+
+-- A mangling collision is rejected, by the checker rather than by the mapping:
+-- `a.b` and `a_b` are different ctypes and the same C name.
+-- checked by: `lake build`
+#guard (readDb
+    ("dmmeta.ctype  ctype:a.b  comment:\"\"\n" ++
+     "dmmeta.ctype  ctype:a_b  comment:\"\"\n")).map Dmmeta.check
+    == .ok ["two ctypes generate the same C name: a_b"]
+
 /-! ## Rejections, with the exact message
 
 Each of these is a way the front end could quietly run ahead of the back end. -/

@@ -30,6 +30,15 @@ Three parts, and only the third is specific to up-pointers:
   clause added to `Dmmeta.check` makes true.
 -/
 
+set_option maxHeartbeats 1000000
+
+-- `String.toList` on a *symbolic* string does not whnf, so unfolding `mangle`
+-- during elaboration diverges: every statement here that mentions
+-- `mangle c.name` timed out until this line was added. It is `local` rather
+-- than global because the checker's `rfl` examples elsewhere do compute
+-- `mangle` on literals, and must keep doing so.
+attribute [local irreducible] Dmmeta.mangle
+
 namespace Templates
 namespace Upptr
 
@@ -51,19 +60,23 @@ theorem upFields_eq (d : Db) : upFields d = NameWf.fieldsOf d .Upptr := rfl
 
 They share a qualified prefix and differ in a literal suffix. -/
 
-theorem names_eq (c f : Dmmeta.Ident) :
-    (defsFor c f "x").map FunDef.name
-      = [ qualName c f ++ "_Init", qualName c f ++ "_Get"
-        , qualName c f ++ "_Set", qualName c f ++ "_Q" ] := rfl
+theorem defsFor_names (c f a : String) :
+    (defsFor c f a).map FunDef.name
+      = [ c ++ "_" ++ f ++ "_Init", c ++ "_" ++ f ++ "_Get"
+        , c ++ "_" ++ f ++ "_Set", c ++ "_" ++ f ++ "_Q" ] := rfl
 
-/-- The names one field contributes, in terms of its qualified name — which is
-the only thing about the field they depend on. The `arg` is irrelevant here,
-which is why `names_eq` above can fix it. -/
-theorem defsFor_names (cf : Dmmeta.Ident × Field) :
-    (defsFor cf.1 cf.2.name cf.2.arg).map FunDef.name
+/-- `qualName` is the mangled prefix every generated symbol is built from. One
+delta step, named so nothing has to whnf `mangle` on a symbolic name. -/
+theorem qualName_eq (c f : Dmmeta.Ident) :
+    qualName c f = Dmmeta.mangle c ++ "_" ++ Dmmeta.mangle f := rfl
+
+/-- The names one field contributes, in terms of its qualified name. -/
+theorem block_names (cf : Dmmeta.Ident × Field) :
+    (defsFor (Dmmeta.mangle cf.1) (Dmmeta.mangle cf.2.name)
+        (Dmmeta.mangle cf.2.arg)).map FunDef.name
       = [ qualName cf.1 cf.2.name ++ "_Init", qualName cf.1 cf.2.name ++ "_Get"
-        , qualName cf.1 cf.2.name ++ "_Set", qualName cf.1 cf.2.name ++ "_Q" ] :=
-  rfl
+        , qualName cf.1 cf.2.name ++ "_Set", qualName cf.1 cf.2.name ++ "_Q" ] := by
+  rw [defsFor_names, qualName_eq]
 
 /-- **Within one field, the four names are distinct** — the suffixes are, and
 the prefix cancels. -/
@@ -98,10 +111,10 @@ theorem names_distinct {d : Db} (hchk : check d = []) :
   rw [← upFields_eq] at hq
   simp only [genUpptr, List.map_flatMap]
   refine NameWf.pairwise_flatMap (upFields d) (fun cf _ => ?_) ?_
-  · rw [defsFor_names]; exact block_pairwise _
+  · rw [block_names]; exact block_pairwise _
   · refine hq.imp ?_
     intro a b hab
-    rw [defsFor_names, defsFor_names]
+    rw [block_names, block_names]
     exact cross_pairwise hab
 
 /-! ## The four bodies
@@ -116,7 +129,8 @@ be `u64` and the emitted `NULL` would have the wrong pointee. -/
 theorem up_field_ty {d : Db} (hchk : check d = []) {c : Ctype} {f : Field}
     (hc : c ∈ d.withBuiltins.ctypes) (hs : c.scalar = none) (hf : f ∈ c.fields)
     (hr : f.reftype = .Upptr) {ctx : Wf.Ctx} (hstructs : ctx.structs = genStructs d) :
-    ctx.field? c.name f.name = some (.ptr (.strct f.arg)) := by
+    ctx.field? (Dmmeta.mangle c.name) (Dmmeta.mangle f.name)
+      = some (.ptr (.strct (Dmmeta.mangle f.arg))) := by
   obtain ⟨_, _, hcty⟩ := Layout.facts_of_check hchk
   obtain ⟨i, hi, hci⟩ : ∃ i, ∃ hi : i < d.withBuiltins.ctypes.length,
       (d.withBuiltins.ctypes[i]'hi) = c := by
@@ -139,13 +153,15 @@ match. -/
 theorem checkFun_defsFor {d : Db} (hchk : check d = []) {c : Ctype} {f : Field}
     (hc : c ∈ d.withBuiltins.ctypes) (hs : c.scalar = none) (hf : f ∈ c.fields)
     (hr : f.reftype = .Upptr) {earlier : List FunDef} :
-    ∀ fd ∈ defsFor c.name f.name f.arg,
+    ∀ fd ∈ defsFor (Dmmeta.mangle c.name) (Dmmeta.mangle f.name)
+        (Dmmeta.mangle f.arg),
       Wf.checkFun (genStructs d) (genGlobals d) earlier fd = [] := by
   intro fd hfd
   -- the one fact all four need, in the context each is checked against
   have hfield : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (genStructs d) (genGlobals d) earlier locals).field?
-        c.name f.name = some (.ptr (.strct f.arg)) :=
+        (Dmmeta.mangle c.name) (Dmmeta.mangle f.name)
+          = some (.ptr (.strct (Dmmeta.mangle f.arg))) :=
     fun locals => up_field_ty hchk hc hs hf hr rfl
   simp only [defsFor, List.mem_cons, List.not_mem_nil, or_false] at hfd
   rcases hfd with rfl | rfl | rfl | rfl

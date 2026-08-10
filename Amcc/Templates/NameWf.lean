@@ -45,6 +45,13 @@ descends is not the whole `qualNames` list but a **sublist** of it, and
 `List.Pairwise.sublist` does the rest.
 -/
 
+-- `String.toList` on a *symbolic* string does not whnf, so unfolding `mangle`
+-- during elaboration diverges: every statement here that mentions
+-- `mangle c.name` timed out until this line was added. It is `local` rather
+-- than global because the checker's `rfl` examples elsewhere do compute
+-- `mangle` on literals, and must keep doing so.
+attribute [local irreducible] Dmmeta.mangle
+
 namespace Templates
 namespace NameWf
 
@@ -229,24 +236,26 @@ proof. Shared, because all three templates dereference a row. -/
 /-- The generated struct for a record ctype resolves by name. -/
 theorem structs_find? {d : Db} (hchk : check d = []) {c : Ctype}
     (hc : c ∈ d.withBuiltins.ctypes) (hs : c.scalar = none) :
-    (genStructs d).find? (fun sd => sd.name == c.name)
+    (genStructs d).find? (fun sd => sd.name == mangle c.name)
       = some (structOf d.withBuiltins c) := by
-  obtain ⟨hdup, _, _⟩ := Layout.facts_of_check hchk
+  obtain ⟨⟨_, hmdup, _⟩, _, _⟩ := Layout.facts_of_check hchk
   have h := CSubset.find?_of_mem_pairwise (f := StructDef.name) (genStructs d)
     (structOf d.withBuiltins c)
     (List.mem_filterMap.mpr ⟨c, hc, by simp [hs]⟩)
-    (Layout.structs_distinct hdup)
+    (Layout.structs_distinct (nf := fun c => mangle c.name) (fun _ => rfl) hmdup)
+  rw [Layout.structOf_name] at h
   exact h
 
 /-- ...and a lowered field resolves within it. -/
 theorem struct_field? {full : Db} {c : Ctype} {f : Field} {t : Ty}
-    (hfd : dups (c.fields.map Field.name) = [])
+    (hfd : (c.fields.map (fun f => mangle f.name)).Pairwise (· ≠ ·))
     (hf : f ∈ c.fields) (hty : fieldTy full c.name f = some t) :
-    (structOf full c).fields.find? (fun fv => fv.1 == f.name) = some (f.name, t) := by
+    (structOf full c).fields.find? (fun fv => fv.1 == mangle f.name)
+      = some (mangle f.name, t) := by
   have h := CSubset.find?_of_mem_pairwise (f := Prod.fst)
-    (structOf full c).fields (f.name, t)
+    (structOf full c).fields (mangle f.name, t)
     (List.mem_filterMap.mpr ⟨f, hf, by rw [hty]; rfl⟩)
-    (Layout.fields_distinct hfd)
+    (Layout.fields_distinct (nf := fun f => mangle f.name) (fun _ _ _ => rfl) hfd)
   exact h
 
 /-- The two composed, in the form `Wf.Ctx.field?` wants. -/
@@ -254,17 +263,18 @@ theorem ctx_field? {d : Db} (hchk : check d = []) {c : Ctype} {f : Field} {t : T
     (hc : c ∈ d.withBuiltins.ctypes) (hs : c.scalar = none) (hf : f ∈ c.fields)
     (hty : fieldTy d.withBuiltins c.name f = some t)
     {ctx : Wf.Ctx} (hstructs : ctx.structs = genStructs d) :
-    ctx.field? c.name f.name = some t := by
-  obtain ⟨_, _, hcty⟩ := Layout.facts_of_check hchk
+    ctx.field? (mangle c.name) (mangle f.name) = some t := by
+  obtain ⟨⟨_, _, hqdup⟩, _, _⟩ := Layout.facts_of_check hchk
   obtain ⟨i, hi, hci⟩ : ∃ i, ∃ hi : i < d.withBuiltins.ctypes.length,
       (d.withBuiltins.ctypes[i]'hi) = c := by
     obtain ⟨i, hi⟩ := List.mem_iff_getElem.mp hc
     exact ⟨i, hi.1, hi.2⟩
-  have hfd : dups (c.fields.map Field.name) = [] := by
-    rw [← hci]; exact (hcty i hi).1
+  have hfd : (c.fields.map (fun f => mangle f.name)).Pairwise (· ≠ ·) := by
+    rw [← hci]; exact Layout.mangled_fields_pairwise hqdup hi
   simp only [Wf.Ctx.field?, Wf.Ctx.struct?, hstructs, structs_find? hchk hc hs]
   show (do
-    let fv ← List.find? (fun fv => fv.1 == f.name) (structOf d.withBuiltins c).fields
+    let fv ← List.find? (fun fv => fv.1 == mangle f.name)
+      (structOf d.withBuiltins c).fields
     some fv.2) = some t
   rw [struct_field? hfd hf hty]
   rfl
@@ -274,12 +284,13 @@ the exact type the four accessors assign and return. -/
 theorem fieldTy_upptr {full : Db} {owner : Dmmeta.Ident} {f : Field} {ac : Ctype}
     (hr : f.reftype = .Upptr) (hac : full.find? f.arg = some ac)
     (hs : ac.scalar = none) :
-    fieldTy full owner f = some (.ptr (.strct f.arg)) := by
-  have hname : ac.name = f.arg := Db.find?_name hac
+    fieldTy full owner f = some (.ptr (.strct (mangle f.arg))) := by
+  have hname : mangle ac.name = mangle f.arg := congrArg mangle (Db.find?_name hac)
   simp only [fieldTy, hac, hr]
   show (some ((match ac.scalar with
     | some st => Ty.scalar st
-    | none    => Ty.strct ac.name).ptr) : Option Ty) = some (Ty.strct f.arg).ptr
+    | none    => Ty.strct (mangle ac.name)).ptr) : Option Ty)
+      = some (Ty.strct (mangle f.arg)).ptr
   rw [hs, hname]
 
 end NameWf

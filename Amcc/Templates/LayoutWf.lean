@@ -44,6 +44,13 @@ asked to look for.
   single-table `GenWellFormed` never had to face.
 -/
 
+-- `String.toList` on a *symbolic* string does not whnf, so unfolding `mangle`
+-- during elaboration diverges: every statement here that mentions
+-- `mangle c.name` timed out until this line was added. It is `local` rather
+-- than global because the checker's `rfl` examples elsewhere do compute
+-- `mangle` on literals, and must keep doing so.
+attribute [local irreducible] Dmmeta.mangle
+
 namespace Templates
 namespace Layout
 
@@ -80,13 +87,24 @@ theorem pairwise_filterMap_map {α β : Type _} {g : β → String} {h : α → 
       rw [hg a b hf]
       exact hp.1 (h a') (List.mem_map_of_mem ha')
 
-/-! ## The struct table -/
+/-! ## The struct table
+
+`mangle` is a fold over characters with a keyword lookup, so leaving it to
+`rfl` and unification makes the elaborator whnf it on symbolic names. Every
+projection through it is therefore a named `rfl` lemma, applied rather than
+recomputed. -/
+
+/-- The generated struct's name is the mangled ctype name. -/
+theorem structOf_name (full : Db) (c : Ctype) :
+    (structOf full c).name = mangle c.name := rfl
 
 /-- Struct names are pairwise distinct, because ctype names are and
 `genStructs` keeps the name. -/
-theorem structs_distinct {d : Db} (h : dups d.withBuiltins.names = []) :
+theorem structs_distinct {d : Db} {nf : Ctype → String}
+    (hnf : ∀ c, (structOf d.withBuiltins c).name = nf c)
+    (h : dups (d.withBuiltins.ctypes.map nf) = []) :
     ((genStructs d).map StructDef.name).Pairwise (· ≠ ·) := by
-  refine pairwise_filterMap_map (g := StructDef.name) (h := Ctype.name)
+  refine pairwise_filterMap_map (g := StructDef.name) (h := nf)
     (f := fun c => if c.scalar.isSome then none else some (structOf d.withBuiltins c))
     ?_ _ (CSubset.dups_eq_nil_iff.mp h)
   intro a b hab
@@ -95,17 +113,19 @@ theorem structs_distinct {d : Db} (h : dups d.withBuiltins.names = []) :
   | none =>
     rw [hs] at hab
     simp only [Option.isSome_none, Bool.false_eq_true, if_false] at hab
-    rw [← Option.some.inj hab]; rfl
+    rw [← Option.some.inj hab]; exact hnf a
   | some t => rw [hs] at hab; simp at hab
 
 /-- Field names within one generated struct are pairwise distinct, because the
 ctype's are and `structOf` keeps the name. -/
-theorem fields_distinct {full : Db} {c : Ctype}
-    (h : dups (c.fields.map Field.name) = []) :
+theorem fields_distinct {full : Db} {c : Ctype} {nf : Field → String}
+    (hnf : ∀ f t, fieldTy full c.name f = some t →
+      ((mangle f.name, t) : String × Ty).1 = nf f)
+    (h : (c.fields.map nf).Pairwise (· ≠ ·)) :
     ((structOf full c).fields.map Prod.fst).Pairwise (· ≠ ·) := by
-  refine pairwise_filterMap_map (g := Prod.fst) (h := Field.name)
-    (f := fun f => (fieldTy full c.name f).map (fun t => (f.name, t)))
-    ?_ _ (CSubset.dups_eq_nil_iff.mp h)
+  refine pairwise_filterMap_map (g := Prod.fst) (h := nf)
+    (f := fun f => (fieldTy full c.name f).map (fun t => (mangle f.name, t)))
+    ?_ c.fields h
   intro a b hab
   simp only [] at hab
   cases ht : fieldTy full c.name a with
@@ -114,6 +134,36 @@ theorem fields_distinct {full : Db} {c : Ctype}
     rw [ht] at hab
     simp only [Option.map_some] at hab
     rw [← Option.some.inj hab]
+    exact hnf a t ht
+
+/-- `Pairwise` on a `flatMap` restricts to each block. -/
+theorem pairwise_of_flatMap {α β : Type _} {R : β → β → Prop} {f : α → List β} :
+    ∀ (l : List α), (l.flatMap f).Pairwise R → ∀ a ∈ l, (f a).Pairwise R
+  | [], _, _, hm => absurd hm (by simp)
+  | a :: l, hp, b, hb => by
+    rw [List.flatMap_cons, List.pairwise_append] at hp
+    rcases List.mem_cons.mp hb with rfl | hb'
+    · exact hp.1
+    · exact pairwise_of_flatMap l hp.2.1 b hb'
+
+/-- **Within one ctype, the mangled field names are distinct.** Not from the
+raw-name clause — two raw names can mangle together — but from the *qualified*
+name clause, by cancelling the shared `<ctype>_` prefix. This is the clause
+from 47ecf60 doing exactly the job mangling needed it for. -/
+theorem mangled_fields_pairwise {d : Db}
+    (hq : dups (qualNames d.withBuiltins) = [])
+    {j : Nat} (hj : j < d.withBuiltins.ctypes.length) :
+    (((d.withBuiltins.ctypes[j]'hj).fields.map
+      (fun f => mangle f.name)).Pairwise (· ≠ ·)) := by
+  have hqp : ((d.withBuiltins.ctypes.flatMap
+      (fun c => c.fields.map (fun f => qualName c.name f.name))).Pairwise (· ≠ ·)) :=
+    CSubset.dups_eq_nil_iff.mp hq
+  have hblock := pairwise_of_flatMap (R := (· ≠ ·))
+    d.withBuiltins.ctypes hqp (d.withBuiltins.ctypes[j]'hj) (List.getElem_mem hj)
+  rw [List.pairwise_map] at hblock ⊢
+  refine hblock.imp ?_
+  intro a b hab hm
+  exact hab (congrArg (fun t => mangle (d.withBuiltins.ctypes[j]'hj).name ++ "_" ++ t) hm)
 
 /-! ## What `Dmmeta.check` hands over
 
@@ -126,7 +176,9 @@ checker's clause order shows up as one broken pattern rather than five. -/
 that ctype are distinct, the `arg` resolves, a layout-carrying field's `arg`
 was declared earlier, and an `Inlary`'s bound is a legal array size. -/
 theorem facts_of_check {d : Db} (h : check d = []) :
-    dups d.withBuiltins.names = []
+    (dups d.withBuiltins.names = []
+      ∧ dups (d.withBuiltins.ctypes.map (fun c => mangle c.name)) = []
+      ∧ dups (qualNames d.withBuiltins) = [])
     ∧ (∀ r, d.root = some r →
         ∃ c, d.withBuiltins.find? r = some c ∧ c.scalar = none)
     ∧ ∀ i, ∀ hi : i < d.withBuiltins.ctypes.length,
@@ -143,8 +195,8 @@ theorem facts_of_check {d : Db} (h : check d = []) :
             ∧ (f.reftype.needsRecordArg = true →
                 ∃ ac, d.withBuiltins.find? f.arg = some ac ∧ ac.scalar = none) := by
   simp only [check, List.append_eq_nil_iff, List.map_eq_nil_iff] at h
-  obtain ⟨⟨⟨hdup, _⟩, hroot⟩, hcty⟩ := h
-  refine ⟨hdup, ?_, fun i hi => ?_⟩
+  obtain ⟨⟨⟨⟨hdup, hmdup⟩, hqdup⟩, hroot⟩, hcty⟩ := h
+  refine ⟨⟨hdup, hmdup, hqdup⟩, ?_, fun i hi => ?_⟩
   · intro r hr
     rw [hr] at hroot
     simp only [] at hroot
@@ -285,8 +337,8 @@ the reftype embeds rather than points, which is exactly `Reftype.layoutDep`. -/
 theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
     (ht : fieldTy full owner f = some t) :
     (∀ n ∈ Wf.Ty.allStructs t,
-        n = f.arg ∧ ∃ ac, full.find? f.arg = some ac ∧ ac.scalar = none)
-    ∧ (∀ n ∈ Wf.Ty.layoutDeps t, n = f.arg ∧ f.reftype.layoutDep = true)
+        n = mangle f.arg ∧ ∃ ac, full.find? f.arg = some ac ∧ ac.scalar = none)
+    ∧ (∀ n ∈ Wf.Ty.layoutDeps t, n = mangle f.arg ∧ f.reftype.layoutDep = true)
     ∧ (f.reftype ≠ .Inlary → Wf.Ty.sizesOk t = true)
     ∧ (∀ k, full.inlaryMax? owner f.name = some k → 0 < k → k < Wf.u32Bound →
         Wf.Ty.sizesOk t = true) := by
@@ -294,12 +346,14 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
   obtain ⟨ac, hac, ht⟩ := Option.bind_eq_some_iff.mp ht
   -- `base` is the argument's own type: a machine scalar, or the record struct
   have hbase : ∀ (u : Ty),
-      (match ac.scalar with | some st => Ty.scalar st | none => Ty.strct ac.name) = u →
-      (∀ n ∈ Wf.Ty.allStructs u, n = f.arg ∧ ac.scalar = none)
+      (match ac.scalar with
+        | some st => Ty.scalar st | none => Ty.strct (mangle ac.name)) = u →
+      (∀ n ∈ Wf.Ty.allStructs u, n = mangle f.arg ∧ ac.scalar = none)
         ∧ Wf.Ty.layoutDeps u = Wf.Ty.allStructs u
         ∧ Wf.Ty.sizesOk u = true := by
     intro u hu
-    have hname : ac.name = f.arg := Db.find?_name hac
+    have hname : mangle ac.name = mangle f.arg :=
+      congrArg mangle (Db.find?_name hac)
     cases hs : ac.scalar with
     | some st => rw [hs] at hu; subst hu; exact ⟨by simp [Wf.Ty.allStructs], rfl, rfl⟩
     | none =>
@@ -334,7 +388,8 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
       simp only [Option.isSome_none, Bool.false_eq_true, if_false,
         Option.some.injEq] at ht
       subst ht
-      have hname : ac.name = f.arg := Db.find?_name hac
+      have hname : mangle ac.name = mangle f.arg :=
+      congrArg mangle (Db.find?_name hac)
       refine ⟨?_, by simp [Wf.Ty.layoutDeps], fun _ => rfl, fun _ _ _ _ => rfl⟩
       intro n hn
       simp only [Wf.Ty.allStructs, List.mem_singleton] at hn
@@ -398,7 +453,8 @@ theorem genStructs_eq (d : Db) :
 
 /-- Every struct AMCC emits is some ctype's, and its name is that ctype's. -/
 theorem structOf?_name {full : Db} {c : Ctype} {sd : StructDef}
-    (h : structOf? full c = some sd) : sd.name = c.name ∧ sd = structOf full c := by
+    (h : structOf? full c = some sd) :
+    sd.name = mangle c.name ∧ sd = structOf full c := by
   simp only [structOf?] at h
   cases hs : c.scalar with
   | some t => rw [hs] at h; simp at h
@@ -406,7 +462,7 @@ theorem structOf?_name {full : Db} {c : Ctype} {sd : StructDef}
     rw [hs] at h
     simp only [Option.isSome_none, Bool.false_eq_true, if_false,
       Option.some.injEq] at h
-    exact ⟨by rw [← h]; rfl, h.symm⟩
+    exact ⟨by rw [← h]; exact structOf_name _ _, h.symm⟩
 
 /-- **The struct table a schema lowers to is well-formed.** Named separately
 from `layoutWellFormed` because the three ctype-model templates emit exactly
@@ -416,14 +472,16 @@ its own.
 checked by: `lake build` -/
 theorem checkStructs_gen {d : Db} (hchk : check d = []) :
     Wf.checkStructs (genStructs d) = [] := by
-  obtain ⟨hdup, _, hcty⟩ := facts_of_check hchk
+  obtain ⟨⟨hdup, hmdup, hqdup⟩, _, hcty⟩ := facts_of_check hchk
   have hmemName : ∀ (c : Ctype), c ∈ d.withBuiltins.ctypes → c.scalar = none →
-      ((genStructs d).map StructDef.name).contains c.name = true := by
+      ((genStructs d).map StructDef.name).contains (mangle c.name) = true := by
     intro c hc hs
-    refine List.elem_eq_true_of_mem (List.mem_map.mpr ⟨structOf d.withBuiltins c, ?_, rfl⟩)
+    refine List.elem_eq_true_of_mem (List.mem_map.mpr
+      ⟨structOf d.withBuiltins c, ?_, structOf_name _ _⟩)
     exact List.mem_filterMap.mpr ⟨c, hc, by simp [hs]⟩
   simp only [Wf.checkStructs, List.append_eq_nil_iff]
-  refine ⟨CSubset.distinct_eq_nil (structs_distinct hdup), ?_⟩
+  refine ⟨CSubset.distinct_eq_nil
+    (structs_distinct (nf := fun c => mangle c.name) (fun _ => rfl) hmdup), ?_⟩
   rw [List.flatMap_eq_nil_iff]
   rintro ⟨sd, i⟩ hsdi
   -- which ctype produced this struct, and where it sat
@@ -434,7 +492,9 @@ theorem checkStructs_gen {d : Db} (hchk : check d = []) :
   obtain ⟨hsdname, hsdeq⟩ := structOf?_name hsj
   obtain ⟨hfd, _, hff⟩ := hcty j hj
   simp only [List.append_eq_nil_iff]
-  refine ⟨CSubset.distinct_eq_nil (hsdeq ▸ fields_distinct hfd), ?_⟩
+  refine ⟨CSubset.distinct_eq_nil (hsdeq ▸ fields_distinct
+    (nf := fun f => mangle f.name) (fun _ _ _ => rfl)
+    (mangled_fields_pairwise hqdup hj)), ?_⟩
   rw [List.flatMap_eq_nil_iff]
   rintro ⟨fn, ft⟩ hfv
   -- the field this slot came from, and its lowering
@@ -451,7 +511,7 @@ theorem checkStructs_gen {d : Db} (hchk : check d = []) :
   · -- obligation 3: the size is legal
     by_cases hI : f.reftype = .Inlary
     · obtain ⟨k, hk, hpos, hlt⟩ := hinl hI
-      rw [if_pos (hszI k (by rw [← hsdname] at hk ⊢; exact hk) hpos hlt)]
+      rw [if_pos (hszI k hk hpos hlt)]
     · rw [if_pos (hsz hI)]
   · -- obligation 2a: every struct the type mentions is emitted
     rw [List.flatMap_eq_nil_iff]
@@ -481,9 +541,7 @@ theorem checkStructs_gen {d : Db} (hchk : check d = []) :
     · rw [← hlen, genStructs_eq]
       refine mem_filterMap_take (i := j) hacmem ?_
       simp [structOf?, hsame ▸ hacs']
-    · show (structOf d.withBuiltins ac).name = n
-      rw [show (structOf d.withBuiltins ac).name = ac.name from rfl, hacname,
-        hnarg]
+    · rw [structOf_name, hnarg, ← hacname]
 
 /-- **The database global a schema lowers to is well-formed.** The other half
 the templates need on its own.
@@ -491,7 +549,7 @@ the templates need on its own.
 checked by: `lake build` -/
 theorem checkGlobals_gen {d : Db} (hchk : check d = []) :
     Wf.checkGlobals (genStructs d) (genGlobals d) = [] := by
-  obtain ⟨hdup, hroot, _⟩ := facts_of_check hchk
+  obtain ⟨_, hroot, _⟩ := facts_of_check hchk
   simp only [Wf.checkGlobals, genGlobals, List.append_eq_nil_iff]
   cases hr : d.root with
   | none => exact ⟨rfl, rfl⟩
@@ -505,12 +563,12 @@ theorem checkGlobals_gen {d : Db} (hchk : check d = []) :
       List.append_nil]
     have hmem : c ∈ d.withBuiltins.ctypes :=
       List.mem_of_find?_eq_some (by simpa [Db.find?] using hc)
-    have hname : c.name = r := Db.find?_name hc
+    have hname : mangle c.name = mangle r := congrArg mangle (Db.find?_name hc)
     refine if_pos ?_
     refine List.elem_eq_true_of_mem (List.mem_map.mpr
       ⟨structOf d.withBuiltins c, ?_, ?_⟩)
     · exact List.mem_filterMap.mpr ⟨c, hmem, by simp [hcs]⟩
-    · exact hname
+    · rw [structOf_name]; exact hname
 
 /-- **The layout pass is well-formed for every accepted schema.**
 

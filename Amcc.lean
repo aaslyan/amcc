@@ -83,7 +83,9 @@ that should fail does not.)
 
 ## Phase 2 — the schema DSL
 - `Schema` — the legacy single-table input language, and its checker
-- `Dmmeta` — the **ctype model**, including the qualified-name clause that
+- `Dmmeta` — the **ctype model**, including `mangle` — `amc`'s
+             `strptr_PrintCppIdent`, which is what lets a namespace-qualified
+             schema become C at all — and the qualified-name clause that
              rejects two fields printing to the same C identifier: `Ctype`, `Field` whose `arg` names another
   ctype, `Db` in declaration order, the full `Reftype` vocabulary with its
   `dmmeta/reftype.ssim` flags, and a checker that resolves every `arg` and

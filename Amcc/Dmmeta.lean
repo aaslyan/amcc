@@ -293,6 +293,62 @@ What a field becomes in the generated struct. `none` where the reftype has no
 inline representation of its own — an xref lives in the *database* ctype, not
 in the row. -/
 
+def cKeywords : List String :=
+  [ "auto", "break", "case", "char", "const", "continue", "default", "do",
+    "double", "else", "enum", "extern", "float", "for", "goto", "if", "inline",
+    "int", "long", "register", "restrict", "return", "short", "signed",
+    "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned",
+    "void", "volatile", "while", "_Bool", "bool", "true", "false", "NULL",
+    "uint8_t", "uint16_t", "uint32_t", "uint64_t" ]
+
+/-! ## Mangling a qualified name into a C identifier
+
+`dmmeta` names are namespace-qualified — `abt.FArch`, `dmmeta.Ctype` — and a
+dot is not a C identifier character. `docs/CONFORMANCE.md` measured this as
+gating **4518 of 5659 real fields and 1381 of 1420 real ctypes**, eleven times
+the largest missing reftype, so it is not an edge case: without a mapping the
+whole corpus is unreachable for a reason that has nothing to do with data
+structures.
+
+The mapping is `amc`'s own, transcribed from `amc::strptr_PrintCppIdent`
+(`cpp/amc/main.cpp`), in its order:
+
+1. an empty name, or one starting with a digit, gets a leading `_`;
+2. if the result is a keyword, a trailing `_` (`amc` masks C++ keywords; we
+   mask C's, since that is what we emit);
+3. `+` becomes `P`, `'` becomes `A`, `"` becomes `Q`, and
+   `/ . - < > ! @ # $ % ^ & * ( ) : ;` space `| [ ] { }` all become `_`.
+
+## It is deliberately not injective
+
+`a.b_c` and `a_b.c` both mangle to `a_b_c`, and across 1420 real ctypes that
+will actually happen. The response is **not** a cleverer encoding: it is to
+let the collision reach the checker that already exists. `check` below gains
+one clause on mangled ctype names, and `qualName` — which every generated
+symbol is built from — mangles both halves, so the `dups (qualNames …)` clause
+landed in 47ecf60 catches field-level collisions unchanged. A dumb mapping
+plus a checker that already works beats an injective encoding nobody can read
+in the generated C. -/
+
+/-- `amc`'s character substitution. Characters outside the table pass through,
+which is what lets `isCIdent` reject the ones no mapping can rescue. -/
+def transChar (c : Char) : Char :=
+  if c == '+' then 'P'
+  else if c == '\'' then 'A'
+  else if c == '"' then 'Q'
+  else if "/.-<>!@#$%^&*():; |[]{}".toList.contains c then '_'
+  else c
+
+/-- The C identifier a schema name is emitted as. -/
+def mangle (n : String) : String :=
+  let lead : String :=
+    match n.toList with
+    | []     => "_"
+    | c :: _ => if c.isDigit then "_" else ""
+  let s := lead ++ n
+  let s := if cKeywords.contains s then s ++ "_" else s
+  String.ofList (s.toList.map transChar)
+
 /-- The storage type of a field, resolved against the db. `owner` is the ctype
 the field belongs to, needed because an `Inlary`'s bound is keyed by both. -/
 def fieldTy (d : Db) (owner : Ident) (f : Field) : Option CSubset.Ty := do
@@ -300,7 +356,7 @@ def fieldTy (d : Db) (owner : Ident) (f : Field) : Option CSubset.Ty := do
   let base : CSubset.Ty :=
     match c.scalar with
     | some t => .scalar t
-    | none   => .strct c.name
+    | none   => .strct (mangle c.name)
   match f.reftype with
   | .Val | .Base  => some base
   -- A key at scalar argument is the key itself; at record argument it is a
@@ -315,8 +371,9 @@ def fieldTy (d : Db) (owner : Ident) (f : Field) : Option CSubset.Ty := do
 
 /-- The struct a record ctype lowers to: its inline fields, in order. -/
 def structOf (d : Db) (c : Ctype) : CSubset.StructDef where
-  name   := c.name
-  fields := c.fields.filterMap (fun f => (fieldTy d c.name f).map (fun t => (f.name, t)))
+  name   := mangle c.name
+  fields := c.fields.filterMap
+              (fun f => (fieldTy d c.name f).map (fun t => (mangle f.name, t)))
 
 /-! ## Lowering a whole `Db`
 
@@ -335,7 +392,7 @@ def genStructs (d : Db) : List CSubset.StructDef :=
 def genGlobals (d : Db) : List CSubset.GlobalDef :=
   match d.root with
   | none   => []
-  | some r => [{ name := "g_" ++ r, ty := .strct r }]
+  | some r => [{ name := "g_" ++ mangle r, ty := .strct (mangle r) }]
 
 /-- The generated translation unit's **layout**: structs and storage, no
 functions yet. -/
@@ -348,14 +405,6 @@ def genLayout (d : Db) : CSubset.Program where
 
 Same shape as `CSubset.Wf.check` and `Schema.check`: a list of violations, so
 that a generator gets "which rule, where" rather than a bare `false`. -/
-
-private def cKeywords : List String :=
-  [ "auto", "break", "case", "char", "const", "continue", "default", "do",
-    "double", "else", "enum", "extern", "float", "for", "goto", "if", "inline",
-    "int", "long", "register", "restrict", "return", "short", "signed",
-    "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned",
-    "void", "volatile", "while", "_Bool", "bool", "true", "false", "NULL",
-    "uint8_t", "uint16_t", "uint32_t", "uint64_t" ]
 
 def isCIdent (s : String) : Bool :=
   match s.toList with
@@ -372,9 +421,9 @@ def dups (xs : List Ident) : List Ident :=
 /-- Check one field against the ctypes declared **before** its owner. -/
 def checkField (d : Db) (earlier : List Ident) (owner : Ident) (f : Field) :
     List String :=
-  (if isCIdent f.name then []
-   else [s!"{owner}.{f.name}: not a legal C identifier"])
-  ++ (if isReservedName f.name then
+  (if isCIdent (mangle f.name) then []
+   else [s!"{owner}.{f.name}: does not mangle to a legal C identifier"])
+  ++ (if isReservedName (mangle f.name) then
         [s!"{owner}.{f.name}: leading underscore is reserved for generated locals"]
       else [])
   ++ (match d.find? f.arg with
@@ -414,8 +463,8 @@ def checkCtype (d : Db) (earlier : List Ident) (c : Ctype) : List String :=
   -- Builtin ctypes are named after the machine types they denote (`bool` is a
   -- ctype in `dmmeta` too), so the C-identifier rule applies to user ctypes,
   -- which are the ones that become emitted struct names.
-  (if c.scalar.isSome || isCIdent c.name then []
-   else [s!"ctype {c.name}: not a legal C identifier"])
+  (if c.scalar.isSome || isCIdent (mangle c.name) then []
+   else [s!"ctype {c.name}: does not mangle to a legal C identifier"])
   ++ (dups (c.fields.map Field.name)).map
        (fun n => s!"{c.name}: duplicate field {n}")
   ++ (match c.fields.filter (fun f => f.reftype == .Base) with
@@ -430,7 +479,7 @@ def checkCtype (d : Db) (earlier : List Ident) (c : Ctype) : List String :=
 `<ctype>_<field>`. Every template prefixes its operation names with this, so
 two fields sharing it collide in the emitted translation unit however few
 templates run. -/
-def qualName (c : Ident) (f : Ident) : Ident := c ++ "_" ++ f
+def qualName (c : Ident) (f : Ident) : Ident := mangle c ++ "_" ++ mangle f
 
 /-- Every `<ctype>_<field>` in the schema. -/
 def qualNames (d : Db) : List Ident :=
@@ -447,6 +496,11 @@ def check (d : Db) : List String :=
     -- schema can emit two functions with one name — and the accessor laws in
     -- `Templates/Upptr.lean` and friends, which assume the name resolves to
     -- the definition, would be vacuous for it with nothing to notice.
+    -- Mangling is not injective — `a.b` and `a_b` both become `a_b` — so the
+    -- collision it reintroduces is caught here rather than dodged inside the
+    -- mapping. `docs/CONFORMANCE.md` §the headline is why the mapping exists.
+    ++ (dups (full.ctypes.map (fun c => mangle c.name))).map
+         (fun n => s!"two ctypes generate the same C name: {n}")
     ++ (dups (qualNames full)).map
          (fun n => s!"two fields generate the same C name: {n}")
     ++ (match d.root with
@@ -558,6 +612,71 @@ example : check
     { ctypes :=
         [ { name := "r", fields := [{ name := "id", arg := "u64",
                                       reftype := .Pkey }] } ] } = [] := rfl
+
+/-! ### Mangling, against `amc::strptr_PrintCppIdent` -/
+
+/-- A plain name is its own C identifier. -/
+example : mangle "task_row" = "task_row" := rfl
+/-- A namespace-qualified name is the whole point. -/
+example : mangle "abt.FArch" = "abt_FArch" := rfl
+example : mangle "dmmeta.Ctype" = "dmmeta_Ctype" := rfl
+/-- The three examples in `amc`'s own comment. -/
+example : mangle "ab.cd" = "ab_cd" := rfl
+example : mangle "+-$" = "P__" := rfl
+example : mangle "int" = "int_" := rfl
+/-- ...and the two degenerate ones. `amc` masks C++ keywords; we mask C's,
+because that is what we emit. -/
+example : mangle "" = "_" := rfl
+example : mangle "3x" = "_3x" := rfl
+/-- A character no substitution rescues passes through, and the checker then
+rejects it by name rather than the mapping silently swallowing it. -/
+example : mangle "a~b" = "a~b" := rfl
+
+/-! ### The collision mangling reintroduces, and where it is caught -/
+
+/-- **`a.b` and `a_b` mangle to the same C name.** The mapping does not dodge
+this; the checker rejects it, which is the same discipline the field-level
+qualified-name clause has used since 47ecf60.
+
+checked by: `lake build` -/
+example : check
+    { ctypes := [ { name := "a.b", fields := [{ name := "x", arg := "u32",
+                                                reftype := .Val }] }
+                , { name := "a_b", fields := [{ name := "y", arg := "u32",
+                                                reftype := .Val }] } ] }
+    = ["two ctypes generate the same C name: a_b"] := rfl
+
+/-- And the field-level form, now reachable through the dot: `a.b_c` and
+`a_b.c` both qualify to `a_b_c`. -/
+example : check
+    { ctypes := [ { name := "a",   fields := [{ name := "b.c", arg := "u32",
+                                                reftype := .Val }] }
+                , { name := "a.b", fields := [{ name := "c",   arg := "u32",
+                                                reftype := .Val }] } ] }
+    = ["two fields generate the same C name: a_b_c"] := rfl
+
+/-- A qualified schema is otherwise accepted, which is the whole point of the
+change: this one was rejected outright before.
+
+checked by: `lake build` -/
+example : check
+    { ctypes :=
+        [ { name := "dev.Arch", fields := [{ name := "arch", arg := "u64",
+                                             reftype := .Pkey }] }
+        , { name := "abt.FArch"
+          , fields := [{ name := "p_arch", arg := "dev.Arch",
+                         reftype := .Upptr }] } ] } = [] := rfl
+
+/-- ...and it lowers to C identifiers. -/
+example : (genStructs
+    { ctypes :=
+        [ { name := "dev.Arch", fields := [{ name := "arch", arg := "u64",
+                                             reftype := .Pkey }] }
+        , { name := "abt.FArch"
+          , fields := [{ name := "p_arch", arg := "dev.Arch",
+                         reftype := .Upptr }] } ] }).map
+    (fun sd => (sd.name, sd.fields.map Prod.fst))
+    = [("dev_Arch", ["arch"]), ("abt_FArch", ["p_arch"])] := rfl
 
 /-- A ctype referring to other ctypes, one of them itself, is accepted.
 
@@ -681,4 +800,5 @@ example : (Reftype.all.map Reftype.name).eraseDups.length = 20 := rfl
 example : Reftype.all.all (fun r => Reftype.ofName? r.name == some r) = true := rfl
 
 end Examples
+
 end Dmmeta

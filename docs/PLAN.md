@@ -178,13 +178,10 @@ nowhere on this list to the top and demoted the remaining reftypes, because
 79.9% of real fields already have a reftype AMCC handles and all but one of
 them is blocked by something else entirely.
 
-1. **A namespace-to-C-identifier mapping.** `dmmeta` names are qualified —
-   `abt.FArch`, `dmmeta.Ctype` — and `Dmmeta.isCIdent` rejects a dot, so
-   **4518 of 5659 real fields (79.8%) and 1381 of 1420 real ctypes (97.3%)**
-   are out of reach for a reason that has nothing to do with data structures.
-   It gates eleven times as many fields as the largest missing reftype
-   (`Lary`, 390). This was not on the roadmap at all before the corpus was
-   measured; it is now the single highest-value thing to build.
+1. ~~**A namespace-to-C-identifier mapping.**~~ — **done.** `Dmmeta.mangle` is
+   `amc::strptr_PrintCppIdent` transcribed, applied at the generator's
+   boundary, with `Dmmeta.check` rejecting the collisions it reintroduces.
+   `docs/CONFORMANCE.md` is remeasured below.
 2. **`GenWellFormed` for `Llist` and `Thash`.** `Upptr` is done; the array
    table was already. These two are **blocked on a generator defect** rather
    than on proof effort: they emit two hand-built structs instead of the
