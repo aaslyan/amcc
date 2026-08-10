@@ -300,6 +300,156 @@ theorem Reaches.next_of_mem {m : Mem} {nx : Ident} :
     cases hr with
     | cons _ hc => exact Reaches.next_of_mem pre _ q post (hc.head_eq ▸ hc)
 
+/-! ## Walking a chain a bounded number of steps
+
+A generated search walks a chain with a counter, because the subset has no
+`while` and no `break` (`docs/DIVERGENCE.md` §3.2). Reasoning about such a walk
+needs the chain's `j`-th suffix to be a chain in its own right, and needs the
+row at position `j` to link to the head of the next suffix. Both are here
+rather than in `Thash`, because a bounded walk is what *any* linked search
+compiles to in this subset. -/
+
+/-- **The `j`-th suffix of a chain is a chain.** -/
+theorem Reaches.drop {m : Mem} {nx : Ident} :
+    ∀ {h : Value} {qs : List Path}, Reaches m nx h qs →
+      ∀ j, Reaches m nx (headOf (qs.drop j)) (qs.drop j) := by
+  intro h qs hr
+  induction hr with
+  | nil => intro j; simpa [headOf] using Reaches.nil
+  | @cons q v qs0 hq hc ih =>
+    intro j
+    cases j with
+    | zero   => simpa [headOf] using Reaches.cons hq hc
+    | succ j => simpa using ih j
+
+/-- **The row at position `j` links to the head of the suffix after it.** This
+is what turns one iteration of a counted walk into one step down the chain. -/
+theorem Reaches.next_at {m : Mem} {nx : Ident} {h : Value} {qs : List Path}
+    (hr : Reaches m nx h qs) {j : Nat} {q : Path} (hj : qs[j]? = some q) :
+    readMem m (fldPath q nx) = some (headOf (qs.drop (j + 1))) := by
+  have hlt : j < qs.length := by
+    rcases Nat.lt_or_ge j qs.length with h' | h'
+    · exact h'
+    · rw [List.getElem?_eq_none h'] at hj; exact absurd hj (by simp)
+  have hd : qs.drop j = q :: qs.drop (j + 1) := by
+    rw [← List.getElem_cons_drop hlt]
+    congr 1
+    rw [List.getElem?_eq_getElem hlt] at hj
+    exact Option.some.inj hj
+  have hs := hr.drop j
+  rw [hd] at hs
+  cases hs with
+  | cons hq hc => rw [hq, hc.head_eq]
+
+/-! ## Searching a chain
+
+`Find` walks a bucket and reports the first row passing a test. That is a
+property of the *list*, so it is defined here and the template's proof is the
+statement that its generated loop computes it.
+
+The test is a `Path → Bool` rather than a proposition because `Value` has no
+`DecidableEq` — the `deriving` handler does not apply to its nested `List`
+recursion — and because the generated guard is itself a Boolean expression, so
+a Boolean test is what the proof has to meet anyway. `keyAt` below is the one
+the keyed templates use, with `keyAt_iff` turning it back into a statement
+about what the store holds. -/
+
+/-- A pointer to a row, or `NULL` — what a `Find` returns. -/
+def ptrOf : Option Path → Value
+  | none   => .null
+  | some q => .ptr q
+
+/-- The first row of `qs` passing `P`. -/
+def firstSat (P : Path → Bool) : List Path → Option Path
+  | []      => none
+  | q :: qs => if P q then some q else firstSat P qs
+
+/-- Searching a concatenation searches the first half and only then the
+second — which is how a counted walk extends by one row at a time. -/
+theorem firstSat_append (P : Path → Bool) :
+    ∀ (l1 l2 : List Path),
+      firstSat P (l1 ++ l2)
+        = match firstSat P l1 with
+          | some q => some q
+          | none   => firstSat P l2
+  | [], _ => rfl
+  | a :: l1, l2 => by
+    by_cases h : P a
+    · simp [firstSat, h]
+    · simp only [List.cons_append, firstSat, if_neg h]
+      exact firstSat_append P l1 l2
+
+/-- What a hit means: the row is on the chain and it passes. -/
+theorem firstSat_spec {P : Path → Bool} :
+    ∀ {qs : List Path} {q : Path}, firstSat P qs = some q → q ∈ qs ∧ P q = true
+  | [], _, h => by simp [firstSat] at h
+  | a :: qs, q, h => by
+    by_cases ha : P a
+    · rw [firstSat, if_pos ha] at h
+      cases h; exact ⟨by simp, ha⟩
+    · rw [firstSat, if_neg ha] at h
+      obtain ⟨h1, h2⟩ := firstSat_spec h
+      exact ⟨List.mem_cons_of_mem _ h1, h2⟩
+
+/-- What a miss means: nothing on the chain passes. Both directions matter —
+this one is what makes a `NULL` answer informative rather than merely
+possible. -/
+theorem firstSat_none {P : Path → Bool} :
+    ∀ {qs : List Path}, firstSat P qs = none → ∀ q ∈ qs, P q = false
+  | [], _, _, hq => absurd hq (by simp)
+  | a :: qs, h, q, hq => by
+    by_cases ha : P a
+    · rw [firstSat, if_pos ha] at h; exact absurd h (by simp)
+    · rw [firstSat, if_neg ha] at h
+      rcases List.mem_cons.mp hq with rfl | hq'
+      · simpa using ha
+      · exact firstSat_none h q hq'
+
+/-- The search extends one row at a time: once the walk has a hit it keeps it,
+and until then the answer is whatever the next row gives. With
+`List.take_add_one` this is the whole loop invariant. -/
+theorem firstSat_take_add_one (P : Path → Bool) (qs : List Path) (j : Nat) :
+    firstSat P (qs.take (j + 1))
+      = match firstSat P (qs.take j) with
+        | some q => some q
+        | none   => firstSat P (qs[j]?).toList := by
+  rw [List.take_add_one, firstSat_append]
+
+/-- Past the end of the chain the answer stops changing, which is what lets a
+walk bounded by the *capacity* stand for a walk to the end. -/
+theorem firstSat_take_of_le {P : Path → Bool} {qs : List Path} {j : Nat}
+    (h : qs.length ≤ j) : firstSat P (qs.take j) = firstSat P qs := by
+  rw [List.take_of_length_le h]
+
+/-- **The keyed test.** A row whose `kf` field holds the `u32` `k`. Written as
+a `match` on the read rather than as an `Option Value` equality, so that it is
+decidable without a `DecidableEq Value` the derive handler cannot produce. -/
+def keyAt (m : Mem) (kf : Ident) (k : UInt32) (q : Path) : Bool :=
+  match readMem m (fldPath q kf) with
+  | some (.u32 k') => k' == k
+  | _              => false
+
+/-- ...and what it means, in the store's terms. -/
+theorem keyAt_iff {m : Mem} {kf : Ident} {k : UInt32} {q : Path} :
+    keyAt m kf k q = true ↔ readMem m (fldPath q kf) = some (.u32 k) := by
+  simp only [keyAt]
+  cases h : readMem m (fldPath q kf) with
+  | none => simp
+  | some v => cases v <;> simp
+
+/-- A chain search that does not disturb the store searches the same chain
+before and after — the frame law the loop needs, since the walk writes only
+locals. -/
+theorem firstSat_frame {m m' : Mem} {kf : Ident} {k : UInt32} {qs : List Path}
+    (hag : ∀ q ∈ qs, readMem m' (fldPath q kf) = readMem m (fldPath q kf)) :
+    firstSat (keyAt m' kf k) qs = firstSat (keyAt m kf k) qs := by
+  induction qs with
+  | nil => rfl
+  | cons a qs ih =>
+    have ha : keyAt m' kf k a = keyAt m kf k a := by
+      simp only [keyAt, hag a (by simp)]
+    simp only [firstSat, ha, ih (fun q hq => hag q (List.mem_cons_of_mem _ hq))]
+
 /-! ## The clauses a chain does not imply -/
 
 /-- `pv` is the inverse of the link along the chain: each row's `pv` points at
