@@ -144,6 +144,21 @@ def stableAddresses : Reftype → Bool
   | Lary | Inlary | Tpool | Lpool | Blkpool => true
   | _ => false
 
+/-- **Does this reftype require its `arg` to be a record?**
+
+A pointer to a machine scalar and an index over machine scalars are both
+meaningless — there is no record to point at or to thread — and every template
+that emits one assumes a struct. Without this clause `Dmmeta.check` accepted
+an `Upptr` at `u64` and the generated program failed `CSubset.Wf.check` with
+four type errors: the emitted `row->f = NULL` has type `parent *` where the
+struct field has type `uint64_t *`.
+
+`Pkey` is deliberately **absent**: a key *is* a machine scalar in the common
+case, and `fieldTy` lowers it to the scalar rather than to a pointer. -/
+def needsRecordArg : Reftype → Bool
+  | Upptr | Ptr | Thash | Llist | Bheap | Atree | Ptrary => true
+  | _ => false
+
 /-- The reftype's name, for error messages. A plain function rather than
 `repr`: `Repr` produces a `Std.Format`, and rendering one does not reduce in
 the kernel, which would cost every checker test in this file its `rfl`. -/
@@ -365,6 +380,12 @@ def checkField (d : Db) (earlier : List Ident) (owner : Ident) (f : Field) :
         ++ (if f.reftype == .Val && c.scalar.isNone && c.fields.isEmpty then
               [s!"{owner}.{f.name}: {f.arg} has no fields"]
             else [])
+        -- A pointer or an index needs something to point at. See
+        -- `Reftype.needsRecordArg`: without this, an `Upptr` at `u64` was
+        -- accepted here and rejected by the C-subset checker.
+        ++ (if f.reftype.needsRecordArg && c.scalar.isSome then
+              [s!"{owner}.{f.name}: {f.reftype.name} needs a record, and {f.arg} is a machine scalar"]
+            else [])
         ++ (if f.reftype == .Inlary then
               match d.inlaryMax? owner f.name with
               | none   => [s!"{owner}.{f.name}: Inlary needs a declared bound"]
@@ -484,9 +505,9 @@ checked by: `lake build` -/
 example : check
     { ctypes :=
         [ { name := "a",   fields := [{ name := "b_c", arg := "u32",
-                                        reftype := .Upptr }] }
+                                        reftype := .Val }] }
         , { name := "a_b", fields := [{ name := "c",   arg := "u32",
-                                        reftype := .Upptr }] } ] }
+                                        reftype := .Val }] } ] }
     = ["two fields generate the same C name: a_b_c"] := rfl
 
 /-- The same two ctypes with names that do not collide are accepted, so the
@@ -496,10 +517,38 @@ checked by: `lake build` -/
 example : check
     { ctypes :=
         [ { name := "a",   fields := [{ name := "bc",  arg := "u32",
-                                        reftype := .Upptr }] }
+                                        reftype := .Val }] }
         , { name := "a_b", fields := [{ name := "c",   arg := "u32",
-                                        reftype := .Upptr }] } ] }
+                                        reftype := .Val }] } ] }
     = [] := rfl
+
+/-- **An up-pointer needs something to point at.** This clause was missing,
+and its absence was the second hole the every-schema proofs found: the schema
+below passed `Dmmeta.check` and the generated accessors failed
+`CSubset.Wf.check` with four type errors, because `row->f = NULL` has type
+`u64 *` in the struct and `parent *` in the emitted assignment.
+
+checked by: `lake build` -/
+example : check
+    { ctypes :=
+        [ { name := "child_row"
+          , fields := [{ name := "p_x", arg := "u64", reftype := .Upptr }] } ] }
+    = ["child_row.p_x: Upptr needs a record, and u64 is a machine scalar"] := rfl
+
+/-- The same for an index: threading machine scalars on a list is not a
+thing the templates can emit. -/
+example : check
+    { ctypes :=
+        [ { name := "D"
+          , fields := [{ name := "zdl", arg := "u32", reftype := .Llist }] } ] }
+    = ["D.zdl: Llist needs a record, and u32 is a machine scalar"] := rfl
+
+/-- `Pkey` is deliberately exempt: a key *is* a scalar in the common case, and
+`fieldTy` lowers it to the scalar rather than to a pointer. -/
+example : check
+    { ctypes :=
+        [ { name := "r", fields := [{ name := "id", arg := "u64",
+                                      reftype := .Pkey }] } ] } = [] := rfl
 
 /-- A ctype referring to other ctypes, one of them itself, is accepted.
 

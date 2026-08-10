@@ -8,6 +8,12 @@ gap stands" below for the branch structure and the two hazards.
 
 ## Done
 
+- **M — `Reftype.needsRecordArg`.** Second hole of the same shape as the
+  `Inlary` one: `Dmmeta.check` accepted an `Upptr` at `u64` and the generated
+  accessors failed `Wf.check` with four type errors. Found by starting
+  `Upptr.genWellFormed`. Fixed in the checker, with three examples including
+  the `Pkey` exemption.
+
 - **L — `Layout.layoutWellFormed`.** Proved: every schema the lowering accepts
   produces structs and globals `Wf.check` accepts. The hard clause is the one
   the single-table `genWellFormed` never faced — struct nesting must be
@@ -207,10 +213,27 @@ so each is left with only its own functions:
 discharged from `Dmmeta.check` once, via `Upptr.lookups_of_wf` and
 `CSubset.lookupFun_of_mem`, rather than per-schema.
 
-**The finding.** `Dmmeta.check` accepted `Inlary max:0` and the generated
-program was rejected by `Wf.check`. Nothing was *relying* on a sample-schema
-property, but the checker was weaker than the theorem needed, and the theorem
-is what exposed it. Fixed in the checker.
+**Two findings, both the same shape.** `Dmmeta.check` accepted schemas whose
+generated programs `CSubset.Wf.check` **rejects** — the front end running ahead
+of the back end, which `docs/GOALS.md`'s standing rule forbids. Neither was a
+law relying on a sample-schema property; both were the *checker* being weaker
+than the theorem needs, and the attempt to prove the theorem is what exposed
+them. Both fixed in the checker, each with negative `rfl` examples pinning the
+message.
+
+1. **`Inlary max:0`.** Accepted by `Dmmeta.check` *and* `Layout.layoutCheck`;
+   rejected by `Wf.check` with `"bad array size"`. `checkField` now requires
+   the bound in `(0, u32Bound)`.
+2. **`Upptr` at a scalar `arg`.** Accepted; the generated accessors failed with
+   four type errors, because `row->f = NULL` is `parent *` in the emitted
+   assignment and `uint64_t *` in the struct. `Reftype.needsRecordArg` now
+   requires a record for `Upptr`, `Ptr`, `Thash`, `Llist`, `Bheap`, `Atree`
+   and `Ptrary`. `Pkey` is exempt on purpose — a key *is* a scalar in the
+   common case, and `fieldTy` lowers it to the scalar rather than a pointer.
+
+The pattern is worth naming: **every template's `GenWellFormed` is a
+differential test between the two checkers, run at proof time over all
+schemas.** Two attempts, two holes. Expect more from `Thash` and `Llist`.
 
 ## How `Remove` went, in the end
 
