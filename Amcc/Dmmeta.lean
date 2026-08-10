@@ -1,4 +1,4 @@
-import Amcc.CSubset.Syntax
+import Amcc.CSubset.Wf
 
 /-!
 # AMCC — the ctype model
@@ -341,8 +341,19 @@ def checkField (d : Db) (earlier : List Ident) (owner : Ident) (f : Field) :
         ++ (if f.reftype == .Val && c.scalar.isNone && c.fields.isEmpty then
               [s!"{owner}.{f.name}: {f.arg} has no fields"]
             else [])
-        ++ (if f.reftype == .Inlary && (d.inlaryMax? owner f.name).isNone then
-              [s!"{owner}.{f.name}: Inlary needs a declared bound"]
+        ++ (if f.reftype == .Inlary then
+              match d.inlaryMax? owner f.name with
+              | none   => [s!"{owner}.{f.name}: Inlary needs a declared bound"]
+              -- The bound becomes a C array size, and the subset's obligation 3
+              -- rules out a zero-length array and one past the `u32` range. The
+              -- clause was originally only `isNone`, which let a schema with
+              -- `max:0` pass `Dmmeta.check` and then be *rejected* by
+              -- `CSubset.Wf.check` — the front end running ahead of the back
+              -- end, and the reason `Layout.layoutWellFormed` could not be
+              -- proved as stated. See `PROGRESS.md` under Decisions.
+              | some n =>
+                if 0 < n && n < CSubset.Wf.u32Bound then []
+                else [s!"{owner}.{f.name}: Inlary bound {n} is not a legal array size"]
             else []))
 
 def checkCtype (d : Db) (earlier : List Ident) (c : Ctype) : List String :=
@@ -532,6 +543,26 @@ example : check boundedDb = [] := rfl
 emit. -/
 example : check { boundedDb with inlary := [] }
     = ["OrderDb.row: Inlary needs a declared bound"] := rfl
+
+/-- And a bound that is not a legal C array size is rejected too.
+
+This clause was **missing**, and its absence was a real hole rather than a
+cosmetic one: `max:0` passed `Dmmeta.check` and `Layout.layoutCheck`, and the
+generated program was then *rejected* by `CSubset.Wf.check` with
+`"D.row: bad array size"`. The front end accepted what the back end could not
+emit, which is the failure `docs/GOALS.md`'s standing rule is about, and it is
+why `Layout.LayoutWellFormed` could not be proved as stated.
+
+checked by: `lake build` -/
+example : check { boundedDb with
+      inlary := [{ ctype := "OrderDb", field := "row", max := 0 }] }
+    = ["OrderDb.row: Inlary bound 0 is not a legal array size"] := rfl
+
+/-- The other end of the range, where the bound would not survive the `u32`
+literal the generator emits. -/
+example : check { boundedDb with
+      inlary := [{ ctype := "OrderDb", field := "row", max := 4294967296 }] }
+    = ["OrderDb.row: Inlary bound 4294967296 is not a legal array size"] := rfl
 
 /-- A root that names nothing is rejected. -/
 example : check { boundedDb with root := some "Nope" }

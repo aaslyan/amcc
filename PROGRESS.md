@@ -2,12 +2,25 @@
 
 ## Now
 
-**The every-schema gap.** `Upptr`, `Llist` and `Thash` have `Wf.check … = []`
-only as a computation on their sample schema; the array table has
-`genWellFormed` for every accepted schema. Prove the equivalent for each, then
-restate the laws so their well-formedness hypotheses discharge once.
+**Item C — conformance measurement** against `~/openacr-mine`, then back to
+finish item B. See "Where the every-schema gap stands" below for exactly what
+is proved and what is left.
 
 ## Done
+
+- **J — the `Inlary` bound hole, and the shared half of the every-schema gap.**
+  `Dmmeta.check` accepted `Inlary max:0`; `Layout.layoutCheck` accepted it too;
+  and `CSubset.Wf.check` then **rejected** the generated program with
+  `"D.row: bad array size"`. The front end was accepting what the back end
+  could not emit — the failure `docs/GOALS.md`'s standing rule is about — and
+  it is why `Layout.LayoutWellFormed` could not be proved as stated. Fixed in
+  the *checker*, with two negative `rfl` examples pinning the message.
+  `Amcc/Templates/LayoutWf.lean` now holds the shared machinery:
+  `pairwise_filterMap_map`, `structs_distinct`, `fields_distinct`,
+  `facts_of_check`, and the order-preserving-filter transport
+  (`filterMap_take_prefix`, `mem_filterMap_take`). `dups_eq_nil_iff` and
+  `distinct_eq_nil` moved from `ArrayTableWf` into `CSubset.Wf`, where every
+  generator can reach them.
 
 - **I — `Thash.findCorrect`.** Proved, over `CSubset.Chain`. The statement was
   **strengthened** first: the original `FindCorrect` said "null, or a pointer

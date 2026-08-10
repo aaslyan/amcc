@@ -376,6 +376,99 @@ def check (p : Program) : List String :=
 
 end Wf
 
+/-! ## Distinctness, characterised
+
+`dups` is the checker's answer to obligation 1 and every generator has to prove
+its own name lists clean, so the characterisation belongs here rather than in
+whichever template needed it first — which was the array table, from where it
+moved when `Layout` and the three ctype-model templates needed the same two
+lemmas. -/
+
+private theorem eraseDupsBy_loop_ne_nil {α} (r : α → α → Bool) :
+    ∀ (l acc : List α), acc ≠ [] → List.eraseDupsBy.loop r l acc ≠ []
+  | [], acc, h => by simpa [List.eraseDupsBy.loop] using h
+  | b :: bs, acc, h => by
+    cases hb : acc.any (r b) with
+    | true => simpa [List.eraseDupsBy.loop, hb] using
+        eraseDupsBy_loop_ne_nil r bs acc h
+    | false => simpa [List.eraseDupsBy.loop, hb] using
+        eraseDupsBy_loop_ne_nil r bs (b :: acc) (by simp)
+
+private theorem eraseDups_ne_nil {α} [BEq α] {a : α} {as : List α} :
+    (a :: as).eraseDups ≠ [] := by
+  cases ha : ([] : List α).any (BEq.beq a) with
+  | true => simp at ha
+  | false =>
+    show List.eraseDupsBy _ _ ≠ []
+    simp only [List.eraseDupsBy, List.eraseDupsBy.loop, ha]
+    exact eraseDupsBy_loop_ne_nil _ as [a] (by simp)
+
+private theorem countP_le_one_of_pairwise {xs : List String}
+    (h : xs.Pairwise (· ≠ ·)) : ∀ x ∈ xs, xs.countP (fun y => y == x) ≤ 1 := by
+  induction xs with
+  | nil => intro x hx; cases hx
+  | cons a l ih =>
+    rw [List.pairwise_cons] at h
+    intro x hx
+    rw [List.countP_cons]
+    rw [List.mem_cons] at hx
+    rcases hx with rfl | hx
+    · have hz : l.countP (fun y => y == x) = 0 := by
+        rw [List.countP_eq_zero]
+        intro b hb
+        simp only [Bool.not_eq_true, beq_eq_false_iff_ne, ne_eq]
+        exact fun e => (h.1 b hb) e.symm
+      simp [hz]
+    · have hne : (a == x) = false := beq_eq_false_iff_ne.mpr (h.1 x hx)
+      simpa [hne] using ih h.2 x hx
+
+private theorem pairwise_of_countP_le_one {xs : List String}
+    (h : ∀ x ∈ xs, xs.countP (fun y => y == x) ≤ 1) : xs.Pairwise (· ≠ ·) := by
+  induction xs with
+  | nil => exact List.Pairwise.nil
+  | cons a l ih =>
+    rw [List.pairwise_cons]
+    refine ⟨fun b hb hab => ?_, ih fun x hx => ?_⟩
+    · have hcount : l.countP (fun y => y == a) + 1 ≤ 1 := by
+        simpa [List.countP_cons] using h a (by simp)
+      have hone : 0 < l.countP (fun y => y == a) :=
+        List.countP_pos_iff.mpr ⟨b, hb, by simp [hab.symm]⟩
+      omega
+    · have htail : l.countP (fun y => y == x)
+          ≤ (a :: l).countP (fun y => y == x) := by
+        rw [List.countP_cons]; omega
+      exact Nat.le_trans htail (h x (List.mem_cons_of_mem a hx))
+
+/-- The `dups`-based distinctness check, characterised. Stated for `Wf.dups`;
+`Schema.dups` has the same definition, so `schemaDups_eq_nil_iff` below reuses
+this proof verbatim. -/
+theorem dups_eq_nil_iff {xs : List Ident} :
+    Wf.dups xs = [] ↔ xs.Pairwise (· ≠ ·) := by
+  constructor
+  · intro h
+    rw [Wf.dups] at h
+    have hfl : xs.filter (fun x => 1 < xs.countP (fun y => y == x)) = [] := by
+      cases hfl : xs.filter (fun x => 1 < xs.countP (fun y => y == x)) with
+      | nil => rfl
+      | cons a as => rw [hfl] at h; exact absurd h eraseDups_ne_nil
+    apply pairwise_of_countP_le_one
+    intro x hx
+    simpa using List.filter_eq_nil_iff.mp hfl x hx
+  · intro h
+    rw [Wf.dups]
+    have hfl : xs.filter (fun x => 1 < xs.countP (fun y => y == x)) = [] :=
+      List.filter_eq_nil_iff.mpr fun a ha => by
+        simpa using countP_le_one_of_pairwise h a ha
+    rw [hfl]
+    rfl
+
+/-- `Wf.distinct` succeeds exactly on pairwise-distinct names. `what` is
+implicit so the lemma can serve as a `simp` rewrite for any message label. -/
+theorem distinct_eq_nil {what : String} {xs : List Ident}
+    (h : xs.Pairwise (· ≠ ·)) : Wf.distinct what xs = [] := by
+  rw [Wf.distinct, dups_eq_nil_iff.mpr h]
+  rfl
+
 /-- The Boolean view, for stating theorems. -/
 def Program.wf (p : Program) : Bool := (Wf.check p).isEmpty
 

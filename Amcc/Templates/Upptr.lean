@@ -203,7 +203,7 @@ theorem lookups_of_wf {d : Dmmeta.Db}
     (h : CSubset.Wf.check (genUpptr d) = []) :
     ((genUpptr d).funs.map FunDef.name).Pairwise (· ≠ ·) := by
   simp only [CSubset.Wf.check, List.append_eq_nil_iff] at h
-  exact Templates.ArrayTable.dups_eq_nil_iff.mp
+  exact CSubset.dups_eq_nil_iff.mp
     (List.map_eq_nil_iff.mp h.1.2)
 
 /-! ## The laws
