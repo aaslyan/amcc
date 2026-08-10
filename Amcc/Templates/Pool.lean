@@ -1,4 +1,5 @@
 import Amcc.Dmmeta
+import Amcc.Templates.Layout
 import Amcc.CSubset.Wf
 
 /-!
@@ -195,18 +196,14 @@ The element struct gains the two generated fields; the database struct gains
 the free head and the count. -/
 
 /-- The element struct, with the pool's own fields appended. -/
-def elemStruct (d : Dmmeta.Db) (c : Dmmeta.Ctype) : StructDef where
-  name   := c.name
-  fields := (Dmmeta.structOf d c).fields
-            ++ [(freeNextName, .ptr (.strct c.name))]
+def elemFields (elem : Ident) : List (Ident × Ty) :=
+  [(freeNextName, .ptr (.strct elem))]
 
-/-- The database struct: the inline array, then the pool's bookkeeping. -/
-def dbStruct (nm : Names) (dbC : Ident) (fld : Ident) (elem : Ident) (n : Nat) :
-    StructDef where
-  name   := dbC
-  fields := [ (fld, .arr (.strct elem) n)
-            , (nm.freeHead, .ptr (.strct elem))
-            , (nm.count, .scalar .u32) ]
+/-- ...and what the database's gains: the free-list head and the count. The
+inline array itself is **not** here — `Dmmeta.fieldTy` already lowers an
+`Inlary` to `<arg> f[max]`, so adding it again would emit it twice. -/
+def dbFields (nm : Names) (elem : Ident) : List (Ident × Ty) :=
+  [(nm.freeHead, .ptr (.strct elem)), (nm.count, .scalar .u32)]
 
 /-- **The generator.** Emits the pool for the first `Inlary` field of the
 database ctype. `none` when the schema has no such field — which
@@ -219,13 +216,18 @@ def genPool (d : Dmmeta.Db) : Option Program := do
   let fld ← dbC.fields.find? (fun f => f.reftype == .Inlary)
   let elemC ← full.find? fld.arg
   let n ← full.inlaryMax? dbC.name fld.name
-  let nm := names dbC.name fld.name
+  let dbN := Dmmeta.mangle dbC.name
+  let elemN := Dmmeta.mangle elemC.name
+  let fldN := Dmmeta.mangle fld.name
+  let nm := names dbN fldN
   some
-    { structs := [elemStruct full elemC, dbStruct nm dbC.name fld.name elemC.name n]
-    , globals := [{ name := nm.dbGlobal, ty := .strct dbC.name }]
-    , funs    := [ initDef nm fld.name n elemC.name
-                 , allocDef nm elemC.name
-                 , freeDef nm elemC.name
+    { structs := Layout.addFields dbN (dbFields nm elemN)
+                   (Layout.addFields elemN (elemFields elemN)
+                     (Dmmeta.genStructs d))
+    , globals := Dmmeta.genGlobals d
+    , funs    := [ initDef nm fldN n elemN
+                 , allocDef nm elemN
+                 , freeDef nm elemN
                  , sizeDef nm ] }
 
 /-! ## Checked

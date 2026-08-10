@@ -2,6 +2,7 @@ import Amcc.Dmmeta
 import Amcc.CSubset.Wf
 import Amcc.CSubset.Calls
 import Amcc.CSubset.Chain
+import Amcc.Templates.Layout
 
 /-!
 # AMCC — the `Llist` template
@@ -308,17 +309,14 @@ struct gains the head and the count. Neither is storage the schema declared —
 which is the point of an *intrusive* list. -/
 
 /-- The element struct, with the list's own fields appended. -/
-def elemStruct (d : Dmmeta.Db) (nm : Names) (c : Dmmeta.Ctype) : StructDef where
-  name   := c.name
-  fields := (Dmmeta.structOf d c).fields
-            ++ [ (nm.next, .ptr (.strct c.name))
-               , (nm.prev, .ptr (.strct c.name))
-               , (nm.inlist, .scalar .bool) ]
+def elemFields (nm : Names) (elem : Ident) : List (Ident × Ty) :=
+  [ (nm.next, .ptr (.strct elem))
+  , (nm.prev, .ptr (.strct elem))
+  , (nm.inlist, .scalar .bool) ]
 
-/-- The parent struct: the head and the count. -/
-def dbStruct (nm : Names) (dbC : Ident) (elem : Ident) : StructDef where
-  name   := dbC
-  fields := [(nm.head, .ptr (.strct elem)), (nm.count, .scalar .u32)]
+/-- ...and what the parent's gains: the head and the count. -/
+def dbFields (nm : Names) (elem : Ident) : List (Ident × Ty) :=
+  [(nm.head, .ptr (.strct elem)), (nm.count, .scalar .u32)]
 
 /-- **The generator.** Emits the list for the first `Llist` field of the parent
 ctype. `none` when the schema declares none — which `Dmmeta.check` reports on
@@ -329,11 +327,18 @@ def genLlist (d : Dmmeta.Db) : Option Program := do
   let dbC ← full.find? dbName
   let fld ← dbC.fields.find? (fun f => f.reftype == .Llist)
   let elemC ← full.find? fld.arg
-  let nm := names dbC.name fld.name
+  let dbN := Dmmeta.mangle dbC.name
+  let elemN := Dmmeta.mangle elemC.name
+  let nm := names dbN (Dmmeta.mangle fld.name)
   some
-    { structs := [elemStruct full nm elemC, dbStruct nm dbC.name elemC.name]
-    , globals := [{ name := nm.dbGlobal, ty := .strct dbC.name }]
-    , funs    := defsFor nm elemC.name }
+    -- the *lowered* table, extended — not two structs invented here. A ctype
+    -- indexing itself makes both `addFields` calls land on one struct, which
+    -- is the right answer and used to be a duplicate-name error.
+    { structs := Layout.addFields dbN (dbFields nm elemN)
+                   (Layout.addFields elemN (elemFields nm elemN)
+                     (Dmmeta.genStructs d))
+    , globals := Dmmeta.genGlobals d
+    , funs    := defsFor nm elemN }
 
 /-! ## Where the list's state lives
 
@@ -2030,6 +2035,27 @@ def listDb : Dmmeta.Db where
       , fields := [{ name := "zdl_todo", arg := "task_row", reftype := .Llist }] } ]
   root := some "TaskDb"
 
+/-- **Regression: an element ctype with a record-typed field.** Accepted by
+`Dmmeta.check`, and before the layout rework the generated program referenced
+a `struct pt` that was in neither of the two structs the template emitted. -/
+def nestedDb : Dmmeta.Db where
+  ctypes :=
+    [ { name := "pt", fields := [{ name := "x", arg := "u64", reftype := .Val }] }
+    , { name   := "task_row"
+      , fields := [ { name := "id",  arg := "u64", reftype := .Pkey }
+                  , { name := "loc", arg := "pt",  reftype := .Val } ] }
+    , { name   := "TaskDb"
+      , fields := [{ name := "zdl_todo", arg := "task_row", reftype := .Llist }] } ]
+  root := some "TaskDb"
+
+/-- **Regression: a ctype threading itself on a list.** -/
+def selfDb : Dmmeta.Db where
+  ctypes :=
+    [ { name   := "TaskDb"
+      , fields := [ { name := "id",       arg := "u64",    reftype := .Pkey }
+                  , { name := "zdl_todo", arg := "TaskDb", reftype := .Llist } ] } ]
+  root := some "TaskDb"
+
 end Examples
 
 namespace Checks
@@ -2043,6 +2069,21 @@ neither the array table nor the pool produced.
 
 checked by: `lake build` -/
 example : (genLlist Examples.listDb).map CSubset.Wf.check = some [] := rfl
+
+/-- **Both regression schemas are accepted and both generate accepted
+programs.** Before the layout rework the second half of each was false.
+
+checked by: `lake build` -/
+example : Dmmeta.check Examples.nestedDb = [] := rfl
+example : (genLlist Examples.nestedDb).map CSubset.Wf.check = some [] := rfl
+example : Dmmeta.check Examples.selfDb = [] := rfl
+example : (genLlist Examples.selfDb).map CSubset.Wf.check = some [] := rfl
+
+/-- The nested case emits **three** structs, `pt` among them.
+
+checked by: `lake build` -/
+example : (genLlist Examples.nestedDb).map (fun p => p.structs.map StructDef.name)
+    = some ["pt", "task_row", "TaskDb"] := rfl
 
 /-- The nine operations, in `amc`'s naming.
 

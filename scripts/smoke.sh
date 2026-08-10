@@ -73,6 +73,19 @@ check llist scripts/llist_driver.c scripts/llist_expected.txt \
 check thash scripts/thash_driver.c scripts/thash_expected.txt \
   "find, duplicate refusal and chain unlink behave as stated; header stands alone"
 
+# --- the schemas that used to break the generator ---------------------------
+# An element ctype with a record-typed field, and a ctype indexing itself. Both
+# are accepted by Dmmeta.check and both used to emit a program CSubset.Wf.check
+# rejects; there is no driver for them, so what is checked is that the emitted
+# C compiles and that the header stands alone.
+for name in llist-nested thash-nested thash-self; do
+  cc "${CFLAGS[@]}" -I"$tmp/gen" -c -o "$tmp/${name}.o" "$tmp/gen/${name}_gen.c"
+  printf '#include "%s_gen.h"\n' "$name" > "$tmp/${name}_hdr_only.c"
+  cc "${CFLAGS[@]}" -I"$tmp/gen" -c -o "$tmp/${name}_hdr_only.o" \
+    "$tmp/${name}_hdr_only.c"
+done
+echo "smoke: regr  OK — the two schemas that broke the layout compile, headers alone too"
+
 # --- the ssim front end ------------------------------------------------------
 # Two diffs per schema, and both are needed.
 #

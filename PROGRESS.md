@@ -9,6 +9,17 @@ every-schema gap stands".
 
 ## Done
 
+- **P — the layout defect in `Thash`, `Llist` and `Pool`.** All three built two
+  structs by hand and emitted only those; they now extend
+  `Dmmeta.genStructs d` with `Layout.addFields`, exactly as `genUpptr` already
+  emitted the whole lowered table. Both failing schemas from the handoff are
+  checked-in regression cases — `nestedDb` (element ctype with a record-typed
+  field) and `selfDb` (a ctype indexing itself) — run through `Wf.check` in
+  Lean and *compiled* by `scripts/smoke.sh`, headers alone included. `Pool` had
+  the same defect and got the same fix. The five original goldens are
+  byte-identical, which is the expected result: the sample schemas were always
+  the two-struct case.
+
 - **O — mangling, and the remeasurement.** `Dmmeta.mangle` is
   `amc::strptr_PrintCppIdent` transcribed, applied at the generator's boundary
   so the `Db` keeps the schema's qualified names and the ssim round trip is
@@ -202,7 +213,7 @@ and `UpptrWf.lean` is the worked example of what follows: `names_distinct` from
 `NameWf`, then `checkFun_defsFor`, four `simp only`+`simp` pairs against a
 **symbolic** `Wf.Ctx` whose `field?` is supplied by `NameWf.ctx_field?`.
 
-### Why `Thash` and `Llist` cannot follow that shape yet
+### The generator defect — **fixed**, see finding 3 below
 
 **They do not emit the layout.** `genUpptr` emits `Dmmeta.genStructs d` —
 every ctype's struct — and adds functions. `genThash` and `genLlist` instead
@@ -273,11 +284,16 @@ statement. Attempting the theorem is what exposed all four.
 2. **`Upptr` at a scalar `arg`** — accepted; four type errors downstream,
    since `row->f = NULL` is `parent *` in the assignment and `uint64_t *` in
    the struct. Fixed: `Reftype.needsRecordArg`.
-3. **`Thash`/`Llist` over an element with a record-typed field** — accepted;
-   references a struct that is not emitted. **Open**; the fix is the generator
-   rework above.
+3. **`Thash`/`Llist`/`Pool` over an element with a record-typed field** —
+   accepted; referenced a struct that was not emitted. **Fixed**: all three
+   now extend `Dmmeta.genStructs` via `Layout.addFields` instead of building
+   two structs by hand. `Templates.Thash.Examples.nestedDb` and
+   `Templates.Llist.Examples.nestedDb` are the regression schemas, checked in
+   Lean *and* compiled by `scripts/smoke.sh`.
 4. **`Thash` indexing its own ctype** — accepted; duplicate struct name.
-   **Open**, same rework.
+   **Fixed** by the same change: two `addFields` calls at one name compose,
+   which is what a self-index should produce.
+   `Templates.Thash.Examples.selfDb` is the regression schema.
 
 **Every template's `GenWellFormed` is a differential test between the two
 checkers, run at proof time over all schemas.** Three attempts, four holes.

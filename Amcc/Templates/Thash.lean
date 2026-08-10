@@ -2,6 +2,7 @@ import Amcc.Dmmeta
 import Amcc.CSubset.Wf
 import Amcc.CSubset.Calls
 import Amcc.CSubset.Chain
+import Amcc.Templates.Layout
 
 /-!
 # AMCC — the `Thash` template
@@ -278,16 +279,12 @@ def defsFor (nm : Names) (elem key : Ident) (mask cap nb : Nat) : List FunDef :=
 /-! ## Assembling a program -/
 
 /-- The element struct, with the chain link and the membership flag. -/
-def elemStruct (d : Dmmeta.Db) (nm : Names) (c : Dmmeta.Ctype) : StructDef where
-  name   := c.name
-  fields := (Dmmeta.structOf d c).fields
-            ++ [(nm.next, .ptr (.strct c.name)), (nm.inhash, .scalar .bool)]
+def elemFields (nm : Names) (elem : Ident) : List (Ident × Ty) :=
+  [(nm.next, .ptr (.strct elem)), (nm.inhash, .scalar .bool)]
 
-/-- The parent struct: the bucket array and the count. -/
-def dbStruct (nm : Names) (dbC elem : Ident) (nb : Nat) : StructDef where
-  name   := dbC
-  fields := [ (nm.buckets, .arr (.ptr (.strct elem)) nb)
-            , (nm.count, .scalar .u32) ]
+/-- ...and what the parent's gains: the bucket array and the count. -/
+def dbFields (nm : Names) (elem : Ident) (nb : Nat) : List (Ident × Ty) :=
+  [ (nm.buckets, .arr (.ptr (.strct elem)) nb), (nm.count, .scalar .u32) ]
 
 /-- `some e` when `n = 2 ^ e` for some `e ≤ fuel`, `none` otherwise.
 
@@ -354,11 +351,15 @@ def genThash (d : Dmmeta.Db) : Option Program := do
   -- An upper bound on any chain: no more elements can be indexed than the
   -- schema declares room for.
   let cap ← full.inlaryMax? dbC.name fld.name
-  let nm := names dbC.name fld.name
+  let dbN := Dmmeta.mangle dbC.name
+  let elemN := Dmmeta.mangle elemC.name
+  let nm := names dbN (Dmmeta.mangle fld.name)
   some
-    { structs := [elemStruct full nm elemC, dbStruct nm dbC.name elemC.name nb]
-    , globals := [{ name := nm.dbGlobal, ty := .strct dbC.name }]
-    , funs    := defsFor nm elemC.name key.name (nb - 1) cap nb }
+    { structs := Layout.addFields dbN (dbFields nm elemN nb)
+                   (Layout.addFields elemN (elemFields nm elemN)
+                     (Dmmeta.genStructs d))
+    , globals := Dmmeta.genGlobals d
+    , funs    := defsFor nm elemN (Dmmeta.mangle key.name) (nb - 1) cap nb }
 
 /-! ## Where the index's state lives -/
 
@@ -640,12 +641,66 @@ def hashDb : Dmmeta.Db where
   inlary := [{ ctype := "ItemDb", field := "ind_item", max := 8 }]
   root   := some "ItemDb"
 
+/-- **Regression: an element ctype with a record-typed field.** This schema is
+accepted by `Dmmeta.check` and used to generate a program `Wf.check` rejected
+with `"item_row.loc: unknown struct pt"` — the generator emitted two structs
+of its own and `pt` was in neither. It is here as a schema the generator is
+*run against*, not as prose. -/
+def nestedDb : Dmmeta.Db where
+  ctypes :=
+    [ { name := "pt", fields := [{ name := "x", arg := "u32", reftype := .Val }] }
+    , { name   := "item_row"
+      , fields := [ { name := "id",  arg := "u32", reftype := .Pkey }
+                  , { name := "loc", arg := "pt",  reftype := .Val }
+                  , { name := "qty", arg := "u32", reftype := .Val } ] }
+    , { name   := "ItemDb"
+      , fields := [{ name := "ind_item", arg := "item_row", reftype := .Thash }] } ]
+  inlary := [{ ctype := "ItemDb", field := "ind_item", max := 8 }]
+  root   := some "ItemDb"
+
+/-- **Regression: a ctype indexing itself.** `elemC = dbC`, so the two
+hand-built structs took the same name and `Wf.check` reported
+`duplicate struct: ItemDb` plus ten type errors. Extending the lowered table
+makes both contributions land on one struct, which is what a self-index
+should produce. -/
+def selfDb : Dmmeta.Db where
+  ctypes :=
+    [ { name   := "ItemDb"
+      , fields := [ { name := "id",       arg := "u32",    reftype := .Pkey }
+                  , { name := "ind_item", arg := "ItemDb", reftype := .Thash } ] } ]
+  inlary := [{ ctype := "ItemDb", field := "ind_item", max := 8 }]
+  root   := some "ItemDb"
+
 end Examples
 
 namespace Checks
 
 /-- checked by: `lake build` -/
 example : Dmmeta.check Examples.hashDb = [] := rfl
+
+/-- **Both regression schemas are accepted and both generate accepted
+programs.** Before the layout rework the second half of each was false.
+
+checked by: `lake build` -/
+example : Dmmeta.check Examples.nestedDb = [] := rfl
+example : (genThash Examples.nestedDb).map CSubset.Wf.check = some [] := rfl
+example : Dmmeta.check Examples.selfDb = [] := rfl
+example : (genThash Examples.selfDb).map CSubset.Wf.check = some [] := rfl
+
+/-- The nested case emits **three** structs, `pt` among them — which is the
+whole content of the fix.
+
+checked by: `lake build` -/
+example : (genThash Examples.nestedDb).map (fun p => p.structs.map StructDef.name)
+    = some ["pt", "item_row", "ItemDb"] := rfl
+
+/-- And the self-indexing case emits **one**, carrying both contributions.
+
+checked by: `lake build` -/
+example : (genThash Examples.selfDb).map
+    (fun p => p.structs.map (fun sd => (sd.name, sd.fields.map Prod.fst)))
+    = some [("ItemDb", ["id", "ind_item_next", "ind_item_inhash",
+                        "ind_item_buckets", "ind_item_n"])] := rfl
 
 /-- The generated program satisfies every C-subset obligation — including the
 one the array table's scan also had to satisfy, that a subscript through a

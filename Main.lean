@@ -103,13 +103,27 @@ def run (sink : Sink) : String → IO UInt32
   | "thash"  =>
     emitOpt sink "thash" Templates.Thash.Examples.hashDb
       Templates.Thash.genThash "schema declares no usable Thash field"
+  -- The two schemas that used to break the generator: an element ctype with a
+  -- record-typed field, and a ctype indexing itself. Emitted so the smoke test
+  -- compiles them, not merely so `Wf.check` accepts them.
+  | "llist-nested" =>
+    emitOpt sink "llist-nested" Templates.Llist.Examples.nestedDb
+      Templates.Llist.genLlist "schema declares no Llist field"
+  | "thash-nested" =>
+    emitOpt sink "thash-nested" Templates.Thash.Examples.nestedDb
+      Templates.Thash.genThash "schema declares no usable Thash field"
+  | "thash-self" =>
+    emitOpt sink "thash-self" Templates.Thash.Examples.selfDb
+      Templates.Thash.genThash "schema declares no usable Thash field"
   | other => do
     IO.eprintln s!"amcc: unknown schema {other}"
     return 2
 
 /-- The five schemas `--out all` writes, which is what the smoke test and the
 checked-in goldens under `scripts/gen/` cover. -/
-def allSchemas : List String := ["orders", "pool", "upptr", "llist", "thash"]
+def allSchemas : List String :=
+  ["orders", "pool", "upptr", "llist", "thash",
+   "llist-nested", "thash-nested", "thash-self"]
 
 /-- Read an ssimfile, check the schema it denotes, and print it back. Exit 0
 only if all three succeed, so a diff of stdout against the input file is a
@@ -157,6 +171,7 @@ def runConformance (path : String) : IO UInt32 := do
 
 def usage : String :=
   "usage: amcc [orders|tag|pool|upptr|llist|thash|all] [--out <dir>]\n"
+    ++ "       amcc [llist-nested|thash-nested|thash-self] [--out <dir>]\n"
     ++ "       amcc --ssim <file>\n"
     ++ "       amcc --ssim-of [pool|upptr|llist|thash]\n"
     ++ "       amcc --conformance <ssim-corpus>"

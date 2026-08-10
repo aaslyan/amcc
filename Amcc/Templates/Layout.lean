@@ -55,6 +55,46 @@ def layoutCheck (d : Db) : List String :=
 
 def layoutWf (d : Db) : Bool := (layoutCheck d).isEmpty
 
+/-! ## Extending the lowered layout
+
+A template that owns a *structure* rather than an accessor adds fields to
+structs the layout pass already emits: `Llist` adds two links and a flag to the
+element and a head and a count to the parent, `Thash` a bucket array,
+`Pool` a free-list head.
+
+Before this existed, each of the three built the two structs it cared about by
+hand and emitted **only those**. That is wrong in general and was found by
+attempting `GenWellFormed`: an element ctype with a record-typed field then
+references a struct the program does not contain, and a self-indexing `Thash`
+emits two structs with the same name. Both schemas are accepted by
+`Dmmeta.check` and rejected by `CSubset.Wf.check` — the generator being
+narrower than its own statement. See `PROGRESS.md`.
+
+Adding to the lowered table instead is also what cross-references will need,
+where several templates contribute fields to one struct: `addFields` composes,
+and the self-indexing case is exactly the composition of two calls at the same
+name. -/
+
+/-- Append `extra` to the struct named `n`, leaving every other struct alone.
+A name that is not there is not an error here — `Dmmeta.check` has already
+established that every ctype has a struct — it simply changes nothing. -/
+def addFields (n : CSubset.Ident) (extra : List (CSubset.Ident × CSubset.Ty))
+    (structs : List CSubset.StructDef) : List CSubset.StructDef :=
+  structs.map (fun sd =>
+    if sd.name == n then { sd with fields := sd.fields ++ extra } else sd)
+
+/-- Extending never changes the struct table's *shape*: same structs, same
+order, same names. Everything obligation 1 asks about the table survives, and
+only the per-struct field obligations have to be redone. -/
+theorem addFields_names (n : CSubset.Ident)
+    (extra : List (CSubset.Ident × CSubset.Ty)) (structs : List CSubset.StructDef) :
+    (addFields n extra structs).map CSubset.StructDef.name
+      = structs.map CSubset.StructDef.name := by
+  simp only [addFields, List.map_map]
+  congr 1
+  funext sd
+  by_cases h : sd.name = n <;> simp [h]
+
 /-! ## Checked
 
 Computational for now, as `ArrayTableChecks` was before `genWellFormed`
