@@ -26,6 +26,7 @@ import Amcc.Templates.Pool
 import Amcc.Templates.Upptr
 import Amcc.Templates.UpptrWf
 import Amcc.Templates.Llist
+import Amcc.Templates.LlistWf
 import Amcc.Templates.Thash
 import Amcc.Templates.ThashFind
 import Amcc.Templates.ArrayTableChecks
