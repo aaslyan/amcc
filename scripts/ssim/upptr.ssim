@@ -1,0 +1,5 @@
+dmmeta.ctype  ctype:level_row  comment:""
+dmmeta.ctype  ctype:child_row  comment:""
+dmmeta.field  field:level_row.price  arg:u64  reftype:Pkey  comment:""
+dmmeta.field  field:child_row.id  arg:u64  reftype:Pkey  comment:""
+dmmeta.field  field:child_row.p_level  arg:level_row  reftype:Upptr  comment:""

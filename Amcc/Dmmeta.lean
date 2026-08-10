@@ -155,6 +155,18 @@ def name : Reftype → String
   | Thash => "Thash" | Llist => "Llist" | Bheap => "Bheap" | Atree => "Atree"
   | Ptrary => "Ptrary" | Count => "Count"
 
+/-- The whole vocabulary, in `dmmeta/reftype.ssim`'s order. Written out rather
+than derived because a front end has to turn a *name* back into a reftype, and
+the two directions must not drift: `Checks` below pins that `all` has twenty
+entries and that `name` is injective on it, so a new constructor that is not
+added here fails the count. -/
+def all : List Reftype :=
+  [ Val, Pkey, Base, Upptr, Ptr, Lary, Tary, Inlary, Tpool, Lpool, Blkpool
+  , Malloc, Sbrk, Delptr, Thash, Llist, Bheap, Atree, Ptrary, Count ]
+
+/-- The reftype with this name, if there is one. -/
+def ofName? (s : String) : Option Reftype := all.find? (fun r => r.name == s)
+
 end Reftype
 
 /-! ## The records -/
@@ -538,6 +550,22 @@ example : Reftype.usebasepool .Lary = true := rfl
 example : Reftype.up .Upptr = true := rfl
 example : Reftype.layoutDep .Val = true := rfl
 example : Reftype.layoutDep .Llist = false := rfl
+
+/-- `dmmeta/reftype.ssim` has twenty rows, and `Reftype.all` has twenty
+entries. A constructor added without a line in `all` fails here.
+
+checked by: `lake build` -/
+example : Reftype.all.length = 20 := rfl
+
+/-- `name` is injective on the vocabulary, so `ofName?` inverts it — which is
+what the ssim front end needs and what makes a mistyped name a diagnostic
+rather than a wrong reftype.
+
+checked by: `lake build` -/
+example : (Reftype.all.map Reftype.name).eraseDups.length = 20 := rfl
+
+/-- checked by: `lake build` -/
+example : Reftype.all.all (fun r => Reftype.ofName? r.name == some r) = true := rfl
 
 end Examples
 end Dmmeta

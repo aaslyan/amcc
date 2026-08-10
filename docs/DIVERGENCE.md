@@ -337,6 +337,69 @@ having on its own, is to prove `Print.funSig` is the shared prefix of both —
 the printer is already written that way, so it is a statement about the code as
 it stands rather than a redesign.
 
+### 3.5 The front end reads four record types, not two hundred
+
+`Amcc/Ssim/` reads `amc`'s ssim tuple format — the grammar of `txt/ssim.md`,
+`algo::PickSsimQuoteChar`'s quoting rule and `algo::_PrintQuotedChar`'s escapes,
+transcribed rather than approximated. What it reads *into* is much smaller than
+what `amc` reads:
+
+- **Four record types**: `dmmeta.ctype`, `dmmeta.field`, `dmmeta.inlary` and
+  `amcc.root`. `data/dmmeta` alone has over a hundred ssimfiles, and `amc`
+  consumes most of them. Every other tuple head is **rejected**, not skipped.
+- **Eight of the twenty reftypes** — the ones a template or the storage
+  lowering can act on. The other twelve are rejected by name, with a message
+  that distinguishes "no such reftype" from "AMCC cannot emit that yet". This
+  is `docs/GOALS.md`'s standing rule applied to the front end: the reader must
+  never run ahead of the generator, because a schema that parses and cannot be
+  emitted is worse than one that does not parse.
+- **`amcc.root` is ours.** `amc` designates the database ctype by the
+  `<ns>.FDb` convention inside a namespace declared by `dmmeta.nsdb`. AMCC's
+  `Dmmeta.Db` has no namespaces — a schema is a flat list of ctypes with one
+  named as the root — so reusing `dmmeta.nsdb` would mean reading its `ns:`
+  key as a ctype name. A head under our own namespace says what is happening
+  instead of pretending to a compatibility that is not there.
+
+**What would discharge it.** Reading more of `data/dmmeta` is not the
+discharge; emitting more of what it describes is, and the reader should follow
+one reftype at a time behind the templates. `supported` in
+`Amcc/Ssim/Schema.lean` is the single list to extend, and it is deliberately
+in one place so the gap stays countable.
+
+### 3.6 The reader is unverified, and the round trip is what stands in
+
+`Amcc/Ssim/` has no theorem about it. That matters more than the printer's
+unverified status (§3.1), and in the opposite direction: a **back-end** bug
+produces C that fails to compile or fails the differential test, but a
+**front-end** bug produces a schema the user did not write, which
+`Dmmeta.check` then accepts, every theorem proves about, and every smoke test
+passes. The result is certified code against the wrong specification, with
+nothing anywhere to notice.
+
+What stands in for a proof is the round trip, run in both directions and
+kernel-checked:
+
+- `Db → text → Db` (`Amcc/Ssim/Checks.lean`, `rfl`) for every schema the
+  templates are proved about, so a schema written as ssim and the same schema
+  written as a Lean term are the same input to every theorem here;
+- `text → Db → text` on hand-written text, in Lean and again over
+  `scripts/ssim/*.ssim` in `scripts/smoke.sh`, which also diffs the
+  checked-in text against what the built-in schema prints to — without that
+  second diff the round trip would only say the reader and the printer agree
+  with each other.
+
+A reader that drops an attribute, mis-splits a quoted value or coerces a name
+cannot survive those, because the printer has no way to invent back what the
+reader threw away. It is not a proof: it says the pair is invertible on the
+inputs given, not that either half means what `amc` means.
+
+**What would discharge it.** A grammar for the tuple format and a theorem that
+`printFile ∘ parseFile` is the identity on strings the grammar accepts, with
+`parseFile ∘ printFile` the identity on tuples — the round trip promoted from
+examples to a statement quantified over inputs. That is a self-contained
+project and much smaller than §3.1's, because it needs no C semantics: both
+sides are AMCC's own.
+
 ---
 
 ## The honest summary
@@ -352,4 +415,7 @@ implicit — which is the argument for doing this at all.
 
 Against that: AMCC currently emits a small fraction of what `amc` emits, and
 two of its own divergences (index links, fixed-capacity pools) are restrictions
-we have not yet lifted rather than positions we would defend.
+we have not yet lifted rather than positions we would defend. Its front end
+reads four of `amc`'s record types and eight of its twenty reftypes, and
+neither the front end nor the printer is proved — §3.1, §3.4 and §3.6 are the
+three unverified links in a chain whose middle is machine-checked.

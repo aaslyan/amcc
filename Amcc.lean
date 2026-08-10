@@ -25,6 +25,9 @@ import Amcc.Templates.Upptr
 import Amcc.Templates.Llist
 import Amcc.Templates.Thash
 import Amcc.Templates.ArrayTableChecks
+import Amcc.Ssim.Tuple
+import Amcc.Ssim.Schema
+import Amcc.Ssim.Checks
 import Amcc.Codegen.Split
 import Amcc.Codegen.Print
 import Amcc.Codegen.PrintChecks
@@ -121,6 +124,19 @@ that should fail does not.)
                           for a `dmmeta.reftype Upptr` field, with the
                           read-back law (`get_set`) and the frame law proved
                           for every program the names resolve in
+- `Ssim.Tuple`          — the **ssim tuple format**: `amc`'s line-oriented
+                          `key:value` records, with `algo::PickSsimQuoteChar`'s
+                          quoting rule and `algo::_PrintQuotedChar`'s escapes
+                          transcribed rather than approximated, and a printer
+                          that is their inverse
+- `Ssim.Schema`         — tuples into `Dmmeta.Db` and back. Four record types
+                          and eight of the twenty reftypes: the reader rejects,
+                          by name, everything no template can emit, so it
+                          cannot run ahead of the generator
+- `Ssim.Checks`         — the front end's **round trip**, kernel-checked in
+                          both directions, plus the exact rejection messages.
+                          Nothing about the reader is proved; the round trip is
+                          what stands in (`docs/DIVERGENCE.md` §3.6)
 - `Codegen.Split`       — the **header/implementation partition**, at the AST
                           level: `split_partition` proves the two halves
                           together carry exactly the input's declarations, and
@@ -132,7 +148,8 @@ that should fail does not.)
                           or `<name>_gen.h` + `<name>_gen.c`
 - `Codegen.PrintChecks` — byte-for-byte golden tests of the printed output
 
-`lake exe amcc` prints the generated C for an example schema;
+`lake exe amcc` prints the generated C for an example schema, `--out <dir>`
+writes the two-file layout, and `--ssim <file>` runs the front end's round trip;
 `scripts/smoke.sh` compiles it and replays the `ArrayTableChecks` call
 sequences against the binary — the differential check of printer + compiler
 against `execStmt`.
@@ -148,7 +165,11 @@ need.
 exists, and both of `Llist`'s linking laws are now proved over it, so what
 remains is the assembly. `Templates.Thash.BucketInRange` is closed.
 
-`Codegen.Print` is unverified — see `docs/DIVERGENCE.md` §3. A closed
-`MilestoneTheorem` certifies the generated **AST**; the C text is covered by
-goldens and `scripts/smoke.sh` only.
+`Codegen.Print` and `Ssim` are unverified — see `docs/DIVERGENCE.md` §3.1,
+§3.4 and §3.6. A closed `MilestoneTheorem` certifies the generated **AST**;
+the C text is covered by goldens and `scripts/smoke.sh`, and the schema text
+by the round trip. Those are the three links in the chain that are tested
+rather than proved, and the front end is the one that matters most, because a
+misread schema is certified code against a specification the user did not
+write.
 -/

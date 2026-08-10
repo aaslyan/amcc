@@ -2,10 +2,23 @@
 
 ## Now
 
-**An ssimfile reader** (`Amcc/Ssim/`), with the print-back round trip built
-alongside it. Then `Thash.FindCorrect`.
+**`Thash.FindCorrect`**, over `CSubset.Chain`. A bucket is a chain, so the same
+`Reaches` applies with the bucket head in place of the list head.
 
 ## Done
+
+- **H — the ssim front end.** `Amcc/Ssim/Tuple.lean` reads `amc`'s tuple format
+  — `txt/ssim.md`'s grammar, `algo::PickSsimQuoteChar`'s quoting rule and
+  `algo::_PrintQuotedChar`'s escapes, transcribed — and prints it back;
+  `Amcc/Ssim/Schema.lean` maps four record types onto `Dmmeta.Db` and rejects,
+  by name, the twelve reftypes no template emits. `Amcc/Ssim/Checks.lean` runs
+  the round trip in both directions as `rfl`, plus the exact rejection
+  messages. `lake exe amcc --ssim <file>` and `--ssim-of <name>`;
+  `scripts/ssim/` holds one schema per ctype-model template, and
+  `scripts/smoke.sh` diffs both the round trip *and* the checked-in text
+  against what the built-in schema prints to. Two `docs/DIVERGENCE.md`
+  entries: §3.5 (what is read) and §3.6 (nothing is proved, and why that
+  matters more here than in the printer).
 
 - **G — the header/implementation split.** `Amcc/Codegen/Split.lean` partitions
   a `Program` at the **AST** level, with `split_partition` proving the two
@@ -88,7 +101,6 @@ alongside it. Then `Thash.FindCorrect`.
 
 ## Next
 
-- The ssimfile reader (`Amcc/Ssim/`) and its round trip
 - `Thash.FindCorrect`, over `CSubset.Chain`
 - The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
   `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
@@ -131,6 +143,39 @@ mention `post` while the goal mentions `q1 :: post0`. Every membership side
 goal is then `by rw [hpost]; simp` rather than `simp`.
 
 ## Decisions
+
+- **The front end is `List Char`, not `String`.** `String.splitOn`,
+  `String.trim`, `String.toNat?` and `String.startsWith` are well-founded
+  recursions and **do not reduce in the kernel** — the same hazard `Dmmeta`'s
+  `pow2Exp?` avoided for `Nat.log2`. Every one of them is re-done structurally
+  over `List Char`. The reason is not tidiness: it is that the round trip is
+  what stands in for a proof of the reader, and a round trip checked by
+  `#guard` would be testing the *compiled* reader rather than the one the
+  theorems see. `String.toList`, `String.ofList`, `List.foldl` and `toString`
+  on a `Nat` all reduce, and are used freely.
+
+- **The lexer is a left fold with an explicit state, not a fuel-driven
+  scanner.** Each character advances the state exactly once, so the function is
+  structural with no fuel parameter to pick a bound for. The state carries the
+  position of the first **unquoted** colon, because that — not the first colon
+  of the assembled token — is what separates key from value: `comment:"a:b"`
+  has two colons and only one of them splits.
+
+- **`amcc.root`, rather than reusing `dmmeta.nsdb`.** `amc` designates the
+  database ctype by the `<ns>.FDb` convention inside a namespace declared by
+  `dmmeta.nsdb`. `Dmmeta.Db` has no namespaces, so reusing that head would mean
+  reading its `ns:` key as a ctype name — a reinterpretation pretending to be a
+  match. Recorded in `docs/DIVERGENCE.md` §3.5.
+
+- **Unknown tuple heads are rejected, not skipped.** A skipping reader would
+  accept the whole of `data/dmmeta` and silently generate from the fraction it
+  understood, which is exactly the failure the round trip exists to catch and
+  the one it *could not* catch, since a skipped record cannot be printed back.
+
+- **Record-level errors carry the line number too.** `parseFile` returns
+  located tuples rather than bare ones. The first cut only located *lexical*
+  errors, so "no AMCC template emits Bheap" arrived with no indication of which
+  of two hundred lines said so.
 
 - **`#pragma once`, not a named include guard.** `amc`'s generated headers use
   `#pragma once` (`include/gen/*_gen.h`, line 25 of every one), and the

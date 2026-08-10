@@ -72,3 +72,20 @@ check llist scripts/llist_driver.c scripts/llist_expected.txt \
 # Keys 1, 9 and 17 collide, so the chain cases are real.
 check thash scripts/thash_driver.c scripts/thash_expected.txt \
   "find, duplicate refusal and chain unlink behave as stated; header stands alone"
+
+# --- the ssim front end ------------------------------------------------------
+# Two diffs per schema, and both are needed.
+#
+#   1. text -> Db -> text must be the identity, or the reader is dropping
+#      something the printer cannot invent back.
+#   2. the checked-in text must be what the *built-in* schema prints to. Without
+#      this the round trip only says the reader and the printer agree with each
+#      other; with it, the file on disk is the schema the templates are proved
+#      about.
+for name in pool upptr llist thash; do
+  lake exe amcc --ssim "scripts/ssim/$name.ssim" > "$tmp/$name.ssim"
+  diff "scripts/ssim/$name.ssim" "$tmp/$name.ssim"
+  lake exe amcc --ssim-of "$name" > "$tmp/$name.of.ssim"
+  diff "scripts/ssim/$name.ssim" "$tmp/$name.of.ssim"
+done
+echo "smoke: ssim   OK — the front end round-trips, and reads the proved schemas"

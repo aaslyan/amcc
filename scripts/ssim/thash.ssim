@@ -1,0 +1,7 @@
+dmmeta.ctype  ctype:item_row  comment:""
+dmmeta.ctype  ctype:ItemDb  comment:""
+dmmeta.field  field:item_row.id  arg:u32  reftype:Pkey  comment:""
+dmmeta.field  field:item_row.qty  arg:u32  reftype:Val  comment:""
+dmmeta.field  field:ItemDb.ind_item  arg:item_row  reftype:Thash  comment:""
+dmmeta.inlary  field:ItemDb.ind_item  min:0  max:8  comment:""
+amcc.root  ctype:ItemDb  comment:""

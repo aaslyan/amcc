@@ -1,0 +1,5 @@
+dmmeta.ctype  ctype:task_row  comment:""
+dmmeta.ctype  ctype:TaskDb  comment:""
+dmmeta.field  field:task_row.id  arg:u64  reftype:Pkey  comment:""
+dmmeta.field  field:TaskDb.zdl_todo  arg:task_row  reftype:Llist  comment:""
+amcc.root  ctype:TaskDb  comment:""

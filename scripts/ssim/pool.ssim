@@ -1,0 +1,8 @@
+dmmeta.ctype  ctype:order_row  comment:""
+dmmeta.ctype  ctype:OrderDb  comment:""
+dmmeta.field  field:order_row.id  arg:u64  reftype:Pkey  comment:""
+dmmeta.field  field:order_row.price  arg:u64  reftype:Val  comment:""
+dmmeta.field  field:order_row.qty  arg:u64  reftype:Val  comment:""
+dmmeta.field  field:OrderDb.row  arg:order_row  reftype:Inlary  comment:""
+dmmeta.inlary  field:OrderDb.row  min:0  max:4  comment:""
+amcc.root  ctype:OrderDb  comment:""

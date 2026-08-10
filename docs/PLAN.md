@@ -17,6 +17,15 @@ allocator layer), `docs/ALLOCATOR_REQUIREMENT.md` (the allocator contract),
 
 ## Status
 
+**Input** — schemas may be written as `amc` ssimfiles, not only as Lean terms.
+`Amcc/Ssim/` reads four record types (`dmmeta.ctype`, `dmmeta.field`,
+`dmmeta.inlary`, `amcc.root`) and eight of the twenty reftypes — everything no
+template can emit is rejected by name. Nothing about the reader is proved; the
+kernel-checked round trip in both directions is what stands in
+(`docs/DIVERGENCE.md` §3.6). `scripts/ssim/` holds one schema per template, and
+`scripts/smoke.sh` checks both that they round-trip and that they *are* the
+schemas the templates are proved about.
+
 **Emitted C** — five templates, twenty-five functions, in `amc`'s two-file
 layout (`<name>_gen.h` + `<name>_gen.c`; `lake exe amcc all --out <dir>`), with
 the single-file mode kept. The goldens are committed under `scripts/gen/`.
@@ -114,9 +123,16 @@ the array table is the first artifact certified end to end — schema in,
 C-subset AST out, with a machine-checked statement of what the emitted
 functions guarantee.
 
-Two gaps remain against the full measure, both recorded in
+Three gaps remain against the full measure, all recorded in
 `docs/DIVERGENCE.md` §3:
 
+- **The front end is unverified.** `Amcc/Ssim/` turns ssim text into
+  `Dmmeta.Db` and nothing is proved about it. This is the *worst-placed* of the
+  three untrusted links, because a misread schema is invisible downstream —
+  `Dmmeta.check` accepts it, every theorem proves, every smoke test passes.
+  The round trip is what stands in. `docs/DIVERGENCE.md` §3.6 says what would
+  discharge it, and it is the cheapest of the three: both sides are AMCC's own,
+  so no C semantics is needed.
 - **The pretty-printer is unverified.** `MilestoneTheorem` certifies the
   *AST*. `Codegen/Print.lean` turns that AST into C text and is covered only
   by goldens and `scripts/smoke.sh`. The *partition* into header and

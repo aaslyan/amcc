@@ -20,7 +20,16 @@ lake exe amcc thash                 # the hash index
 lake exe amcc > order_table.c
 
 lake exe amcc llist --out gen/      # gen/llist_gen.h and gen/llist_gen.c
+
+lake exe amcc --ssim <file>         # read an ssimfile, print the schema back
+lake exe amcc --ssim-of llist       # print a built-in schema as ssim text
 ```
+
+`--ssim` is the front end's round trip: it reads the ssim text into
+`Dmmeta.Db`, runs `Dmmeta.check` on the result, and prints the schema back as
+ssim. A caller diffs the output against the input; `scripts/smoke.sh` does.
+Nothing about the reader is proved, so the round trip is what stands in for a
+proof — see `Amcc/Ssim/Tuple.lean`.
 
 The single-file mode is the original one and is what `PrintChecks`'s goldens
 pin. The `--out` mode writes the two files `amc` writes, the split being
@@ -102,12 +111,51 @@ def run (sink : Sink) : String → IO UInt32
 checked-in goldens under `scripts/gen/` cover. -/
 def allSchemas : List String := ["orders", "pool", "upptr", "llist", "thash"]
 
+/-- Read an ssimfile, check the schema it denotes, and print it back. Exit 0
+only if all three succeed, so a diff of stdout against the input file is a
+complete round-trip test. -/
+def runSsim (path : String) : IO UInt32 := do
+  let text ← IO.FS.readFile path
+  match Ssim.readDb text with
+  | .error e => do IO.eprintln s!"{path}: {e}"; return 1
+  | .ok d =>
+    match Dmmeta.check d with
+    | [] => do IO.print (Ssim.printDb d); return 0
+    | errs => do
+      IO.eprintln s!"{path}: schema rejected:"
+      for e in errs do IO.eprintln s!"  {e}"
+      return 1
+
+/-- The ctype-model schemas the templates are proved about, by the name their
+`scripts/ssim/<name>.ssim` file carries. The array table is absent because it
+takes the legacy `Schema`, not a `Dmmeta.Db`, so there is no ssim rendering of
+it to check. -/
+def exampleDb? : String → Option Dmmeta.Db
+  | "pool"  => some Dmmeta.Examples.boundedDb
+  | "upptr" => some Templates.Upptr.Examples.upDb
+  | "llist" => some Templates.Llist.Examples.listDb
+  | "thash" => some Templates.Thash.Examples.hashDb
+  | _       => none
+
+/-- Print a built-in schema as ssim. Diffing this against
+`scripts/ssim/<name>.ssim` is what ties the checked-in text to the schema the
+templates are proved about: without it, the round trip only says the reader
+and the printer agree with each other. -/
+def runSsimOf (name : String) : IO UInt32 := do
+  match exampleDb? name with
+  | some d => do IO.print (Ssim.printDb d); return 0
+  | none   => do IO.eprintln s!"amcc: no built-in schema {name}"; return 2
+
 def usage : String :=
-  "usage: amcc [orders|tag|pool|upptr|llist|thash|all] [--out <dir>]"
+  "usage: amcc [orders|tag|pool|upptr|llist|thash|all] [--out <dir>]\n"
+    ++ "       amcc --ssim <file>\n"
+    ++ "       amcc --ssim-of [pool|upptr|llist|thash]"
 
 def main (args : List String) : IO UInt32 :=
   match args with
   | []                     => run .stdout "orders"
+  | ["--ssim", f]          => runSsim f
+  | ["--ssim-of", n]       => runSsimOf n
   | [s]                    => run .stdout s
   | [s, "--out", d]        =>
     if s == "all" then do
