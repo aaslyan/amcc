@@ -91,15 +91,22 @@ what stands in for a proof of the reader, and a round trip checked by the
 theorems see. -/
 
 /-- Split a character list on a separator, keeping empty pieces — `splitOn`'s
-behaviour, structurally. -/
-def splitOnChar (sep : Char) : List Char → List (List Char)
-  | [] => [[]]
-  | c :: cs =>
-    let rest := splitOnChar sep cs
-    if c == sep then [] :: rest
-    else match rest with
-      | []      => [[c]]
-      | r :: rs => (c :: r) :: rs
+behaviour, structurally.
+
+Written with an accumulator so the recursive call is in **tail** position. The
+obvious non-tail version overflowed the stack on `amc`'s own `data/dmmeta`
+(seven thousand lines, most of a megabyte): it recurses once per character,
+and half a million frames is past the limit. A census that cannot read the
+corpus it is measuring is no census, so the shape matters. -/
+def splitOnCharAux (sep : Char) :
+    List Char → List Char → List (List Char) → List (List Char)
+  | [],      cur, acc => (cur.reverse :: acc).reverse
+  | c :: cs, cur, acc =>
+    if c == sep then splitOnCharAux sep cs [] (cur.reverse :: acc)
+    else splitOnCharAux sep cs (c :: cur) acc
+
+def splitOnChar (sep : Char) (l : List Char) : List (List Char) :=
+  splitOnCharAux sep l [] []
 
 /-- Digits into a number, refusing anything that is not all digits. -/
 def digitsToNat? (cs : List Char) : Option Nat :=
@@ -238,15 +245,21 @@ and a front end whose diagnostics do not locate the problem is a front end
 people work around. -/
 def parseFile (text : String) : Except String (List (Nat × Tuple)) :=
   let lines := ((splitOnChar '\n' text.toList).map String.ofList).zipIdx
-  lines.foldl
-    (fun acc li => do
-      let ts ← acc
-      if significant li.1 then
-        match parseLine li.1 with
-        | .ok t    => .ok (ts ++ [(li.2 + 1, t)])
-        | .error e => .error s!"line {li.2 + 1}: {e}"
-      else .ok ts)
-    (.ok [])
+  -- accumulated reversed and flipped once: `ts ++ [t]` is quadratic, which on
+  -- a seven-thousand-line corpus is twenty-five million conses for nothing
+  match lines.foldl
+      (fun (acc : Except String (List (Nat × Tuple))) li =>
+        match acc with
+        | .error e => .error e
+        | .ok ts =>
+          if significant li.1 then
+            match parseLine li.1 with
+            | .ok t    => Except.ok ((li.2 + 1, t) :: ts)
+            | .error e => Except.error s!"line {li.2 + 1}: {e}"
+          else Except.ok ts)
+      (Except.ok []) with
+  | .error e => .error e
+  | .ok ts   => .ok ts.reverse
 
 /-! ## Printing
 

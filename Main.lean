@@ -146,16 +146,27 @@ def runSsimOf (name : String) : IO UInt32 := do
   | some d => do IO.print (Ssim.printDb d); return 0
   | none   => do IO.eprintln s!"amcc: no built-in schema {name}"; return 2
 
+/-- Classify a `dmmeta` corpus and print one TSV row per declaration.
+`scripts/conformance/` drives this; nothing about the verdicts is decided
+there. -/
+def runConformance (path : String) : IO UInt32 := do
+  let text ← IO.FS.readFile path
+  for line in Ssim.Conformance.report text do
+    IO.println line
+  return 0
+
 def usage : String :=
   "usage: amcc [orders|tag|pool|upptr|llist|thash|all] [--out <dir>]\n"
     ++ "       amcc --ssim <file>\n"
-    ++ "       amcc --ssim-of [pool|upptr|llist|thash]"
+    ++ "       amcc --ssim-of [pool|upptr|llist|thash]\n"
+    ++ "       amcc --conformance <ssim-corpus>"
 
 def main (args : List String) : IO UInt32 :=
   match args with
   | []                     => run .stdout "orders"
   | ["--ssim", f]          => runSsim f
   | ["--ssim-of", n]       => runSsimOf n
+  | ["--conformance", f]   => runConformance f
   | [s]                    => run .stdout s
   | [s, "--out", d]        =>
     if s == "all" then do

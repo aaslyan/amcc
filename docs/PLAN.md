@@ -17,6 +17,12 @@ allocator layer), `docs/ALLOCATOR_REQUIREMENT.md` (the allocator contract),
 
 ## Status
 
+**Measured** — `docs/CONFORMANCE.md` is the first number: against `amc`'s own
+`data/dmmeta`, 79.9% of fields have a reftype AMCC handles and **one** is
+generated, because the corpus's namespace-qualified names are not C
+identifiers. Regenerate with `scripts/conformance/run.sh`; the verdicts come
+from `Ssim.Conformance` in Lean, the Python only slices and counts.
+
 **Input** — schemas may be written as `amc` ssimfiles, not only as Lean terms.
 `Amcc/Ssim/` reads four record types (`dmmeta.ctype`, `dmmeta.field`,
 `dmmeta.inlary`, `amcc.root`) and eight of the twenty reftypes — everything no
@@ -154,17 +160,39 @@ Three gaps remain against the full measure, all recorded in
 
 ## Next, in order
 
-1. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and
+**Reordered by `docs/CONFORMANCE.md`**, which measured the generator against
+`amc`'s own `data/dmmeta` for the first time. The measurement moved item 1 from
+nowhere on this list to the top and demoted the remaining reftypes, because
+79.9% of real fields already have a reftype AMCC handles and all but one of
+them is blocked by something else entirely.
+
+1. **A namespace-to-C-identifier mapping.** `dmmeta` names are qualified —
+   `abt.FArch`, `dmmeta.Ctype` — and `Dmmeta.isCIdent` rejects a dot, so
+   **4518 of 5659 real fields (79.8%) and 1381 of 1420 real ctypes (97.3%)**
+   are out of reach for a reason that has nothing to do with data structures.
+   It gates eleven times as many fields as the largest missing reftype
+   (`Lary`, 390). This was not on the roadmap at all before the corpus was
+   measured; it is now the single highest-value thing to build.
+2. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and
    `Thash` each have `Wf.check … = []` only as a computational example on
    their sample schema. The array table has it for *every* accepted schema.
    Until the others do, `lookups_of_wf`'s hypothesis is discharged per-schema
-   rather than once.
-2. **Xref maintenance** tying the templates together, using the
-   prepare/commit design from `Spec/Algebra.lean`.
-3. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other
-   seven `Llist` flavours, and cursors for all of them. `docs/GOALS.md` puts
-   the whole vocabulary in scope; `docs/DIVERGENCE.md` §3 is the standing list
-   of what is not attempted.
+   rather than once. Partly landed — `Templates/LayoutWf.lean` has the shared
+   half; `PROGRESS.md` carries the handoff. Ahead of the reftypes because it
+   is about whether the *existing* templates' guarantee is what the generated
+   headers claim.
+3. **Xref maintenance** tying the templates together, using the
+   prepare/commit design from `Spec/Algebra.lean`. `dmmeta.xref` has 789
+   records in the corpus, and `docs/CONFORMANCE.md` is explicit that a field
+   counted "generated" today gets its accessors and *not* its participation in
+   the indexes — so the conformance percentage overstates what a user gets
+   until this exists.
+4. **The remaining reftypes, in corpus order rather than alphabetical.**
+   `Lary` (390 fields), `Smallstr` (140), `Ptrary` (136), `Bitfld` (75),
+   `Tary` (69), `Global` (60) — then the tail. `Bheap` (23) and `Atree` (3)
+   were named first on the old list and are near the bottom of the real
+   distribution. `docs/GOALS.md` puts the whole vocabulary in scope;
+   `docs/DIVERGENCE.md` §3 is the standing list of what is not attempted.
 
 ---
 

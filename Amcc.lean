@@ -29,6 +29,7 @@ import Amcc.Templates.ThashFind
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Ssim.Tuple
 import Amcc.Ssim.Schema
+import Amcc.Ssim.Conformance
 import Amcc.Ssim.Checks
 import Amcc.Codegen.Split
 import Amcc.Codegen.Print
@@ -141,6 +142,12 @@ that should fail does not.)
                           and eight of the twenty reftypes: the reader rejects,
                           by name, everything no template can emit, so it
                           cannot run ahead of the generator
+- `Ssim.Conformance`    — the **census**: what AMCC would do with every ctype
+                          and field of a real `dmmeta` corpus, decided by the
+                          shipping reader and the shipping `supported` list so
+                          the numbers cannot drift from the generator.
+                          `docs/CONFORMANCE.md` is the result and
+                          `scripts/conformance/run.sh` regenerates it
 - `Ssim.Checks`         — the front end's **round trip**, kernel-checked in
                           both directions, plus the exact rejection messages.
                           Nothing about the reader is proved; the round trip is

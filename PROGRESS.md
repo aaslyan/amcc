@@ -2,11 +2,20 @@
 
 ## Now
 
-**Item C — conformance measurement** against `~/openacr-mine`, then back to
-finish item B. See "Where the every-schema gap stands" below for exactly what
+**Item B, the rest.** `Layout.LayoutWellFormed` and then the three templates'
+`GenWellFormed`. See "Where the every-schema gap stands" below for exactly what
 is proved and what is left.
 
 ## Done
+
+- **K — conformance measured against the real corpus.** `docs/CONFORMANCE.md`,
+  from `amc`'s own `data/dmmeta`: 1420 ctypes, 5659 fields. **79.9% of fields
+  have a reftype AMCC handles and exactly one is generated** — the rest are
+  blocked by namespace-qualified names, which `Dmmeta.isCIdent` rejects.
+  `Ssim.Conformance` decides every verdict in Lean using the shipping reader
+  and the shipping `supported` list; `scripts/conformance/` slices and counts
+  and decides nothing. `docs/PLAN.md`'s "Next, in order" was reordered on the
+  strength of it: a name mapping went from absent to first.
 
 - **J — the `Inlary` bound hole, and the shared half of the every-schema gap.**
   `Dmmeta.check` accepted `Inlary max:0`; `Layout.layoutCheck` accepted it too;
@@ -126,13 +135,77 @@ is proved and what is left.
 
 ## Next
 
-- The every-schema `Wf.check` gap for `Upptr`, `Llist`, `Thash`
-- Conformance measurement against `~/openacr-mine`
+- The rest of item B: `Layout.layoutWellFormed`, then the three templates
+- A namespace-to-C-identifier mapping — `docs/CONFORMANCE.md` says this gates
+  79.8% of real fields, more than every missing reftype put together
 - The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
   `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
   on their sample schema; the array table has it for *every* accepted schema
   (`genWellFormed`). Until that exists for the others, `lookups_of_wf`'s
   hypothesis is discharged per-schema rather than once.
+
+## Where the every-schema gap stands
+
+**Proved and committed** (`Amcc/Templates/LayoutWf.lean`, `CSubset/Wf.lean`):
+
+- the `Inlary` bound hole in `Dmmeta.check`, with two negative `rfl` examples;
+- `CSubset.dups_eq_nil_iff` / `distinct_eq_nil`, moved out of `ArrayTableWf`;
+- `pairwise_filterMap_map` — an order-preserving `filterMap` that keeps the
+  projected name yields a sublist, so both name obligations follow from the
+  schema's;
+- `structs_distinct`, `fields_distinct` — obligation 1 for the struct table and
+  for each struct's fields;
+- `facts_of_check` — what `Dmmeta.check` acceptance hands over per ctype and
+  per field: distinct field names, the `arg` resolves, a layout-carrying
+  field's `arg` was declared earlier, an `Inlary`'s bound is a legal size. The
+  `++`-nesting of `checkCtype` (five clauses) and `checkField` (three, with
+  three more inside its `some` branch) is spent here and nowhere else;
+- `filterMap_take_prefix` / `mem_filterMap_take` — the transport of "declared
+  earlier" across the filter that drops the scalar ctypes.
+
+**Not proved.** `Layout.layoutWellFormed` itself, and the three templates'
+`GenWellFormed`. What each still needs:
+
+1. **`checkStructs_gen`.** A shell lemma turning `checkStructs structs = []`
+   into four membership-shaped hypotheses (names distinct, field names
+   distinct, `sizesOk`, `allStructs` resolve, `layoutDeps` earlier) —
+   mechanical, an unfold plus `List.flatMap_eq_nil_iff`.
+2. **The index correspondence.** `checkStructs`'s `earlier` at struct index
+   `i'` is `(structs.take i').map name`, and `facts_of_check` gives
+   declared-earlier at *ctype* index `j`. The missing bridge is
+   ```
+   getElem?_filterMap (f) : (l.filterMap f)[i]? = some b →
+     ∃ j (hj : j < l.length), f (l[j]'hj) = some b
+       ∧ ((l.take j).filterMap f).length = i
+   ```
+   provable by induction on `l` with `i` generalised, splitting on `f a`; the
+   `some`/`i+1` case is where `mem_filterMap_take` gets used. Do **not** try to
+   do this with `List.zipIdx` directly — use `List.mem_zipIdx_iff_getElem?`
+   first, which is how `facts_of_check` already gets at the ctype index.
+3. **`fieldTy_structs`.** One case analysis over the six lowering reftypes
+   crossed with "is the `arg` scalar": every generated type is `scalar`,
+   `strct n`, `ptr (strct n)` or `arr (strct n) k`, and
+   - `Ty.sizesOk` needs only the `Inlary` bound fact (now available),
+   - `Ty.allStructs` is `[]` or `[f.arg]`, and `f.arg` resolves to a
+     **non-scalar** ctype exactly when the result mentions a struct,
+   - `Ty.layoutDeps` is `[]` unless `f.reftype.layoutDep`, which is precisely
+     `Val`/`Base`/`Inlary` — the three that embed rather than point.
+4. **`checkGlobals`.** Small: one global, `sizesOk (.strct r) = true` by `rfl`,
+   and `r ∈ (genStructs d).map name` from the root clause of `Dmmeta.check`,
+   which `facts_of_check` does **not** currently expose and should.
+5. **Then the templates.** `Upptr` is four straight-line functions and should
+   go first; `Thash` is five, one with a loop; `Llist` is nine. Each needs
+   `distinct "function"` over its own generated names — the `<ctype>_<field>`
+   uniqueness clause in `Dmmeta.check` is what makes that reachable — plus
+   `checkFun` per function, which for these templates is
+   `simp [Wf.checkFun, …]` against a symbolic `Wf.Ctx`, exactly as
+   `ArrayTableWf`'s `checkFun_find`/`_insert`/`_erase` do. Reuse that shape;
+   do not re-derive it.
+
+**The finding.** `Dmmeta.check` accepted `Inlary max:0` and the generated
+program was rejected by `Wf.check`. Nothing was *relying* on a sample-schema
+property, but the checker was weaker than the theorem needed, and the theorem
+is what exposed it. Fixed in the checker.
 
 ## How `Remove` went, in the end
 
@@ -169,6 +242,26 @@ mention `post` while the goal mentions `q1 :: post0`. Every membership side
 goal is then `by rw [hpost]; simp` rather than `simp`.
 
 ## Decisions
+
+- **The conformance census is a separate classifier, not `readDb`.** `readDb`
+  aborts on the first unsupported reftype, which is right for a front end and
+  useless for a census: one bad field would hide the five thousand behind it.
+  `Ssim.Conformance.classify` walks every tuple and records a verdict per
+  record. It reuses `supported`, `isCIdent` and `parseFile` rather than
+  re-deciding anything, and `verdict_iff_supported` is a `decide` proof that
+  the census and the reader agree about what is in scope.
+
+- **The census reports the reftype verdict and the name verdict in separate
+  columns.** Collapsing them to one overall verdict hides the number that
+  turned out to matter: 4518 fields have a supported reftype and are blocked
+  only by the name. With one column the report would have said "1 of 5659
+  generated" and left the reader to guess why.
+
+- **`splitOnChar` is tail-recursive now, and `parseFile` accumulates
+  reversed.** The obvious versions overflowed the stack and ran quadratically
+  on `data/dmmeta` — seven thousand lines, most of a megabyte. A census that
+  cannot read the corpus it measures is no census, so the shape of the reader
+  is part of the requirement, not an optimisation.
 
 - **`FindCorrect` was too weak to be worth proving, and was strengthened
   before being closed.** As first stated it said `Find` returns `NULL` or a
