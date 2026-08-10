@@ -157,9 +157,10 @@ that should fail does not.)
                           both directions, plus the exact rejection messages.
                           Nothing about the reader is proved; the round trip is
                           what stands in (`docs/DIVERGENCE.md` §3.6)
-- `Templates.LlistWf`   — the intrusive list's every-schema obligation:
-                          `names_pairwise` is proved, the struct half and the
-                          nine `checkFun`s are owed (`PROGRESS.md`)
+- `Templates.LlistWf`   — the intrusive list's every-schema obligation: the
+                          names, both `hdist` lemmas and the struct and global
+                          halves are **proved**; `checkFun` for the nine
+                          bodies is owed (`PROGRESS.md`)
 - `Templates.LayoutWf`  — **proved**: `layoutWellFormed` — every schema the
                           lowering accepts produces structs and globals
                           `Wf.check` accepts, including that struct nesting is

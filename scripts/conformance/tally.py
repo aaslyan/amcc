@@ -190,6 +190,14 @@ field-level verdict this census could produce:
   `Print`/`ReadStrptrMaybe`, `CopyIn`/`CopyOut`. AMCC reads ssim as a *front
   end* and generates none of the machinery `amc` generates for handling it.
 
+**The census does not model the layout at all.** It answers "would AMCC name
+and represent this field", and says nothing about whether the *program* built
+from the ctype it belongs to passes `CSubset.Wf.check`. Since e08a3e8 the
+structure templates emit the whole lowered table, so a ctype whose fields all
+count as generated still produces nothing unless a template runs over it —
+`Templates.Layout.layoutCheck`, not this census, is where "can be lowered
+today" is decided. The headline is an upper bound in that direction too.
+
 **The census is per-record and misses the whole-schema clauses.**
 `Dmmeta.check` has three checks that need every ctype and field at once — two
 mangled names colliding, two qualified names colliding, and a field named what

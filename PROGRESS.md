@@ -2,12 +2,22 @@
 
 ## Now
 
-**`Llist.genWellFormed`, then `Thash`'s.** The generator defect is fixed and
-the extension lemmas are proved; see "Where the every-schema gap stands" for
-the three remaining pieces and the order. Then the attribute join — see
-"Where the attribute join stands", whose blocking question is now answered.
+**The nine `checkFun`s for `Llist`.** Everything else in
+`Llist.genWellFormed` is proved — see "Where the every-schema gap stands" for
+the bundle lemma to write first and the hazard that cost time in `UpptrWf`.
+Then `Thash`, then the attribute join, whose blocking question is answered in
+`docs/DIVERGENCE.md` §3.7.
 
 ## Done
+
+- **Q — everything in `Llist.genWellFormed` except `checkFun`.** Six named
+  lemmas, committed at four boundaries: the two preparatory ones
+  (`Layout.mem_genStructs_name` lifted out of `checkStructs_gen`, and
+  `Layout.field_ne_generated`, which turns `Dmmeta.check`'s `clashesGenerated`
+  clause into the `Pairwise` the struct obligation wants — the genuinely new
+  step), then `hdist_elem`/`hdist_db`, then `checkStructs_gen_llist` and
+  `checkGlobals_gen_llist`, then `NameWf.struct?_addFields`/`find?_field` for
+  reaching a field a template *added* rather than lowered.
 
 - **P — the layout defect in `Thash`, `Llist` and `Pool`.** All three built two
   structs by hand and emitted only those; they now extend
@@ -215,37 +225,57 @@ handoff below is the shape they follow.*
 
 ### What `Llist.genWellFormed` still needs
 
-`Templates/LlistWf.lean` has the statement and the name half. What is left:
+**Everything except `checkFun`.** `Templates/LlistWf.lean` now has, all proved:
 
-1. **The struct half.**
-   ```lean
-   Wf.checkStructs (Layout.addFields dbN (dbFields nm elemN)
-     (Layout.addFields elemN (elemFields nm elemN) (genStructs d))) = []
-   ```
-   Two nested `checkStructs_addFields` applications over
-   `Layout.checkStructs_gen hchk`. The inner one's `hdist` is where the new
-   `Dmmeta.check` clause is spent: `clashesGenerated` is exactly the statement
-   that `mangle f.name ≠ mangle fld.name ++ "_next"` for every field `f` of
-   the element, so a lemma turning that clause into the `Pairwise` the
-   obligation wants is the one genuinely new thing to write. The `hres` side
-   needs `elemN ∈ (genStructs d).map name`, which `checkStructs_gen`'s
-   `hmemName` already builds — **lift it out of that proof into a named lemma
-   first**; it is private to the proof body today.
-2. **`checkGlobals`** — `checkGlobals_addFields` twice over
-   `checkGlobals_gen`. Should be four lines.
-3. **`checkFun` × 9.** `initDef`, `firstDef`, `nextDef`, `prevDef`, `inQDef`,
-   `emptyQDef`, `sizeDef` are one statement each and follow `UpptrWf`'s
-   `checkFun_defsFor` verbatim. `insertDef` (six statements, one `if`) and
-   `removeDef` (eight, two `if`s) are the work. All nine need the field
-   lookups `NameWf.ctx_field?` supplies — for `next`/`prev`/`inlist` on the
-   element and `head`/`count` on the parent — and those come from the
-   *extended* struct, so `NameWf.struct_field?` needs an `addFields` variant.
-   Write that variant before starting the nine.
+- `names_pairwise` — the nine names;
+- `elemFields_names` / `dbFields_names` / `elemFields_ok` / `dbFields_ok` —
+  what the added fields are called and that their sizes, layout deps and
+  mentioned structs are fine;
+- `hdist_elem` / `hdist_db` — the distinctness `checkStructs_addFields` wants,
+  and the one place `Dmmeta.check`'s `clashesGenerated` clause is spent.
+  `hdist_db` handles the self-list case, where the parent struct *is* the
+  element struct and already carries the three links;
+- **`checkStructs_gen_llist`** and **`checkGlobals_gen_llist`** — the struct
+  and global halves, assembled.
 
-`Thash` is the same shape with five functions, one `forN` body and one `call`.
-The `call` needs `Wf.Ctx.fun?` to resolve `Find` from `earlier`, which no
-template has exercised — `checkFun`'s `earlier` is `p.funs.take i`, and `Find`
-is emitted before `InsertMaybe`, so it is in the prefix. Nothing else is new.
+So `Wf.check p = []` reduces to `distinct "function"` (have it) plus
+`checkFun` for the nine bodies. That is the whole remainder.
+
+**The nine `checkFun`s.** All nine touch only the *five added* fields and the
+global — never the element's lowered fields — so the entire obligation depends
+on the schema through five `Wf.Ctx.field?` equations plus one `Ctx.global?`.
+The lookup lemmas are in place: `NameWf.struct?_addFields` resolves the
+extended struct by name and `NameWf.find?_field` reaches an appended field
+using the very `Pairwise` `hdist_elem`/`hdist_db` established.
+
+Do this next, in this order:
+
+1. **A bundle lemma** giving all five equations at once against a *symbolic*
+   `Wf.Ctx` whose `structs` is the doubly-extended table — the `UpptrWf`
+   `hfield` shape, five entries instead of one. Write it before any
+   `checkFun`; every one of the nine consumes it and nothing else varies.
+2. **The seven one-statement bodies** — `initDef`, `firstDef`, `nextDef`,
+   `prevDef`, `inQDef`, `emptyQDef`, `sizeDef`. These follow `UpptrWf`'s
+   `checkFun_defsFor` verbatim: `simp only [Wf.checkFun, <def>, names, …,
+   Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]` then
+   `simp [bundle, Wf.isValTy, Wf.distinct, Wf.dups, parRow]`.
+3. **`insertDef` (six statements, one `if`) and `removeDef` (eight, two)** —
+   the actual work. They read and write through the `_old` / `_prev` / `_next`
+   pointer locals, so beyond the five field equations they need
+   `Wf.Ctx.local?` on those, which is closed arithmetic on the `locals` list
+   the frame fixes. Expect the `simp` sets to need `Wf.binTy` and
+   `Wf.isPtrTy` as `testDef` did.
+
+**Hazard, from `UpptrWf`:** put the field bundle in the *closing* `simp`, not
+in the opening `simp only`. In the opening set it does not fire — the goal has
+not been unfolded far enough for `Wf.Ctx.field?` to appear yet — and the
+resulting error looks like the lemma being wrong rather than mistimed.
+
+`Thash` is the same shape with five functions. Two things there are new:
+`findDef` has a `forN` body, and `insertDef` has a `call` to `Find`, which
+needs `Wf.Ctx.fun?` to resolve it from `earlier` — `checkFun`'s `earlier` is
+`p.funs.take i` and `Find` is emitted first, so it is in the prefix, but no
+template has exercised that path.
 
 ### Five findings, all one shape
 
