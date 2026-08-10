@@ -1248,10 +1248,9 @@ the generated `if (_prev != NULL)` takes its else branch, and the write is
 `g.head = _next`. The new chain is `Reaches.tail` and `erase_cons_self` turns
 `q :: post` into `qs.erase q`. `exec_removeTail` finishes.
 
-The other case — `row->prev` names a predecessor — is not yet assembled; see
-"Where `Remove` stands" in `PROGRESS.md`. Its shape is the same with
-`Reaches.splice` and `erase_append_cons_cons` in place of the two above, and
-`Backlinked.of_append`/`append` for the back-links.
+The other case — `row->prev` names a predecessor — is `exec_removeMiddle`
+below, and `exec_removeBody` dispatches between the two on the same
+`Backlinked.split`.
 
 checked by: `lake build` -/
 theorem exec_removeHead {σ : Store}
@@ -1563,6 +1562,437 @@ theorem exec_removeHead {σ : Store}
   · rw [RM, hphead] at hpv
     exact absurd hpv (by simp)
 
+/-- **What `Remove`'s body does when the row has a predecessor.**
+
+The mirror of `exec_removeHead`. `row->prev` names `pp`, so the generated
+`if (_prev != NULL)` takes its *then* branch and the write is
+`_prev->f_next = _next` — a row's field rather than the parent's head, which is
+the only structural difference and the reason every frame side condition below
+is a row-versus-row disjointness rather than a row-versus-parent one.
+
+`Reaches.splice` closes the chain over the gap, `Backlinked.of_append` /
+`Backlinked.append` re-hang the second half from `pp` (`lastOr_append_singleton`
+is what identifies the back-pointer it must carry), `erase_append_cons_cons` is
+what `qs.erase q` computes to, and `exec_removeTail` finishes unchanged.
+
+checked by: `lake build` -/
+theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
+    (hno : NamesOk nm) (I : ListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
+    (hflag : σ.readPath (fldPath q nm.inlist) = some (.bool true))
+    (hqs : qs = pre ++ pp :: q :: post)
+    (hpmid : σ.readPath (fldPath q nm.prev) = some (.ptr pp))
+    (hlocRow : σ.getLocal parRow = some (.ptr q))
+    (hlocPrev : (σ.getLocal tmpPrev).isSome = true)
+    (hlocNext : (σ.getLocal tmpNext).isSome = true) :
+    ∃ σ', execAt p (execStmt p n) (removeDef nm elem).body σ = .ok (σ', .normal)
+      ∧ ListInv σ'.toMem nm rows (qs.erase q)
+      ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
+      ∧ σ'.readPath (fldPath q nm.next) = some .null
+      ∧ σ'.readPath (fldPath q nm.prev) = some .null := by
+  have RM : ∀ pth, readMem σ.toMem pth = σ.readPath pth := readMem_toMem σ
+  have hnd : qs.Pairwise (· ≠ ·) := I.chain.nodup
+  have hguard : evalExpr σ (.rd (ptrFld parRow nm.inlist)) = .ok (.bool true) :=
+    read_ptrFld hlocRow hflag
+  have hqs' : qs = (pre ++ [pp]) ++ q :: post := by rw [hqs]; simp
+  -- Where the three list segments sit, and which rows are distinct from which.
+  have hqmem : q ∈ qs := by rw [hqs]; simp
+  have hpprow : pp ∈ rows := I.sub pp (by rw [hqs]; simp)
+  have hpreRows : ∀ r ∈ pre, r ∈ rows :=
+    fun r hr => I.sub r (by rw [hqs]; simp [hr])
+  have hpostRows : ∀ r ∈ post, r ∈ rows :=
+    fun r hr => I.sub r (by rw [hqs]; simp [hr])
+  have hpwA := List.pairwise_append.mp (hqs ▸ hnd)
+  have hcross : ∀ a ∈ pre, ∀ b ∈ pp :: q :: post, a ≠ b := hpwA.2.2
+  have hpwB := List.pairwise_cons.mp hpwA.2.1
+  have hppq : pp ≠ q := hpwB.1 q (by simp)
+  have hppPost : ∀ r ∈ post, pp ≠ r := fun r hr => hpwB.1 r (by simp [hr])
+  have hpwC := List.pairwise_cons.mp hpwB.2
+  have hqPost : ∀ r ∈ post, q ≠ r := hpwC.1
+  have hqPre : q ∉ pre := fun hm => (hcross q hm q (by simp)) rfl
+  -- The two reads the body starts from.
+  obtain ⟨nval, hnval⟩ : ∃ v, σ.readPath (fldPath q nm.next) = some v := by
+    have h := (I.fields q hqrow).1; rw [RM] at h
+    exact Option.isSome_iff_exists.mp h
+  have hnvP : nval = headOf post := by
+    have hx := Reaches.next_of_mem (pre ++ [pp]) _ q post (hqs' ▸ I.chain)
+    rw [RM, hnval] at hx
+    exact Option.some.inj hx
+  subst hnvP
+  obtain ⟨pv0, hpv0⟩ := Option.isSome_iff_exists.mp hlocPrev
+  obtain ⟨nv0, hnv0⟩ := Option.isSome_iff_exists.mp hlocNext
+  -- A1: `_prev = row->f_prev`
+  obtain ⟨σ1, hσ1⟩ : ∃ t, t = σ.setLocal tmpPrev (Value.ptr pp) := ⟨_, rfl⟩
+  have hA1 : execAt p (execStmt p n)
+      (.assign (.var tmpPrev) (.rd (ptrFld parRow nm.prev))) σ
+      = .ok (σ1, .normal) := by
+    rw [hσ1]; exact step_local hpv0 (read_ptrFld hlocRow hpmid)
+  have hr1 : ∀ pth, σ1.readPath pth = σ.readPath pth := by
+    intro pth; rw [hσ1]; exact readPath_setLocal _ _ _ _
+  have hl1row : σ1.getLocal parRow = some (.ptr q) := by
+    rw [hσ1, getLocal_setLocal_ne (by decide)]; exact hlocRow
+  have hl1prev : σ1.getLocal tmpPrev = some (.ptr pp) := by
+    rw [hσ1]; exact getLocal_setLocal_self hpv0
+  have hl1next : σ1.getLocal tmpNext = some nv0 := by
+    rw [hσ1, getLocal_setLocal_ne (by decide)]; exact hnv0
+  -- A2: `_next = row->f_next`
+  obtain ⟨σ2, hσ2⟩ : ∃ t, t = σ1.setLocal tmpNext (headOf post) := ⟨_, rfl⟩
+  have hA2 : execAt p (execStmt p n)
+      (.assign (.var tmpNext) (.rd (ptrFld parRow nm.next))) σ1
+      = .ok (σ2, .normal) := by
+    rw [hσ2]
+    exact step_local hl1next (read_ptrFld hl1row (by rw [hr1]; exact hnval))
+  have hr2 : ∀ pth, σ2.readPath pth = σ.readPath pth := by
+    intro pth; rw [hσ2, readPath_setLocal]; exact hr1 pth
+  have hl2row : σ2.getLocal parRow = some (.ptr q) := by
+    rw [hσ2, getLocal_setLocal_ne (by decide)]; exact hl1row
+  have hl2prev : σ2.getLocal tmpPrev = some (.ptr pp) := by
+    rw [hσ2, getLocal_setLocal_ne (by decide)]; exact hl1prev
+  have hl2next : σ2.getLocal tmpNext = some (headOf post) := by
+    rw [hσ2]; exact getLocal_setLocal_self hl1next
+  -- The disjointness facts every step below spends.
+  have dNP : (fldPath q nm.next).overlaps (fldPath q nm.prev) = false :=
+    fldPath_ne_disjoint hno.np
+  have dNF : (fldPath q nm.next).overlaps (fldPath q nm.inlist) = false :=
+    fldPath_ne_disjoint hno.nf
+  have dPF : (fldPath q nm.prev).overlaps (fldPath q nm.inlist) = false :=
+    fldPath_ne_disjoint hno.pf
+  have dqH : ∀ x, (fldPath q x).overlaps (dbPath nm nm.head) = false :=
+    fun x => (row_ne_parent I hqrow x).1
+  have dqC : ∀ x, (fldPath q x).overlaps (dbPath nm nm.count) = false :=
+    fun x => (row_ne_parent I hqrow x).2
+  have hPPne : ∀ r ∈ rows, r ≠ pp → ∀ x y : Ident,
+      (fldPath pp x).overlaps (fldPath r y) = false :=
+    fun r hr hrpp x y => fldPath_disjoint (I.disj pp hpprow r hr (Ne.symm hrpp))
+  have hcnt : σ.readPath (dbPath nm nm.count)
+      = some (.u32 (UInt32.ofNat qs.length)) := by rw [← RM]; exact I.count
+  have hlenpos : 0 < qs.length := List.length_pos_of_mem hqmem
+  have hhead : σ.readPath (dbPath nm nm.head) = some (headOf qs) := by
+    rw [← RM]; exact I.head
+  -- A3: `_prev->f_next = _next`
+  obtain ⟨ppn, hppn⟩ : ∃ v, σ.readPath (fldPath pp nm.next) = some v := by
+    have h := (I.fields pp hpprow).1; rw [RM] at h
+    exact Option.isSome_iff_exists.mp h
+  obtain ⟨σ3, hA3w, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := execStmt p n)
+    (ptr := tmpPrev) (x := nm.next) (q := pp) (e := .rd (.var tmpNext))
+    (w := headOf post) hl2prev (by rw [hr2]; exact hppn) (read_local' hl2next)
+  have hg3 : evalExpr σ2 (.bin .ne (.rd (.var tmpPrev)) (.null (.strct elem)))
+      = .ok (.bool true) := by
+    simp only [evalExpr, resolve, hl2prev, readLoc, bind, Except.bind, evalBin]
+  have hA3 : execAt p (execStmt p n)
+      (Stmt.cond (.bin .ne (.rd (.var tmpPrev)) (.null (.strct elem)))
+        (.assign (ptrFld tmpPrev nm.next) (.rd (.var tmpNext)))
+        (.assign (dbFld nm nm.head) (.rd (.var tmpNext)))) σ2
+      = .ok (σ3, .normal) := by
+    rw [execAt_cond', hg3]; exact hA3w
+  have hl3row : σ3.getLocal parRow = some (.ptr q) := by
+    simp only [Store.getLocal, hl3]; exact hl2row
+  have hl3prev : σ3.getLocal tmpPrev = some (Value.ptr pp) := by
+    simp only [Store.getLocal, hl3]; exact hl2prev
+  have hl3next : σ3.getLocal tmpNext = some (headOf post) := by
+    simp only [Store.getLocal, hl3]; exact hl2next
+  -- A4: `if (_next != NULL) { _next->f_prev = _prev; }`
+  obtain ⟨σ4, hA4, hl4, hnew4, hf4⟩ :
+      ∃ σ4, execAt p (execStmt p n)
+          (Stmt.cond (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
+            (.assign (ptrFld tmpNext nm.prev) (.rd (.var tmpPrev))) .skip) σ3
+            = .ok (σ4, .normal)
+        ∧ σ4.loc = σ3.loc
+        ∧ (∀ q1 post0, post = q1 :: post0 →
+            σ4.readPath (fldPath q1 nm.prev) = some (Value.ptr pp))
+        ∧ (∀ r, (∀ q1 post0, post = q1 :: post0 →
+              (fldPath q1 nm.prev).overlaps r = false) →
+            σ4.readPath r = σ3.readPath r) := by
+    cases hpost : post with
+    | nil =>
+      have hln : σ3.getLocal tmpNext = some Value.null := by
+        simp [hl3next, hpost, headOf]
+      have hg : evalExpr σ3
+          (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
+          = .ok (.bool false) := by
+        simp only [evalExpr, resolve, hln, readLoc, bind, Except.bind, evalBin]
+      refine ⟨σ3, ?_, rfl, ?_, fun r _ => rfl⟩
+      · rw [execAt_cond', hg]; rfl
+      · intro q1 post0 h; simp at h
+    | cons q1 post0 =>
+      have hq1p : q1 ∈ post := by rw [hpost]; simp
+      have hq1r : q1 ∈ rows := hpostRows q1 hq1p
+      have hppq1 : pp ≠ q1 := hppPost q1 hq1p
+      obtain ⟨pv1, hpv1⟩ : ∃ v, σ.readPath (fldPath q1 nm.prev) = some v := by
+        have h := (I.fields q1 hq1r).2.1; rw [RM] at h
+        exact Option.isSome_iff_exists.mp h
+      obtain ⟨σ4, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := execStmt p n)
+        (ptr := tmpNext) (x := nm.prev) (q := q1) (e := .rd (.var tmpPrev))
+        (w := Value.ptr pp) (by simp [hl3next, hpost, headOf])
+        (by rw [hf3 _ (fldPath_disjoint (I.disj pp hpprow q1 hq1r hppq1)), hr2]
+            exact hpv1)
+        (read_local' hl3prev)
+      have hln : σ3.getLocal tmpNext = some (Value.ptr q1) := by
+        simp [hl3next, hpost, headOf]
+      have hg : evalExpr σ3
+          (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
+          = .ok (.bool true) := by
+        simp only [evalExpr, resolve, hln, readLoc, bind, Except.bind, evalBin]
+      refine ⟨σ4, ?_, hl, ?_, ?_⟩
+      · rw [execAt_cond', hg]; exact hS
+      · intro q1' post0' h; cases h; exact hw
+      · intro r hr; exact hf r (hr q1 post0 rfl)
+  -- What the relink left alone.
+  have hUnch34 : ∀ r : Path, (fldPath pp nm.next).overlaps r = false →
+      (∀ q1 post0, post = q1 :: post0 →
+        (fldPath q1 nm.prev).overlaps r = false) →
+      σ4.readPath r = σ.readPath r := by
+    intro r h1 h2
+    rw [hf4 r h2, hf3 r h1, hr2]
+  have hPostD : ∀ r ∈ rows, ∀ y : Ident, ∀ q1 post0, post = q1 :: post0 →
+      q1 ≠ r → (fldPath q1 nm.prev).overlaps (fldPath r y) = false := by
+    intro r hr y q1 post0 h hne
+    exact fldPath_disjoint (I.disj q1 (hpostRows q1 (by rw [h]; simp)) r hr hne)
+  have hNotPrev5 : ∀ r ∈ rows, ∀ x : Ident, x ≠ nm.prev → ∀ q1 post0,
+      post = q1 :: post0 →
+      (fldPath q1 nm.prev).overlaps (fldPath r x) = false := by
+    intro r hr x hx q1 post0 h
+    by_cases hq1r : q1 = r
+    · subst hq1r; exact fldPath_ne_disjoint (Ne.symm hx)
+    · exact fldPath_disjoint (I.disj q1 (hpostRows q1 (by rw [h]; simp)) r hr hq1r)
+  have hq4 : ∀ x, σ4.readPath (fldPath q x) = σ.readPath (fldPath q x) := by
+    intro x
+    refine hUnch34 _ (fldPath_disjoint (I.disj pp hpprow q hqrow hppq)) ?_
+    intro q1 post0 h
+    exact hPostD q hqrow x q1 post0 h
+      (Ne.symm (hqPost q1 (by rw [h]; simp)))
+  have hcnt4 : σ4.readPath (dbPath nm nm.count)
+      = some (.u32 (UInt32.ofNat qs.length)) := by
+    rw [hUnch34 _ (row_ne_parent I hpprow nm.next).2
+      (fun q1 post0 h =>
+        (row_ne_parent I (hpostRows q1 (by rw [h]; simp)) nm.prev).2)]
+    exact hcnt
+  have hl4row : σ4.getLocal parRow = some (.ptr q) := by
+    simp only [Store.getLocal, hl4]; exact hl3row
+  -- The tail, shared with the head case.
+  obtain ⟨σ5, hT, hl5, hn5, hp5, hf5v, hc5, hfr5⟩ := exec_removeTail
+    (p := p) (n := n) (nm := nm) (elem := elem) (q := q) (σ := σ4)
+    (c := qs.length) hl4row (by simp [hq4, hnval]) (by simp [hq4, hpmid])
+    (by simp [hq4, hflag]) hcnt4 dNP dNF dPF (dqC nm.next) (dqC nm.prev)
+    (dqC nm.inlist) hlenpos
+  have RM5 : ∀ pth, readMem σ5.toMem pth = σ5.readPath pth := readMem_toMem σ5
+  have hUnch5 : ∀ r : Path,
+      (fldPath q nm.next).overlaps r = false →
+      (fldPath q nm.prev).overlaps r = false →
+      (fldPath q nm.inlist).overlaps r = false →
+      (dbPath nm nm.count).overlaps r = false →
+      (fldPath pp nm.next).overlaps r = false →
+      (∀ q1 post0, post = q1 :: post0 →
+        (fldPath q1 nm.prev).overlaps r = false) →
+      σ5.readPath r = σ.readPath r := by
+    intro r h1 h2 h3 h4 h5 h6
+    rw [hfr5 r h1 h2 h3 h4]; exact hUnch34 r h5 h6
+  have hFld5 : ∀ r ∈ rows, r ≠ q → ∀ x : Ident,
+      (fldPath pp nm.next).overlaps (fldPath r x) = false →
+      (∀ q1 post0, post = q1 :: post0 →
+        (fldPath q1 nm.prev).overlaps (fldPath r x) = false) →
+      readMem σ5.toMem (fldPath r x) = readMem σ.toMem (fldPath r x) := by
+    intro r hr hrq x h5 h6
+    rw [RM5, RM]
+    exact hUnch5 _ (insert_disj I hqrow hr hrq nm.next x)
+      (insert_disj I hqrow hr hrq nm.prev x)
+      (insert_disj I hqrow hr hrq nm.inlist x)
+      (parent_ne_row I hr x).2 h5 h6
+  -- The two values the relink installed, surviving the tail.
+  have hppNext5 : σ5.readPath (fldPath pp nm.next) = some (headOf post) := by
+    rw [hfr5 _ (insert_disj I hqrow hpprow hppq nm.next nm.next)
+      (insert_disj I hqrow hpprow hppq nm.prev nm.next)
+      (insert_disj I hqrow hpprow hppq nm.inlist nm.next)
+      (parent_ne_row I hpprow nm.next).2,
+      hf4 _ (hNotPrev5 pp hpprow nm.next hno.np)]
+    exact hw3
+  have hhead5 : σ5.readPath (dbPath nm nm.head) = some (headOf qs) := by
+    rw [hUnch5 _ (dqH nm.next) (dqH nm.prev) (dqH nm.inlist)
+      (dbPath_disjoint (Ne.symm hno.hc)) (row_ne_parent I hpprow nm.next).1
+      (fun q1 post0 h =>
+        (row_ne_parent I (hpostRows q1 (by rw [h]; simp)) nm.prev).1)]
+    exact hhead
+  have herase : qs.erase q = pre ++ pp :: post := by
+    rw [hqs]; exact erase_append_cons_cons pre pp q post hqPre (Ne.symm hppq)
+  refine ⟨σ5, ?_, ?_, hf5v, hn5, hp5⟩
+  · simp only [removeDef, Stmt.when]
+    rw [execAt_cond', hguard]
+    simp only [bind, Except.bind, Stmt.block]
+    rw [execAt_seq', hA1]; simp only [bind, Except.bind]
+    rw [execAt_seq', hA2]; simp only [bind, Except.bind]
+    rw [execAt_seq', hA3]; simp only [bind, Except.bind]
+    rw [execAt_seq', hA4]; simp only [bind, Except.bind]
+    exact hT
+  rw [herase]
+  refine ⟨?_, I.disj, ?_, ?_, ?_, ?_, ?_, ?_, I.parent⟩
+  · -- the shortened chain is still a sublist of the live rows
+    intro r hr
+    simp only [List.mem_append, List.mem_cons] at hr
+    refine I.sub r ?_
+    rw [hqs]
+    simp only [List.mem_append, List.mem_cons]
+    rcases hr with h | h | h
+    · exact Or.inl h
+    · exact Or.inr (Or.inl h)
+    · exact Or.inr (Or.inr (Or.inr h))
+  · -- the head pointer did not move: `pp` is not the first row
+    show readMem σ5.toMem (dbPath nm nm.head) = _
+    rw [RM5, hhead5, hqs]
+    exact congrArg some (headOf_append_cons pre pp (q :: post) post)
+  · -- the chain, spliced
+    have hpreF : ∀ r ∈ pre, readMem σ5.toMem (fldPath r nm.next)
+        = readMem σ.toMem (fldPath r nm.next) := by
+      intro r hr
+      have hrrow : r ∈ rows := hpreRows r hr
+      exact hFld5 r hrrow (hcross r hr q (by simp)) nm.next
+        (hPPne r hrrow (hcross r hr pp (by simp)) nm.next nm.next)
+        (fun q1 post0 h => hPostD r hrrow nm.next q1 post0 h
+          (Ne.symm (hcross r hr q1 (by rw [h]; simp))))
+    have hpostF : ∀ r ∈ post, readMem σ5.toMem (fldPath r nm.next)
+        = readMem σ.toMem (fldPath r nm.next) := by
+      intro r hr
+      have hrrow : r ∈ rows := hpostRows r hr
+      exact hFld5 r hrrow (Ne.symm (hqPost r hr)) nm.next
+        (hPPne r hrrow (Ne.symm (hppPost r hr)) nm.next nm.next)
+        (hNotPrev5 r hrrow nm.next hno.np)
+    have hchain' : Reaches σ.toMem nm.next (headOf (pre ++ pp :: post))
+        (pre ++ pp :: q :: post) := by
+      rw [← headOf_append_cons pre pp (q :: post) post, ← hqs]
+      exact I.chain
+    exact Reaches.splice pre _ pp q post hchain' hpreF
+      (by rw [RM5]; exact hppNext5) hpostF
+  · -- the back-links, split at `pp` and re-hung
+    have hb0 : Backlinked σ.toMem nm.prev ((pre ++ [pp]) ++ q :: post)
+        Value.null := by rw [← hqs']; exact I.back
+    obtain ⟨B1, B2⟩ := Backlinked.of_append (pre ++ [pp]) Value.null (q :: post) hb0
+    rw [lastOr_append_singleton pre pp Value.null] at B2
+    have heq : pre ++ pp :: post = (pre ++ [pp]) ++ post := by simp
+    rw [heq]
+    refine Backlinked.append (pre ++ [pp]) Value.null post ?_ ?_
+    · refine Backlinked.frame (pre ++ [pp]) Value.null B1 ?_
+      intro r hr
+      rcases List.mem_append.mp hr with hrpre | hrpp
+      · have hrrow : r ∈ rows := hpreRows r hrpre
+        exact hFld5 r hrrow (hcross r hrpre q (by simp)) nm.prev
+          (hPPne r hrrow (hcross r hrpre pp (by simp)) nm.next nm.prev)
+          (fun q1 post0 h => hPostD r hrrow nm.prev q1 post0 h
+            (Ne.symm (hcross r hrpre q1 (by rw [h]; simp))))
+      · have hrEq : r = pp := by simpa using hrpp
+        rw [hrEq]
+        exact hFld5 pp hpprow hppq nm.prev (fldPath_ne_disjoint hno.np)
+          (fun q1 post0 h => hPostD pp hpprow nm.prev q1 post0 h
+            (Ne.symm (hppPost q1 (by rw [h]; simp))))
+    · rw [lastOr_append_singleton pre pp Value.null]
+      cases hpost : post with
+      | nil => trivial
+      | cons q1 post0 =>
+        have hq1p : q1 ∈ post := by rw [hpost]; simp
+        have hq1r : q1 ∈ rows := hpostRows q1 hq1p
+        have hq1q : q1 ≠ q := Ne.symm (hqPost q1 hq1p)
+        refine ⟨?_, ?_⟩
+        · rw [RM5, hfr5 _ (insert_disj I hqrow hq1r hq1q nm.next nm.prev)
+            (insert_disj I hqrow hq1r hq1q nm.prev nm.prev)
+            (insert_disj I hqrow hq1r hq1q nm.inlist nm.prev)
+            (parent_ne_row I hq1r nm.prev).2]
+          exact hnew4 q1 post0 hpost
+        · have hb2 := B2.2
+          rw [hpost] at hb2
+          have hndPost : (q1 :: post0).Pairwise (· ≠ ·) := by
+            have h := hpwC.2; rw [hpost] at h; exact h
+          refine Backlinked.frame post0 (.ptr q1) hb2.2 ?_
+          intro r hr
+          have hrpost : r ∈ post := by rw [hpost]; exact List.mem_cons_of_mem _ hr
+          have hrrow : r ∈ rows := hpostRows r hrpost
+          refine hFld5 r hrrow (Ne.symm (hqPost r hrpost)) nm.prev
+            (hPPne r hrrow (Ne.symm (hppPost r hrpost)) nm.next nm.prev) ?_
+          intro q1' post0' h
+          rw [hpost] at h
+          cases h
+          exact fldPath_disjoint (I.disj q1 hq1r r hrrow
+            ((List.pairwise_cons.mp hndPost).1 r hr))
+  · -- the flag, cleared on exactly `q`
+    refine herase ▸ Flagged.erase I.flags hqrow hnd (by rw [RM5]; exact hf5v) ?_
+    intro r hr hrq
+    refine hFld5 r hr hrq nm.inlist ?_
+      (hNotPrev5 r hr nm.inlist (Ne.symm hno.pf))
+    by_cases hrpp : r = pp
+    · rw [hrpp]; exact fldPath_ne_disjoint hno.nf
+    · exact hPPne r hr hrpp nm.next nm.inlist
+  · -- the count, one shorter
+    have hlen : qs.length - 1 = (pre ++ pp :: post).length := by
+      rw [hqs]; simp only [List.length_append, List.length_cons]; omega
+    show readMem σ5.toMem (dbPath nm nm.count) = _
+    rw [RM5, hc5, hlen]
+  · -- every live row still has all three link fields
+    intro r hr
+    by_cases hrq : r = q
+    · subst hrq
+      exact ⟨by rw [RM5, hn5]; rfl, by rw [RM5, hp5]; rfl,
+        by rw [RM5, hf5v]; rfl⟩
+    · by_cases hrpp : r = pp
+      · rw [hrpp]
+        refine ⟨by rw [RM5, hppNext5]; rfl, ?_, ?_⟩
+        · rw [hFld5 pp hpprow hppq nm.prev (fldPath_ne_disjoint hno.np)
+            (fun q1 post0 h => hPostD pp hpprow nm.prev q1 post0 h
+              (Ne.symm (hppPost q1 (by rw [h]; simp))))]
+          exact (I.fields pp hpprow).2.1
+        · rw [hFld5 pp hpprow hppq nm.inlist (fldPath_ne_disjoint hno.nf)
+            (hNotPrev5 pp hpprow nm.inlist (Ne.symm hno.pf))]
+          exact (I.fields pp hpprow).2.2
+      · refine ⟨?_, ?_, ?_⟩
+        · rw [hFld5 r hr hrq nm.next (hPPne r hr hrpp nm.next nm.next)
+            (hNotPrev5 r hr nm.next hno.np)]
+          exact (I.fields r hr).1
+        · cases hpost : post with
+          | nil =>
+            rw [hFld5 r hr hrq nm.prev (hPPne r hr hrpp nm.next nm.prev)
+              (by intro q1 post0 h; rw [hpost] at h; simp at h)]
+            exact (I.fields r hr).2.1
+          | cons q1 post0 =>
+            by_cases hq1r : q1 = r
+            · subst hq1r
+              rw [RM5, hfr5 _ (insert_disj I hqrow hr hrq nm.next nm.prev)
+                (insert_disj I hqrow hr hrq nm.prev nm.prev)
+                (insert_disj I hqrow hr hrq nm.inlist nm.prev)
+                (parent_ne_row I hr nm.prev).2, hnew4 q1 post0 hpost]
+              rfl
+            · rw [hFld5 r hr hrq nm.prev (hPPne r hr hrpp nm.next nm.prev)
+                (by
+                  intro q1' post0' h
+                  rw [hpost] at h
+                  cases h
+                  exact fldPath_disjoint
+                    (I.disj q1 (hpostRows q1 (by rw [hpost]; simp)) r hr hq1r))]
+              exact (I.fields r hr).2.1
+        · rw [hFld5 r hr hrq nm.inlist (hPPne r hr hrpp nm.next nm.inlist)
+            (hNotPrev5 r hr nm.inlist (Ne.symm hno.pf))]
+          exact (I.fields r hr).2.2
+
+/-- **What `Remove`'s body does**, either way. `Backlinked.split` is what
+decides which branch the generated `if` takes: the row's back-pointer *is* the
+case analysis, which is the whole reason the doubly-linked flavour can unlink
+in O(1).
+
+checked by: `lake build` -/
+theorem exec_removeBody {σ : Store}
+    (hno : NamesOk nm) (I : ListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
+    (hflag : σ.readPath (fldPath q nm.inlist) = some (.bool true))
+    (hlocRow : σ.getLocal parRow = some (.ptr q))
+    (hlocPrev : (σ.getLocal tmpPrev).isSome = true)
+    (hlocNext : (σ.getLocal tmpNext).isSome = true) :
+    ∃ σ', execAt p (execStmt p n) (removeDef nm elem).body σ = .ok (σ', .normal)
+      ∧ ListInv σ'.toMem nm rows (qs.erase q)
+      ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
+      ∧ σ'.readPath (fldPath q nm.next) = some .null
+      ∧ σ'.readPath (fldPath q nm.prev) = some .null := by
+  have RM : ∀ pth, readMem σ.toMem pth = σ.readPath pth := readMem_toMem σ
+  have hqmem : q ∈ qs := (I.flags q hqrow).mp (by rw [RM]; exact hflag)
+  rcases Backlinked.split qs .null q I.back hqmem with
+    ⟨hpv, _⟩ | ⟨pp, pre, post, hqs, hpv⟩
+  · exact exec_removeHead hno I hqrow hflag (by rw [← RM]; exact hpv)
+      hlocRow hlocPrev hlocNext
+  · exact exec_removeMiddle hno I hqrow hflag hqs (by rw [← RM]; exact hpv)
+      hlocRow hlocPrev hlocNext
+
 /-- **`Insert` links a row at the head.**
 
 checked by: `lake build` -/
@@ -1582,6 +2012,27 @@ theorem insertLinks {nm : Names} {elem : Ident} : InsertLinks nm elem := by
   · rw [readMem_toMem]; exact hflag'
   · rw [readMem_toMem]; exact hprev'
   · rw [readMem_toMem, hnext', I.head]
+
+/-- **`Remove` splices a row out.**
+
+checked by: `lake build` -/
+theorem removeUnlinks {nm : Names} {elem : Ident} : RemoveUnlinks nm elem := by
+  intro p m rows qs q hlook hn hno I hqrow hflag
+  obtain ⟨n, hn⟩ := hn
+  have hI : ListInv (m.toStore [(parRow, Value.ptr q), (tmpPrev, Value.null),
+      (tmpNext, Value.null)]).toMem nm rows qs := by
+    rw [Mem.toStore_toMem]; exact I
+  obtain ⟨σ', hbody, I', hflag', hnext', hprev'⟩ :=
+    exec_removeBody (p := p) (n := n) (elem := elem)
+      (σ := m.toStore [(parRow, Value.ptr q), (tmpPrev, Value.null),
+        (tmpNext, Value.null)])
+      hno hI hqrow (by rw [readMem_toStore]; exact hflag) rfl rfl rfl
+  refine ⟨σ'.toMem, ?_, I', ?_, ?_, ?_⟩
+  · exact callFun_normal (p := p) (m := m) (fd := removeDef nm elem)
+      (args := [Value.ptr q]) hlook hn rfl hbody
+  · rw [readMem_toMem]; exact hflag'
+  · rw [readMem_toMem]; exact hnext'
+  · rw [readMem_toMem]; exact hprev'
 
 end Proofs
 

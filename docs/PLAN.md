@@ -51,12 +51,14 @@ tested against a real compiler by `scripts/smoke.sh`.
   `Set` returns exactly what was set, and the `Set` is invisible at every path
   that does not overlap the field. `init_correct`, `test_null` and `test_ptr`
   cover the other three functions.
-- `Llist.init_correct`, the five readers, both idempotence guards, and
-  **`Llist.insertLinks`** — `Insert` links the row at the head and preserves
-  the representation invariant, with the chain becoming `q :: qs`.
-  `RemoveUnlinks` is **stated and not yet proved**: its last four statements
-  (`exec_removeTail`) and its whole head case (`exec_removeHead`) are proved;
-  the middle-case assembly is not. `PROGRESS.md` has the remaining steps.
+- `Llist.init_correct`, the five readers, both idempotence guards, and **both
+  linking laws**: `Llist.insertLinks` — `Insert` links the row at the head and
+  preserves the representation invariant, with the chain becoming `q :: qs` —
+  and **`Llist.removeUnlinks`** — `Remove` splices the row out, whichever
+  branch the generated `if (_prev != NULL)` takes, with the chain becoming
+  `qs.erase q` and all eight invariant clauses re-established. The two branches
+  are `exec_removeHead` and `exec_removeMiddle`, sharing `exec_removeTail`;
+  `exec_removeBody` dispatches on `Backlinked.split`.
 - **`Upptr.lookups_of_wf`** — a program `Wf.check` accepts has distinct
   function names, so the resolution hypothesis every accessor law assumes is
   supplied by acceptance. `Dmmeta.check` gained the matching schema-level
@@ -118,19 +120,16 @@ Two gaps remain against the full measure, both recorded in
 
 ## Next, in order
 
-1. **`Llist.RemoveUnlinks`** — the middle-case assembly (the head case is
-   proved as `exec_removeHead`). Every ingredient is proved; `PROGRESS.md`
-   lists the steps and the three things that went wrong last attempt.
-2. **`Thash.FindCorrect`**, over `CSubset.Chain` — a bucket is a chain, so the
+1. **`Thash.FindCorrect`**, over `CSubset.Chain` — a bucket is a chain, so the
    same `Reaches` applies with `nm.next` and the bucket head.
-3. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and
+2. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and
    `Thash` each have `Wf.check … = []` only as a computational example on
    their sample schema. The array table has it for *every* accepted schema.
    Until the others do, `lookups_of_wf`'s hypothesis is discharged per-schema
    rather than once.
-4. **Xref maintenance** tying the templates together, using the
+3. **Xref maintenance** tying the templates together, using the
    prepare/commit design from `Spec/Algebra.lean`.
-5. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other
+4. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other
    seven `Llist` flavours, and cursors for all of them. `docs/GOALS.md` puts
    the whole vocabulary in scope; `docs/DIVERGENCE.md` §3 is the standing list
    of what is not attempted.

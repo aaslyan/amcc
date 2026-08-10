@@ -177,8 +177,8 @@ Stated plainly so the comparison is not read as parity.
   one, over `Inlary`.
 - **Access patterns**: `Bheap`, `Atree`, `Count`, and a cursor for every access
   pattern, plus seven of `Llist`'s eight flavours. AMCC emits `Llist`'s `zdl`
-  and a fixed-capacity `Thash` — and for both, the laws about *linking* are
-  stated and not yet proved.
+  and a fixed-capacity `Thash` — `Llist`'s two linking laws are proved;
+  `Thash.FindCorrect` is stated and not yet proved.
 - **Cross-references** — the centre of the library. AMCC models them
   (`Amcc/Spec/Algebra.lean`) and emits none.
 - **The ssim layer** entirely: `acr`, query mode, `ssimfile` loading,

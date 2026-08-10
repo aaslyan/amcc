@@ -2,10 +2,20 @@
 
 ## Now
 
-**`Llist.RemoveUnlinks`** — the two branch assemblies. Everything they need is
-proved; see "Where Remove stands" below. Then `Thash.FindCorrect`.
+**`Thash.FindCorrect`**, over `CSubset.Chain`. A bucket is a chain, so the same
+`Reaches` applies with the bucket head in place of the list head.
 
 ## Done
+
+- **F — `Llist.RemoveUnlinks`.** Proved, so both linking laws are closed.
+  `exec_removeMiddle` is the branch where `row->prev` names a predecessor:
+  `Reaches.splice` closes the chain over the gap, `Backlinked.of_append` /
+  `Backlinked.append` re-hang the second half from `pp`, and
+  `erase_append_cons_cons` is what `qs.erase q` computes to.
+  `exec_removeBody` dispatches between it and `exec_removeHead` on the same
+  `Backlinked.split` the invariant already supplied — the row's back-pointer
+  *is* the case analysis, which is why the doubly-linked flavour unlinks in
+  O(1). `removeUnlinks` runs it through `callFun_normal` as `insertLinks` does.
 
 - **E — the C-name uniqueness obligation.** `Dmmeta.check` now rejects two
   fields whose `<ctype>_<field>` qualified names collide (`a`/`b_c` versus
@@ -66,8 +76,6 @@ proved; see "Where Remove stands" below. Then `Thash.FindCorrect`.
 
 ## Next
 
-- `Llist.RemoveUnlinks` — the middle-case assembly, then both through
-  `callFun_normal` (see "Where Remove stands")
 - `Thash.FindCorrect`, over `CSubset.Chain`
 - The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
   `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
@@ -75,46 +83,50 @@ proved; see "Where Remove stands" below. Then `Thash.FindCorrect`.
   (`genWellFormed`). Until that exists for the others, `lookups_of_wf`'s
   hypothesis is discharged per-schema rather than once.
 
-## Where `Remove` stands
+## How `Remove` went, in the end
 
-**Head case: done.** `Llist.exec_removeHead` is proved — `row->prev` is `NULL`,
-so `Backlinked.split` puts `q` first, the generated `if (_prev != NULL)` takes
-its else branch and writes `g.head = _next`, the new chain is `Reaches.tail`,
-and `erase_cons_self` turns `q :: post` into `qs.erase q`. `exec_removeTail`
-finishes. The A4 packaging (`if (_next != NULL) _next->prev = _prev`, split on
-whether `post` is empty) is in that proof and is what the middle case should
-copy — it is identical there except the value written is `.ptr pp` instead of
-`.null`.
+The head case landed first and the middle case is a near-copy of it, with two
+substitutions and one extra case:
 
-**Middle case: not assembled.** It was written once and cut back rather than
-committed under a `sorry`. Its shape, and everything it needs, is proved:
+- A3 writes `pp->next = _next` instead of `g.head = _next`, so every frame side
+  condition in the branch is row-versus-row (`I.disj`) where the head case's
+  was row-versus-parent (`row_ne_parent`). The head pointer does not move at
+  all, and `headOf_append_cons` is what says so about the chain.
+- A4 is character-for-character the head case's, except the value written is
+  `.ptr pp` rather than `.null`. Factoring the packaging out of the head case
+  first is what made that free.
+- The `fields` clause needs a fourth case the head case does not have: `r = pp`,
+  whose `next` A3 wrote. Its value is the one `Reaches.splice` consumes, so it
+  was already in hand as `hppNext5`.
 
-- `hqs : qs = pre ++ pp :: q :: post` and `pval = .ptr pp`, both from
-  `Backlinked.split`.
-- A3 takes its *then* branch and writes `fldPath pp next := headOf post` —
-  `step_ptr` with `ptr := tmpPrev`, `q := pp`.
-- Chain: `Reaches.splice pre (headOf qs) pp q post`, then rewrite the head
-  value with `headOf_append_cons`.
-- Back-links: `Backlinked.of_append (pre ++ [pp]) .null (q :: post)` splits the
-  old chain; `Backlinked.append` puts it back with `post` re-rooted at `pp`
-  (`lastOr_append_singleton` is the bridge). The `post = q1 :: post0` sub-case
-  takes `q1.prev` from A4 and the rest from `of_append`'s second component.
-- Erase: `erase_append_cons_cons pre pp q post` needs `q ∉ pre` and `q ≠ pp`,
-  both from `List.pairwise_append.mp (hqs ▸ hnd)`.
+The three snags recorded from the earlier cut-back attempt were all real:
 
-Three things went wrong in the cut-back attempt and are worth knowing:
+- `Ne.symm` direction. `hqPost`/`hppPost` give `q ≠ r` and `pp ≠ r`, and
+  `RowsDisjoint` wants the arguments in the order the rows appear, so the
+  symmetry has to be applied at the call and not assumed.
+- Steering the `▸`. `hqs ▸ I.chain` rewrites inside `headOf qs` as well as the
+  list, so the chain hypothesis is built by rewriting the *goal* backwards
+  (`rw [← headOf_append_cons …, ← hqs]`) rather than by transporting the
+  hypothesis forwards.
+- `Backlinked.append`'s second obligation carries `lastOr (pre ++ [pp]) .null`
+  literally; `lastOr_append_singleton` has to be rewritten in the **goal** as
+  well as in the split's output, or the value `A4` installed does not match.
 
-- `Ne.symm` direction on `hppPost`/`hqPost` — they give `pp ≠ r` and `q ≠ r`,
-  and `RowsDisjoint` wants the arguments in the order the rows appear.
-- `hsplit`'s `Backlinked.of_append` needs the list in `(pre ++ [pp]) ++ q ::
-  post` form; `hqs ▸ I.back` gives `pre ++ pp :: q :: post`, so the `▸` has to
-  be steered rather than left to unify.
-- The `fields` clause needs a fourth case in the middle branch: `r = pp`, whose
-  `next` A3 wrote. The head case has only three.
+One thing that was not anticipated: `cases hpost : post` substitutes into the
+goal but not into the hypotheses, so inside a branch `hnew4`/`hl3next` still
+mention `post` while the goal mentions `q1 :: post0`. Every membership side
+goal is then `by rw [hpost]; simp` rather than `simp`.
 
-**Then**: `removeUnlinks` assembles the two branches through `callFun_normal`
-exactly as `insertLinks` does.
 ## Decisions
+
+- **`Remove` is three lemmas, not one: `exec_removeHead`, `exec_removeMiddle`,
+  `exec_removeBody`.** The generated `if (_prev != NULL)` is the branch, and
+  `Backlinked.split` is exactly the same case distinction stated over the
+  invariant — so the dispatch is one `rcases` and neither branch has to carry
+  the other's hypotheses. Trying to prove one lemma covering both is what made
+  the earlier attempt unmanageable: the chain rewriting differs
+  (`Reaches.tail` versus `Reaches.splice`), the erase rewriting differs, and
+  the head case has no `pp` to say anything about.
 
 - **`Backlinked` gained `of_append`/`append` and `lastOr` rather than a
   bespoke splice lemma.** An unlink is "split the chain, shorten the second

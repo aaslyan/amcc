@@ -109,10 +109,11 @@ that should fail does not.)
                           is stated and owed
 - `Templates.Llist`     — the **intrusive doubly-linked list** (`amc`'s `zdl`
                           flavour): nine functions, with the readers, both
-                          idempotence guards and **`insertLinks`** proved over
-                          `ListInv`, and `Remove`'s head case
-                          (`exec_removeHead`). `RemoveUnlinks` is stated and
-                          owed — the middle-case assembly remains
+                          idempotence guards, **`insertLinks`** and
+                          **`removeUnlinks`** all proved over `ListInv` — both
+                          linking laws are closed, so the chain the template
+                          maintains is now a theorem about the emitted code
+                          rather than a claim about it
 - `Templates.Upptr`     — the **up-pointer template** (its `lookups_of_wf`
                           shows `Wf.check` acceptance supplies the resolution
                           hypothesis every accessor law assumes): `Init`/`Get`/`Set`/`Q`
@@ -134,9 +135,9 @@ from `RepInv` where it arises, so `MilestoneTheorem` is proved without it. It
 remains owed as the general bridge a template that cannot argue locally would
 need.
 
-`Templates.Llist.RemoveUnlinks` and `Templates.Thash.FindCorrect`. The
-predicate they need — `CSubset.Chain` — now exists and `insertLinks` is proved
-over it; what remains is the assembly in each. `Templates.Thash.BucketInRange` is closed.
+`Templates.Thash.FindCorrect`. The predicate it needs — `CSubset.Chain` —
+exists, and both of `Llist`'s linking laws are now proved over it, so what
+remains is the assembly. `Templates.Thash.BucketInRange` is closed.
 
 `Codegen.Print` is unverified — see `docs/DIVERGENCE.md` §3. A closed
 `MilestoneTheorem` certifies the generated **AST**; the C text is covered by
