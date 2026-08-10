@@ -237,5 +237,50 @@ theorem hdist_db {d : Db} (hchk : check d = []) {dbC : Ctype} {fld : Field}
   · rw [if_neg (fun h => hn (eq_of_beq h))]
     exact List.pairwise_append.mpr ⟨hown0, hpair2, hown⟩
 
+/-! ## The struct and global halves, assembled -/
+
+/-- **The emitted struct table is well-formed.** Two
+`Layout.checkStructs_addFields` applications over `Layout.checkStructs_gen`.
+
+checked by: `lake build` -/
+theorem checkStructs_gen_llist {d : Db} (hchk : check d = [])
+    {dbC elemC : Ctype} {fld : Field}
+    (hdb : dbC ∈ d.withBuiltins.ctypes) (hfld : fld ∈ dbC.fields)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none) :
+    Wf.checkStructs
+      (Layout.addFields (mangle dbC.name)
+        (dbFields (names (mangle dbC.name) (mangle fld.name)) (mangle elemC.name))
+        (Layout.addFields (mangle elemC.name)
+          (elemFields (names (mangle dbC.name) (mangle fld.name))
+            (mangle elemC.name))
+          (genStructs d))) = [] := by
+  have hmem := Layout.mem_genStructs_name helem hes
+  obtain ⟨se, sl, sa⟩ := elemFields_ok (names (mangle dbC.name) (mangle fld.name))
+    (mangle elemC.name)
+  obtain ⟨de, dl, da⟩ := dbFields_ok (names (mangle dbC.name) (mangle fld.name))
+    (mangle elemC.name)
+  refine Layout.checkStructs_addFields
+    (Layout.checkStructs_addFields (Layout.checkStructs_gen hchk)
+      (hdist_elem hchk hdb hfld _) se ?_ sl)
+    (hdist_db hchk hdb hfld _) de ?_ dl
+  · intro fv hfv m hm
+    rw [sa fv hfv m hm]
+    exact hmem
+  · intro fv hfv m hm
+    rw [Layout.addFields_names, da fv hfv m hm]
+    exact hmem
+
+/-- **And the global.** `checkGlobals` reads only struct names, and extending
+preserves them.
+
+checked by: `lake build` -/
+theorem checkGlobals_gen_llist {d : Db} (hchk : check d = [])
+    (n₁ n₂ : CSubset.Ident) (e₁ e₂ : List (CSubset.Ident × Ty)) :
+    Wf.checkGlobals
+      (Layout.addFields n₂ e₂ (Layout.addFields n₁ e₁ (genStructs d)))
+      (genGlobals d) = [] :=
+  Layout.checkGlobals_addFields (Layout.checkGlobals_addFields
+    (Layout.checkGlobals_gen hchk))
+
 end Llist
 end Templates
