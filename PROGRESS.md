@@ -2,11 +2,22 @@
 
 ## Now
 
-**A namespace-to-C-identifier mapping**, which `docs/CONFORMANCE.md` measures
-as gating 79.8% of real fields. `Thash`/`Llist` `genWellFormed` is parked
-behind a generator rework — see "Where the every-schema gap stands".
+**An attribute-join mechanism**, then `Smallstr` — `docs/PLAN.md` item 1, and
+the reasoning for putting it ahead of `Lary` is there. `Thash`/`Llist`
+`genWellFormed` is parked behind a generator rework; see "Where the
+every-schema gap stands".
 
 ## Done
+
+- **O — mangling, and the remeasurement.** `Dmmeta.mangle` is
+  `amc::strptr_PrintCppIdent` transcribed, applied at the generator's boundary
+  so the `Db` keeps the schema's qualified names and the ssim round trip is
+  untouched. It is deliberately not injective; `Dmmeta.check` gained one
+  clause on mangled ctype names and the qualified-name clause from 47ecf60
+  covers fields unchanged. **`docs/CONFORMANCE.md` went from 1 generated field
+  to 3909 of 5659 (69.1%)**, and `docs/PLAN.md` was reordered on cost rather
+  than corpus count — the attribute join that unblocks five reftypes now leads,
+  and `Lary` sits behind it because it needs the heap rework.
 
 - **N — `Upptr.genWellFormed`.** Proved, so the banner in
   `scripts/gen/upptr_gen.h` is now true of this template. `Templates/NameWf.lean`
@@ -162,9 +173,8 @@ behind a generator rework — see "Where the every-schema gap stands".
 
 ## Next
 
-- The rest of item B: `Layout.layoutWellFormed`, then the three templates
-- A namespace-to-C-identifier mapping — `docs/CONFORMANCE.md` says this gates
-  79.8% of real fields, more than every missing reftype put together
+- An attribute-join mechanism, then `Smallstr`/`Bitfld`/`Charset`
+- The `Llist`/`Thash` generator rework, then their `genWellFormed`
 - The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
   `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
   on their sample schema; the array table has it for *every* accepted schema
@@ -307,6 +317,29 @@ mention `post` while the goal mentions `q1 :: post0`. Every membership side
 goal is then `by rw [hpost]; simp` rather than `simp`.
 
 ## Decisions
+
+- **Mangling happens at the generator's boundary, not in the reader.** The
+  `Db` stores the schema's own names — `abt.FArch` — and `Dmmeta.mangle` is
+  applied where a schema name becomes a C identifier: `structOf`, `fieldTy`,
+  `genGlobals`, `qualName`, and each template's call into `defsFor`. Mangling
+  in the reader would have been fewer edits and would have broken the round
+  trip, which is the one thing standing in for a proof of the front end.
+
+- **`mangle` is not injective, and the checker catches the collisions.**
+  `a.b` and `a_b` both give `a_b`. A clever injective encoding would produce C
+  nobody can read and would put the correctness of names inside the mapping;
+  instead `Dmmeta.check` gained one clause on mangled ctype names, and the
+  `<ctype>_<field>` clause from 47ecf60 covers fields with no change at all —
+  which is what it was added for.
+
+- **`attribute [local irreducible] Dmmeta.mangle` in the three proof files.**
+  `String.toList` does not whnf on a symbolic string, so unfolding `mangle`
+  during elaboration *diverges*: every statement mentioning `mangle c.name`
+  timed out, at 200k heartbeats and at 1M. It is `local` because the checker's
+  `rfl` examples elsewhere compute `mangle` on literals and must keep doing so.
+  The pattern to copy: name every projection through it (`structOf_name`) and
+  abstract the name function out of shared lemmas (`structs_distinct`'s `nf`)
+  so unification never has to look inside.
 
 - **The conformance census is a separate classifier, not `readDb`.** `readDb`
   aborts on the first unsupported reftype, which is right for a front end and

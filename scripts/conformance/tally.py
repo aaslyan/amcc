@@ -87,31 +87,34 @@ def main() -> int:
     total_all = len(allrows)
     modelled_rows = total_all - len(other)
 
+    gen_share = pct(len(f_gen), len(fields))
     body = f"""# AMCC — conformance against the real `dmmeta` corpus
 
 *Measured against `{args.corpus}`, {len(ctypes)} ctypes and {len(fields)} fields.
 Regenerate with `scripts/conformance/run.sh`; every verdict is produced by
 `Ssim.Conformance` in Lean, using the shipping reader, the shipping
-`supported` list and the shipping `Dmmeta.isCIdent`. The Python under
-`scripts/conformance/` slices and counts and decides nothing.*
+`supported` list, the shipping `Dmmeta.mangle` and the shipping
+`Dmmeta.isCIdent`. The Python under `scripts/conformance/` slices and counts
+and decides nothing.*
 
 ---
 
 ## The headline
 
-**{len(supported)} of {len(fields)} fields ({pct(len(supported), len(fields))}) have a reftype AMCC
-already handles. {len(f_gen)} of them is generated.**
+**{len(f_gen)} of {len(fields)} fields ({gen_share}) would be generated**, and
+{len(c_ok)} of {len(ctypes)} ctypes ({pct(len(c_ok), len(ctypes))}) are
+nameable.
 
-Every one of the other {len(blocked_by_name)} is blocked by the same thing, and it is not a
-reftype: `dmmeta` names are namespace-qualified — `abt.FArch`,
-`dmmeta.Ctype` — and `Dmmeta.isCIdent` rejects a dot. AMCC has no namespace
-model and no mangling, so the corpus is out of reach for a reason that has
-nothing to do with data structures.
+The previous measurement said **one**. The difference is entirely
+`Dmmeta.mangle`: `dmmeta` names are namespace-qualified, a dot is not a C
+identifier character, and until the mapping existed 4518 fields with a
+supported reftype were blocked by their *names*. That number is now {len(blocked_by_name)}.
 
-That was not the expected answer. The standing assumption in `docs/PLAN.md`
-was that the remaining reftypes were what stood between AMCC and real
-schemas. They are the *second* obstacle; a name mapping is the first, and it
-gates four times as many fields as the largest missing reftype.
+What remains is what the first measurement predicted would be second: the
+reftypes. {by_rtag.get("rejected", 0)} fields
+({pct(by_rtag.get("rejected", 0), len(fields))}) have a reftype AMCC has no
+representation for, and that is now the *only* thing of any size between the
+generator and the corpus.
 
 ---
 
@@ -153,10 +156,10 @@ Broken down, the name-only blockers are:
 ## Top reasons for rejection, by how many real fields each blocks
 
 {table(["rank", "reason", "fields blocked"],
-       [[1, "namespace-qualified name (no C-identifier mapping)",
-         len(blocked_by_name)]]
-       + [[i + 2, f"reftype `{name}` has no representation", n]
-          for i, (name, n) in enumerate(no_repr.most_common())])}
+       [[i + 1, f"reftype `{name}` has no representation", n]
+        for i, (name, n) in enumerate(no_repr.most_common())]
+       + ([[len(no_repr) + 1, "the name, after mangling", len(blocked_by_name)]]
+          if blocked_by_name else []))}
 
 ---
 

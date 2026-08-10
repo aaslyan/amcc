@@ -78,13 +78,15 @@ theorem verdict_iff_supported (r : Reftype) :
     (verdictOfReftype r).tag ≠ "rejected" ↔ supported.contains r = true := by
   cases r <;> decide
 
-/-- A name AMCC can emit as a C identifier. Real `dmmeta` names are
-namespace-qualified (`abt.FArch`), which is not one — the single largest
-reason the corpus is out of reach, and a mapping question rather than a
-missing reftype. -/
+/-- A name AMCC can emit as a C identifier — **after mangling**. Before
+`Dmmeta.mangle` existed this rejected every namespace-qualified name in the
+corpus, which was the previous measurement's headline. It now asks the
+question the checker asks: does the name *mangle* to a legal C identifier.
+Characters no substitution rescues still fail, and say so. -/
 def nameVerdict (n : String) : Verdict :=
-  if !isCIdent n then .rejected "name is not a C identifier"
-  else if isReservedName n then .rejected "name starts with an underscore"
+  let m := mangle n
+  if !isCIdent m then .rejected "does not mangle to a C identifier"
+  else if isReservedName m then .rejected "mangles to a reserved name"
   else .lowered
 
 /-- One TSV row: `kind`, `name`, the overall verdict and its reason, the

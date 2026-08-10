@@ -17,11 +17,17 @@ allocator layer), `docs/ALLOCATOR_REQUIREMENT.md` (the allocator contract),
 
 ## Status
 
-**Measured** — `docs/CONFORMANCE.md` is the first number: against `amc`'s own
-`data/dmmeta`, 79.9% of fields have a reftype AMCC handles and **one** is
-generated, because the corpus's namespace-qualified names are not C
-identifiers. Regenerate with `scripts/conformance/run.sh`; the verdicts come
-from `Ssim.Conformance` in Lean, the Python only slices and counts.
+**Measured** — `docs/CONFORMANCE.md`, against `amc`'s own `data/dmmeta`:
+**3909 of 5659 fields (69.1%) would be generated**, up from one before
+`Dmmeta.mangle` landed, and 1419 of 1420 ctypes are nameable. What is left is
+reftypes, not names. Regenerate with `scripts/conformance/run.sh`; the
+verdicts come from `Ssim.Conformance` in Lean, the Python only slices and
+counts.
+
+**Names** — `Dmmeta.mangle` is `amc::strptr_PrintCppIdent`, applied at the
+generator's boundary so the schema keeps its qualified names and the ssim
+round trip is untouched. It is not injective, and `Dmmeta.check` rejects the
+collisions it reintroduces rather than the mapping dodging them.
 
 **Input** — schemas may be written as `amc` ssimfiles, not only as Lean terms.
 `Amcc/Ssim/` reads four record types (`dmmeta.ctype`, `dmmeta.field`,
@@ -172,39 +178,45 @@ Three gaps remain against the full measure, all recorded in
 
 ## Next, in order
 
-**Reordered by `docs/CONFORMANCE.md`**, which measured the generator against
-`amc`'s own `data/dmmeta` for the first time. The measurement moved item 1 from
-nowhere on this list to the top and demoted the remaining reftypes, because
-79.9% of real fields already have a reftype AMCC handles and all but one of
-them is blocked by something else entirely.
+**Reordered again by `docs/CONFORMANCE.md`**, remeasured after mangling
+landed. The generated share went from **1 field to 3909 of 5659 (69.1%)**, and
+the name blocker went from 4518 fields to 3 — so the reftypes, which the first
+measurement demoted, are now the whole remaining gap.
 
-1. ~~**A namespace-to-C-identifier mapping.**~~ — **done.** `Dmmeta.mangle` is
-   `amc::strptr_PrintCppIdent` transcribed, applied at the generator's
-   boundary, with `Dmmeta.check` rejecting the collisions it reintroduces.
-   `docs/CONFORMANCE.md` is remeasured below.
-2. **`GenWellFormed` for `Llist` and `Thash`.** `Upptr` is done; the array
-   table was already. These two are **blocked on a generator defect** rather
-   than on proof effort: they emit two hand-built structs instead of the
-   lowered layout, so an element ctype with a record-typed field references a
-   struct that is not emitted, and a self-indexing `Thash` emits a duplicate
-   struct name. Both are accepted by `Dmmeta.check` and rejected by
-   `Wf.check`. The fix is to emit `genStructs` with the element and parent
-   structs *extended*, which is also what cross-references will need.
-   `PROGRESS.md` carries the handoff. Ahead of the reftypes because it
-   is about whether the *existing* templates' guarantee is what the generated
-   headers claim.
-3. **Xref maintenance** tying the templates together, using the
-   prepare/commit design from `Spec/Algebra.lean`. `dmmeta.xref` has 789
-   records in the corpus, and `docs/CONFORMANCE.md` is explicit that a field
-   counted "generated" today gets its accessors and *not* its participation in
-   the indexes — so the conformance percentage overstates what a user gets
-   until this exists.
-4. **The remaining reftypes, in corpus order rather than alphabetical.**
-   `Lary` (390 fields), `Smallstr` (140), `Ptrary` (136), `Bitfld` (75),
-   `Tary` (69), `Global` (60) — then the tail. `Bheap` (23) and `Atree` (3)
-   were named first on the old list and are near the bottom of the real
-   distribution. `docs/GOALS.md` puts the whole vocabulary in scope;
-   `docs/DIVERGENCE.md` §3 is the standing list of what is not attempted.
+**Corpus order is not cost order**, and the previous version of this list
+conflated them. The two are separated below.
+
+1. **An attribute-join mechanism, then `Smallstr`.** `Smallstr` blocks 140
+   fields, less than `Lary`'s 390 — but its shape lives in a *separate*
+   `dmmeta.smallstr` record (length, `strtype`, `pad`, `strict`) rather than in
+   the field record, and AMCC's reader models one record per concept with no
+   way to join a second onto a field. That join is the actual work; `Smallstr`
+   is then a bounded char array. And the same mechanism is what `Bitfld` (75),
+   `Charset` (23), `lenfld`, `substr` and `fconst` (337 records) all need —
+   **one cheap mechanism unblocks five reftypes with no allocation anywhere.**
+2. **`Llist` and `Thash` `GenWellFormed`**, behind the generator rework
+   `PROGRESS.md` describes. Ahead of the big reftypes because it is about
+   whether the guarantee the *existing* templates ship is the one their
+   generated headers claim.
+3. **`Ptrary` (136 fields).** An array of pointers over a base pool. Needs the
+   pool to exist but not to grow, so it lands inside the current allocator
+   story.
+4. **`Lary` (390 fields) and the growable pools** — `Tary` (69), `Tpool` (40),
+   `Lpool` (10). Largest by corpus count and **largest by cost**: `Lary` is a
+   growable array, so it needs `Stmt.alloc`, the allocator contract and the L0
+   heap rework, which is the biggest deferred item in the repo
+   (`docs/DIVERGENCE.md` §2.2). Doing it first would spend the whole budget on
+   one reftype; doing it after 1–3 means the pool machinery arrives with three
+   consumers already waiting.
+5. **Xref maintenance**, using the prepare/commit design from
+   `Spec/Algebra.lean`. 789 `dmmeta.xref` records, and `docs/CONFORMANCE.md`
+   is explicit that a field counted "generated" today gets its accessors and
+   *not* its participation in the indexes — so the 69.1% overstates what a
+   user gets until this exists.
+6. **The tail**: `Global` (60), `RegxSql` (52), `Varlen` (39), `Bheap` (23),
+   `Hook` (22), `Cppstack` (21), `Fbuf` (11), then the singletons. `Bheap` and
+   `Atree` (3) headed this list two revisions ago and are near the bottom of
+   the real distribution.
 
 ---
 
