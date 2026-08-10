@@ -2,10 +2,10 @@
 
 ## Now
 
-**An attribute-join mechanism**, then `Smallstr` — `docs/PLAN.md` item 1, and
-the reasoning for putting it ahead of `Lary` is there. `Thash`/`Llist`
-`genWellFormed` is parked behind a generator rework; see "Where the
-every-schema gap stands".
+**`Llist.genWellFormed`, then `Thash`'s.** The generator defect is fixed and
+the extension lemmas are proved; see "Where the every-schema gap stands" for
+the three remaining pieces and the order. Then the attribute join — see
+"Where the attribute join stands", whose blocking question is now answered.
 
 ## Done
 
@@ -184,8 +184,8 @@ every-schema gap stands".
 
 ## Next
 
-- An attribute-join mechanism, then `Smallstr`/`Bitfld`/`Charset`
-- The `Llist`/`Thash` generator rework, then their `genWellFormed`
+- `Llist.genWellFormed`, then `Thash.genWellFormed`
+- The attribute-join mechanism, then `Smallstr` `rpascal`
 - The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
   `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
   on their sample schema; the array table has it for *every* accepted schema
@@ -194,120 +194,119 @@ every-schema gap stands".
 
 ## Where the every-schema gap stands
 
-*Updated: the layout half and `Upptr` are proved. `Thash` and `Llist` are
-**blocked on a generator defect**, described below — the proof cannot be
-finished without changing what they emit, and that is the right fix.*
+*Updated: the generator defect is **fixed** and five holes are closed. `Upptr`
+is proved. `Llist` and `Thash` `genWellFormed` are the remaining work, and the
+handoff below is the shape they follow.*
 
-**Proved and committed.** `Layout.checkStructs_gen`, `Layout.checkGlobals_gen`,
-`Layout.layoutWellFormed`, `Layout.facts_of_check` (seven components now),
-`Templates/NameWf.lean` in full, and `Upptr.genWellFormed`. A template's proof
-opens with
+### Proved and committed
 
-```lean
-simp only [Wf.check, genUpptr, List.append_eq_nil_iff]
-refine ⟨⟨⟨Layout.checkStructs_gen hchk, Layout.checkGlobals_gen hchk⟩,
-  CSubset.distinct_eq_nil (names_distinct hchk)⟩, ?_⟩
-```
+- `Layout.checkStructs_gen`, `Layout.checkGlobals_gen`,
+  `Layout.layoutWellFormed` — the lowered table.
+- **`Layout.addFields`** + `addFields_names`, `addFields_take`,
+  **`Layout.checkStructs_addFields`**, **`Layout.checkGlobals_addFields`** —
+  the *extended* table, which is what `Llist`/`Thash`/`Pool` now emit.
+  `checkStructs_addFields` takes facts only about the fields a template adds:
+  names not clashing with the struct's own, legal sizes, mentioned structs
+  emitted, and `layoutDeps = []`. That last is true of every field any
+  template adds (pointer, `bool`, `u32`, array of pointers) and is what keeps
+  the declared-earlier obligation from needing re-establishment.
+- `Templates/NameWf.lean` in full, `Upptr.genWellFormed`, and
+  **`Llist.names_pairwise`** — the nine names, all thirty-six pairs.
 
-and `UpptrWf.lean` is the worked example of what follows: `names_distinct` from
-`NameWf`, then `checkFun_defsFor`, four `simp only`+`simp` pairs against a
-**symbolic** `Wf.Ctx` whose `field?` is supplied by `NameWf.ctx_field?`.
+### What `Llist.genWellFormed` still needs
 
-### The generator defect — **fixed**, see finding 3 below
+`Templates/LlistWf.lean` has the statement and the name half. What is left:
 
-**They do not emit the layout.** `genUpptr` emits `Dmmeta.genStructs d` —
-every ctype's struct — and adds functions. `genThash` and `genLlist` instead
-build **two structs by hand** (`elemStruct`, `dbStruct`) and emit only those.
-That is fine for their sample schemas, whose element ctypes have scalar fields
-only, and wrong in general:
+1. **The struct half.**
+   ```lean
+   Wf.checkStructs (Layout.addFields dbN (dbFields nm elemN)
+     (Layout.addFields elemN (elemFields nm elemN) (genStructs d))) = []
+   ```
+   Two nested `checkStructs_addFields` applications over
+   `Layout.checkStructs_gen hchk`. The inner one's `hdist` is where the new
+   `Dmmeta.check` clause is spent: `clashesGenerated` is exactly the statement
+   that `mangle f.name ≠ mangle fld.name ++ "_next"` for every field `f` of
+   the element, so a lemma turning that clause into the `Pairwise` the
+   obligation wants is the one genuinely new thing to write. The `hres` side
+   needs `elemN ∈ (genStructs d).map name`, which `checkStructs_gen`'s
+   `hmemName` already builds — **lift it out of that proof into a named lemma
+   first**; it is private to the proof body today.
+2. **`checkGlobals`** — `checkGlobals_addFields` twice over
+   `checkGlobals_gen`. Should be four lines.
+3. **`checkFun` × 9.** `initDef`, `firstDef`, `nextDef`, `prevDef`, `inQDef`,
+   `emptyQDef`, `sizeDef` are one statement each and follow `UpptrWf`'s
+   `checkFun_defsFor` verbatim. `insertDef` (six statements, one `if`) and
+   `removeDef` (eight, two `if`s) are the work. All nine need the field
+   lookups `NameWf.ctx_field?` supplies — for `next`/`prev`/`inlist` on the
+   element and `head`/`count` on the parent — and those come from the
+   *extended* struct, so `NameWf.struct_field?` needs an `addFields` variant.
+   Write that variant before starting the nine.
 
-```
-ctype pt        { x : u32 Val }
-ctype item_row  { id : u32 Pkey, loc : pt Val }
-ctype ItemDb    { ind_item : item_row Thash }
-```
-`Dmmeta.check` accepts this. `genThash` emits a program in which `item_row`
-has a field of type `struct pt` and `pt` is **not among the structs**, so
-`Wf.check` rejects it with
-`["item_row.loc: unknown struct pt", "item_row.loc: struct pt is not declared earlier"]`.
-`genLlist` fails identically on the analogous schema. Verified, both.
+`Thash` is the same shape with five functions, one `forN` body and one `call`.
+The `call` needs `Wf.Ctx.fun?` to resolve `Find` from `earlier`, which no
+template has exercised — `checkFun`'s `earlier` is `p.funs.take i`, and `Find`
+is emitted before `InsertMaybe`, so it is in the prefix. Nothing else is new.
 
-**And `genThash` can emit a duplicate struct.** A `Thash` whose `arg` is its
-own ctype makes `elemC = dbC`, so both hand-built structs are named `ItemDb`:
-`Wf.check` reports `duplicate struct: ItemDb` plus ten type errors.
-`Reftype.layoutDep .Thash = false`, so the schema checker has no reason to
-reject it — and should not; a self-indexing ctype is legal.
+### Five findings, all one shape
 
-**The fix is in the generator, not in the statement.** Both templates should
-emit `Dmmeta.genStructs d` with the *element* ctype's struct extended by the
-link fields and the *parent's* extended by the head/buckets and count, rather
-than two structs invented from scratch. That is also what they will need for
-cross-references, where several templates contribute fields to one struct, so
-it is not a detour. It changes the emitted C, so `scripts/gen/` goldens and
-`scripts/smoke.sh` expectations move with it.
+`Dmmeta.check` accepted schemas whose generated programs `CSubset.Wf.check`
+**rejects** — the front end running ahead of the back end. The first two were
+the *checker* being weaker than the theorem needs; the next two were the
+*generator* being narrower than its statement; the fifth was created by fixing
+the third and fourth. **All five are now closed.**
 
-There is a third thing to check while doing it, not yet verified either way:
-the generated link fields (`<db>_<fld>_next`, `_prev`, `_inlist`, `_inhash`)
-are appended to the element struct's own fields with **no distinctness check**
-against them. A schema declaring a field literally named
-`TaskDb_zdl_todo_next` would produce a struct with two fields of that name.
-`Dmmeta.check`'s qualified-name clause does not cover this, because the
-collision is between a *field name* and a *generated* name rather than between
-two qualified names.
-
-### Order for the next attempt
-
-1. Rework `genLlist` to emit the full layout (nine functions, but the simpler
-   struct story); regenerate `scripts/gen/`, update the smoke expectations.
-2. Same for `genThash`, plus a `Dmmeta.check` clause — or a `genThash` guard —
-   for the self-indexing case, and the link-field-name collision above.
-3. Then their `genWellFormed`, following `UpptrWf.lean` exactly. `Llist`'s
-   nine names need nine suffix pairs through `NameWf.append_ne_rev (by decide)`;
-   `Thash`'s five include one `forN` body and one `call`, so `checkFun` there
-   also needs `Wf.Ctx.fun?` to resolve `Find` from the `earlier` list — which
-   is the one obligation neither `Upptr` nor the array table exercised.
-4. Then restate the laws so `lookupFun p nm.x = .ok (xDef …)` discharges from
-   `Dmmeta.check` once, via `Upptr.lookups_of_wf` and
-   `CSubset.lookupFun_of_mem`, rather than per-schema.
-
-### Four findings, all the same shape
-
-`Dmmeta.check` accepts schemas whose generated programs `CSubset.Wf.check`
-**rejects** — the front end running ahead of the back end, which
-`docs/GOALS.md`'s standing rule forbids. None was a law leaning on a
-sample-schema property; the first two were the *checker* being weaker than the
-theorem needs, and the last two are the *generator* being narrower than its
-statement. Attempting the theorem is what exposed all four.
-
-1. **`Inlary max:0`** — accepted; rejected downstream as a bad array size.
-   Fixed: `checkField` requires the bound in `(0, u32Bound)`.
-2. **`Upptr` at a scalar `arg`** — accepted; four type errors downstream,
-   since `row->f = NULL` is `parent *` in the assignment and `uint64_t *` in
-   the struct. Fixed: `Reftype.needsRecordArg`.
+1. **`Inlary max:0`** — bad array size. Fixed: bound in `(0, u32Bound)`.
+2. **`Upptr` at a scalar `arg`** — pointer to a machine scalar. Fixed:
+   `Reftype.needsRecordArg`.
 3. **`Thash`/`Llist`/`Pool` over an element with a record-typed field** —
-   accepted; referenced a struct that was not emitted. **Fixed**: all three
-   now extend `Dmmeta.genStructs` via `Layout.addFields` instead of building
-   two structs by hand. `Templates.Thash.Examples.nestedDb` and
-   `Templates.Llist.Examples.nestedDb` are the regression schemas, checked in
-   Lean *and* compiled by `scripts/smoke.sh`.
-4. **`Thash` indexing its own ctype** — accepted; duplicate struct name.
-   **Fixed** by the same change: two `addFields` calls at one name compose,
-   which is what a self-index should produce.
-   `Templates.Thash.Examples.selfDb` is the regression schema.
-
+   referenced a struct not emitted. Fixed: all three extend
+   `Dmmeta.genStructs` via `Layout.addFields`.
+   Regressions: `Thash.Examples.nestedDb`, `Llist.Examples.nestedDb`.
+4. **`Thash` indexing its own ctype** — duplicate struct name. Fixed by the
+   same change; two `addFields` at one name compose.
+   Regression: `Thash.Examples.selfDb`.
 5. **A field named what a template generates** — `task_row.zdl_todo_next`
-   against `TaskDb.zdl_todo`. Accepted; the struct then had two fields of one
-   name. **Fixed**: `Dmmeta.check` gained a `clashesGenerated` clause.
-   A *blanket* reservation of the nine suffixes was tried first and is wrong —
-   it rejects this repo's own `child_row.zd_next`, and `c_next`, `line_n` and
-   `prev_head` in the real corpus. The collision needs the stripped prefix to
-   be a **declared field name**, which is the narrower test that shipped.
+   against `TaskDb.zdl_todo`. Fixed: `clashesGenerated`. A blanket
+   reservation of the nine suffixes was tried first and is **wrong** — it
+   rejects this repo's own `child_row.zd_next`, and `c_next`, `line_n`,
+   `prev_head` in the corpus. The collision needs the stripped prefix to be a
+   *declared field name*.
 
 **Every template's `GenWellFormed` is a differential test between the two
 checkers, run at proof time over all schemas.** Four attempts, five holes —
-and the fifth was found by the *layout fix*, not by the proof, because
-extending the lowered table is what put a generated field next to a declared
-one in the same struct.
+and the fifth was found by the *layout fix* rather than by a proof, because
+extending the lowered table is what first put a generated field next to a
+declared one in the same struct.
+
+## Where the attribute join stands
+
+**Not started.** `docs/DIVERGENCE.md` §3.7 is the research half, and it
+answers the question that was blocking the design:
+
+**`strict` does not forbid the ambiguous values.** Every use of it in
+`cpp/amc/smallstr.cpp`'s `CheckSmallstr` guards a *naming-convention* check —
+the numeric suffix must match the length, a `numstr`'s ctype name must carry
+the prefix its `strtype`/`pad` imply, the base in the name must match
+`numstr.base`. The two value-level checks there (`ValidRnumPadQ`, and no
+`numstr` right-padded with `'0'`) are **not** guarded by `strict` and protect
+numeric parsing, not injectivity. The generated `ch_SetStrptr` silently clips
+and zero-fills. So a `rightpad`/`leftpad` smallstr is lossy by design and
+without a guard, `abs` has no inverse, and a read-back law needs a side
+condition on the value that AMCC must *invent* — which is why only `rpascal`,
+whose `abs` is injective under `count ≤ N`, is safe to implement first.
+
+What remains for the join itself:
+
+- `Dmmeta` needs a per-field attribute table keyed like `Inlary` already is
+  (`Db.inlary : List Inlary`, `Db.inlaryMax?`). Generalise that shape rather
+  than adding a second special case: `bitfld`, `charset`, `lenfld`, `substr`
+  and `fconst` all need it.
+- `Ssim.Schema` needs the record head, the round trip, and a **named error**
+  when a field claims a reftype whose attribute record is missing — the
+  `Inlary needs a declared bound` message is the precedent.
+- Then `rpascal`: `ch[N]` is the count, `RepInv` is `count ≤ N`, and the
+  writers preserve it. State `abs` for all three `strtype`s so the two
+  unimplemented ones are visible as owed rather than absent.
 
 ## How `Remove` went, in the end
 

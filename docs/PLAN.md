@@ -118,6 +118,12 @@ tested against a real compiler by `scripts/smoke.sh`.
   program `Wf.check` accepts. The first of the three ctype-model templates to
   match what the generated headers already claim. `Templates/NameWf.lean`
   carries the function-name half for all three.
+- **`Layout.addFields`** and `checkStructs_addFields` /
+  `checkGlobals_addFields` — `Llist`, `Thash` and `Pool` now **extend** the
+  lowered struct table instead of emitting two structs of their own, and
+  extending is proved to preserve every struct obligation. Five schemas that
+  `Dmmeta.check` accepted and `Wf.check` rejected are closed and checked in as
+  regressions; `PROGRESS.md` lists all five.
 - **`Layout.layoutWellFormed`** — every schema `layoutCheck` accepts lowers to
   structs and globals `Wf.check` accepts: names distinct on both levels, sizes
   legal, every mentioned struct emitted, and every layout dependency emitted
@@ -186,7 +192,12 @@ measurement demoted, are now the whole remaining gap.
 **Corpus order is not cost order**, and the previous version of this list
 conflated them. The two are separated below.
 
-1. **An attribute-join mechanism, then `Smallstr`.** `Smallstr` blocks 140
+1. **An attribute-join mechanism, then `Smallstr` `rpascal`.** The blocking
+   design question is **answered** in `docs/DIVERGENCE.md` §3.7: `strict` does
+   not forbid the ambiguous padded values — it enforces naming conventions —
+   so `rightpad`/`leftpad` are lossy in `amc` by design and their read-back law
+   needs a side condition AMCC must invent. `rpascal` is injective under
+   `count ≤ N` and goes first. `Smallstr` blocks 140
    fields, less than `Lary`'s 390 — but its shape lives in a *separate*
    `dmmeta.smallstr` record (length, `strtype`, `pad`, `strict`) rather than in
    the field record, and AMCC's reader models one record per concept with no
@@ -194,8 +205,11 @@ conflated them. The two are separated below.
    is then a bounded char array. And the same mechanism is what `Bitfld` (75),
    `Charset` (23), `lenfld`, `substr` and `fconst` (337 records) all need —
    **one cheap mechanism unblocks five reftypes with no allocation anywhere.**
-2. **`Llist` and `Thash` `GenWellFormed`**, behind the generator rework
-   `PROGRESS.md` describes. Ahead of the big reftypes because it is about
+2. **`Llist` and `Thash` `GenWellFormed`.** The generator rework is **done** —
+   all three structure templates now extend the lowered table — and so are the
+   extension lemmas (`Layout.checkStructs_addFields`) and `Llist`'s name
+   obligation. What remains is the struct half and the nine/five `checkFun`s;
+   `PROGRESS.md` has the order. Ahead of the big reftypes because it is about
    whether the guarantee the *existing* templates ship is the one their
    generated headers claim.
 3. **`Ptrary` (136 fields).** An array of pointers over a base pool. Needs the

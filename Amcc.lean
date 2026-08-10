@@ -157,12 +157,16 @@ that should fail does not.)
                           both directions, plus the exact rejection messages.
                           Nothing about the reader is proved; the round trip is
                           what stands in (`docs/DIVERGENCE.md` §3.6)
+- `Templates.LlistWf`   — the intrusive list's every-schema obligation:
+                          `names_pairwise` is proved, the struct half and the
+                          nine `checkFun`s are owed (`PROGRESS.md`)
 - `Templates.LayoutWf`  — **proved**: `layoutWellFormed` — every schema the
                           lowering accepts produces structs and globals
                           `Wf.check` accepts, including that struct nesting is
-                          acyclic. The shared half of the every-schema
-                          well-formedness gap, since the three ctype-model
-                          templates all emit this layout
+                          acyclic — plus `addFields` and
+                          `checkStructs_addFields`, since `Llist`, `Thash` and
+                          `Pool` *extend* that layout rather than replacing it.
+                          The shared half of the every-schema gap
 - `Templates.NameWf`    — distinctness of generated **function names**, once
                           for all three ctype-model templates: a template's
                           filtered field list is a sublist of `qualNames`, so

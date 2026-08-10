@@ -400,6 +400,78 @@ examples to a statement quantified over inputs. That is a self-contained
 project and much smaller than §3.1's, because it needs no C semantics: both
 sides are AMCC's own.
 
+### 3.7 `Smallstr`: what `strict` enforces, and why only `rpascal` is safe to prove
+
+`dmmeta.strtype` has three values and `data/dmmeta/smallstr.ssim` uses all
+three — `rightpad` 83, `leftpad` 37, `rpascal` 20. AMCC will implement
+`rpascal` first, and this entry is why.
+
+**The three abstractions.** For a field of declared length `N` over a byte
+array `ch`, the value the C sees is:
+
+- **`rpascal`** (`"String of length N+2, last byte is the count"`) —
+  `abs(ch) = ch[0 … ch[N]]`, the first `ch[N]` bytes. **Injective** on the
+  representation invariant `ch[N] ≤ N`: two arrays agreeing on the count and
+  on that many bytes are the same value, and every value of length ≤ N has
+  exactly one canonical representation. That invariant is a `RepInv` clause
+  every write must preserve, which is the same shape as `CSubset.Chain`'s
+  `Counted` and reuses the same machinery.
+- **`rightpad`** — `abs(ch) = ch` with trailing `pad` bytes removed.
+  `amc`'s generated `ch_N` is literally
+  ```c
+  ret = 10; while (ret>0 && parent.ch[ret-1]==u8(0)) ret--;
+  ```
+  (`include/gen/algo_gen.inl.h`, `algo::ch_N(const algo::RnullStr10&)`).
+- **`leftpad`** — the mirror image, `pad` bytes removed from the front.
+
+**Neither padded form is injective**, and that is the blocker. `"ab"` and
+`"ab "` have the same representation under `rightpad` with `pad = ' '`, so
+`abs` has no inverse and a read-back law — *`Get` after `Set` returns what was
+set* — is **false** as stated. There is no way to write the law honestly
+without knowing what rules out the ambiguous values.
+
+**What `strict` actually does — and it is not that.** Read from
+`cpp/amc/smallstr.cpp`, `CheckSmallstr`. Every use of `smallstr.strict` guards
+a **naming-convention** check:
+
+1. the numeric suffix in the ctype name must equal the declared length
+   (`amc.badsuffix`);
+2. for a `numstr`, the ctype name must start with the prefix the
+   `strtype`/`pad` pair implies — `RspaceStr`, `LspaceStr`, `LnumStr`,
+   `LnullStr`, `RnullStr` (`amc.numstr_badprefix`);
+3. for a `numstr`, the base encoded in the ctype name must match
+   `numstr.base` (`amc.badbase`).
+
+**`strict` says nothing about values.** It constrains identifiers so a reader
+can tell what a type is from its name. The two value-level checks in that
+function are *not* guarded by `strict` at all:
+
+- `ValidRnumPadQ` — a `rightpad` pad character may not be confusable with a
+  digit (`amc.invalidpad`);
+- a `numstr` may not be `rightpad` with pad `'0'` (`amc.rightpad_insanity`).
+
+Both protect *numeric parsing*, not injectivity. And the generated writer does
+not help either: `ch_SetStrptr` for a `rightpad` type copies `min(len, N)`
+bytes and zero-fills the rest, with the comment "If RHS is too large, it is
+silently clipped" — it neither rejects nor detects a value ending in the pad
+byte.
+
+**Conclusion.** In `amc`, a `rightpad`/`leftpad` smallstr **is** a lossy
+representation, by design and without a guard. The honest statement of a
+read-back law for those two therefore needs a side condition on the value —
+"does not end in `pad`" for `rightpad`, "does not begin with it" for
+`leftpad` — and that condition is AMCC's to state, because `amc` does not
+state it anywhere. That is a design decision, not a transcription, so it is
+deferred rather than guessed.
+
+**What would discharge it.** Either the side-conditioned law, with the
+generated `Set` rejecting or normalising ambiguous values and the divergence
+from `amc`'s silent clipping recorded here; or a proof that the values
+actually stored in the corpus never end in the pad, which would make the side
+condition vacuous in practice and is checkable with the conformance harness.
+The first is honest and diverges; the second is weaker and does not. The
+choice is the next round's.
+
 ---
 
 ## The honest summary
