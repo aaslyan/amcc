@@ -313,51 +313,6 @@ are not registered lawful, so `a == a` on a *symbolic* type would be stuck.
 These instances conceptually belong beside the `deriving` clauses in
 `Syntax.lean`; they live here because this proof is their first consumer. -/
 
-instance : LawfulBEq ScalarTy where
-  eq_of_beq {a b} h := by cases a <;> cases b <;> first | rfl | exact Bool.noConfusion h
-  rfl {a} := by cases a <;> rfl
-
-private theorem ty_eq_of_beq : ∀ (a b : Ty), (a == b) = true → a = b
-  | .scalar x, .scalar y, h => by rw [eq_of_beq (show (x == y) = true from h)]
-  | .scalar _, .strct _, h => Bool.noConfusion h
-  | .scalar _, .arr _ _, h => Bool.noConfusion h
-  | .scalar _, .ptr _, h => Bool.noConfusion h
-  | .strct _, .scalar _, h => Bool.noConfusion h
-  | .strct m, .strct n, h => by rw [eq_of_beq (show (m == n) = true from h)]
-  | .strct _, .arr _ _, h => Bool.noConfusion h
-  | .strct _, .ptr _, h => Bool.noConfusion h
-  | .arr _ _, .scalar _, h => Bool.noConfusion h
-  | .arr _ _, .strct _, h => Bool.noConfusion h
-  | .arr t m, .arr u n, h => by
-    have h' := Bool.and_eq_true_iff.mp (show ((t == u) && (m == n)) = true from h)
-    rw [ty_eq_of_beq t u h'.1, eq_of_beq h'.2]
-  | .arr _ _, .ptr _, h => Bool.noConfusion h
-  | .ptr _, .scalar _, h => Bool.noConfusion h
-  | .ptr _, .strct _, h => Bool.noConfusion h
-  | .ptr _, .arr _ _, h => Bool.noConfusion h
-  | .ptr t, .ptr u, h => by rw [ty_eq_of_beq t u (show (t == u) = true from h)]
-
-private theorem ty_beq_rfl : ∀ t : Ty, (t == t) = true
-  | .scalar x => show (x == x) = true from beq_self_eq_true x
-  | .strct n => show (n == n) = true from beq_self_eq_true n
-  | .arr t n => show ((t == t) && (n == n)) = true by
-      rw [ty_beq_rfl t, beq_self_eq_true n]; rfl
-  | .ptr t => ty_beq_rfl t
-
-instance : LawfulBEq Ty where
-  eq_of_beq {a b} h := ty_eq_of_beq a b h
-  rfl {a} := ty_beq_rfl a
-
-instance : LawfulBEq ValTy where
-  eq_of_beq {a b} h := by
-    cases a <;> cases b <;> first
-      | exact Bool.noConfusion h
-      | rw [eq_of_beq (α := ScalarTy) h]
-      | rw [eq_of_beq (α := Ty) h]
-  rfl {a} := by cases a with
-    | scalar t => exact beq_self_eq_true t
-    | ptr t => exact beq_self_eq_true t
-
 /-! ## Statement combinators distribute over `Stmt.block`
 
 `Stmt.block` is sugar for nested `seq`, so the checker's statement traversals

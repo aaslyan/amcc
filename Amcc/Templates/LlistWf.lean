@@ -430,5 +430,89 @@ theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     rw [hcnt]
     rfl
 
+/-- The database global resolves. `genLlist` names it `g_<db>`, which is what
+`Dmmeta.genGlobals` emits for the root. -/
+theorem global_lookup {d : Db} {dbC : Ctype} (hroot : d.root = some dbC.name)
+    (structs : List StructDef) (funs : List FunDef)
+    (locals : List (CSubset.Ident × ValTy)) :
+    (Wf.Ctx.mk structs (genGlobals d) funs locals).global?
+        ("g_" ++ mangle dbC.name)
+      = some { name := "g_" ++ mangle dbC.name,
+               ty := .strct (mangle dbC.name) } := by
+  simp [Wf.Ctx.global?, genGlobals, hroot]
+
+/-! ## The seven one-statement bodies
+
+`Init`, `First`, `Next`, `Prev`, `InLlistQ`, `EmptyQ` and `N` are a statement
+each over one of the five added fields, so they follow `UpptrWf`'s
+`checkFun_defsFor` verbatim once the bundle is in hand. `Insert` and `Remove`
+are the work and are separate. -/
+
+theorem checkFun_simple {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hne : mangle dbC.name ≠ mangle elemC.name) {earlier : List FunDef} :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    ∀ fd ∈ [initDef nm elemN, firstDef nm elemN, nextDef nm elemN,
+            prevDef nm elemN, inQDef nm elemN, emptyQDef nm elemN, sizeDef nm],
+      Wf.checkFun (tableOf d dbN elemN nm) (genGlobals d) earlier fd = [] := by
+  intro nm elemN dbN fd hfd
+  obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
+    field_lookups hchk hdb hdbs hfld helem hes hne (genGlobals d) earlier []
+  -- `Ctx.field?` and `Ctx.global?` do not read `locals`, so each equation
+  -- holds for every frame; stated with the `∀` so `simp` can instantiate it
+  have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).global?
+          nm.dbGlobal = some { name := nm.dbGlobal, ty := .strct dbN } :=
+    fun locals => global_lookup hroot _ _ locals
+  have hfN : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.next = some (.ptr (.strct elemN)) := fun _ => hnext
+  have hfP : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.prev = some (.ptr (.strct elemN)) := fun _ => hprev
+  have hfI : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.inlist = some (.scalar .bool) := fun _ => hinl
+  have hfH : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.head = some (.ptr (.strct elemN)) := fun _ => hhead
+  have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.count = some (.scalar .u32) := fun _ => hcnt
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hfd
+  rcases hfd with rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  · simp only [Wf.checkFun, initDef, dbFld, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy, Stmt.block]
+    simp [hg, hfH, hfC, Wf.isValTy, Wf.distinct, Wf.dups,
+      Wf.litTy]
+  · simp only [Wf.checkFun, firstDef, dbFld, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+    simp [hg, hfH, Wf.isValTy, Wf.distinct, Wf.dups,
+      Wf.Stmt.alwaysReturns]
+  · simp only [Wf.checkFun, nextDef, ptrFld, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+    simp [hfN, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
+      Wf.Stmt.alwaysReturns]
+  · simp only [Wf.checkFun, prevDef, ptrFld, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+    simp [hfP, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
+      Wf.Stmt.alwaysReturns]
+  · simp only [Wf.checkFun, inQDef, ptrFld, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+    simp [hfI, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
+      Wf.Stmt.alwaysReturns]
+  · simp only [Wf.checkFun, emptyQDef, dbFld, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+    simp [hg, hfH, Wf.isValTy, Wf.distinct, Wf.dups, Wf.binTy,
+      Wf.isPtrTy, Wf.Stmt.alwaysReturns]
+  · simp only [Wf.checkFun, sizeDef, dbFld, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+    simp [hg, hfC, Wf.isValTy, Wf.distinct, Wf.dups,
+      Wf.Stmt.alwaysReturns]
+
 end Llist
 end Templates
