@@ -349,11 +349,29 @@ def checkCtype (d : Db) (earlier : List Ident) (c : Ctype) : List String :=
       else [])
   ++ c.fields.flatMap (checkField d earlier c.name)
 
+/-- The C name a field contributes to every generated symbol built from it:
+`<ctype>_<field>`. Every template prefixes its operation names with this, so
+two fields sharing it collide in the emitted translation unit however few
+templates run. -/
+def qualName (c : Ident) (f : Ident) : Ident := c ++ "_" ++ f
+
+/-- Every `<ctype>_<field>` in the schema. -/
+def qualNames (d : Db) : List Ident :=
+  d.ctypes.flatMap (fun c => c.fields.map (fun f => qualName c.name f.name))
+
 /-- Violations, empty when the schema is well-formed. Checked against the db
 **with builtins**, so `u32` and friends resolve. -/
 def check (d : Db) : List String :=
   let full := d.withBuiltins
   (dups full.names).map (fun n => s!"duplicate ctype: {n}")
+    -- `c ++ "_" ++ f` is **not** injective in the pair: ctype `a` with field
+    -- `b_c` and ctype `a_b` with field `c` both qualify to `a_b_c`, and every
+    -- generated symbol is built by suffixing that. Without this clause a legal
+    -- schema can emit two functions with one name — and the accessor laws in
+    -- `Templates/Upptr.lean` and friends, which assume the name resolves to
+    -- the definition, would be vacuous for it with nothing to notice.
+    ++ (dups (qualNames full)).map
+         (fun n => s!"two fields generate the same C name: {n}")
     ++ (match d.root with
         | none   => []
         | some r =>
@@ -408,6 +426,33 @@ def relational : Db := { ctypes := [levelRow, childRow, db], root := some "Db" }
 
 /-- checked by: `lake build` -/
 example : check { ctypes := [orderRow] } = [] := rfl
+
+/-- **Two fields that print to the same C name are rejected.** `a`/`b_c` and
+`a_b`/`c` both qualify to `a_b_c`, and every generated symbol is that name with
+a suffix — so without this the emitted translation unit would declare two
+functions called `a_b_c_Get`, and the accessor laws, which assume the name
+resolves to *the* definition, would be vacuous for a legal schema.
+
+checked by: `lake build` -/
+example : check
+    { ctypes :=
+        [ { name := "a",   fields := [{ name := "b_c", arg := "u32",
+                                        reftype := .Upptr }] }
+        , { name := "a_b", fields := [{ name := "c",   arg := "u32",
+                                        reftype := .Upptr }] } ] }
+    = ["two fields generate the same C name: a_b_c"] := rfl
+
+/-- The same two ctypes with names that do not collide are accepted, so the
+clause rejects the collision and not the shape.
+
+checked by: `lake build` -/
+example : check
+    { ctypes :=
+        [ { name := "a",   fields := [{ name := "bc",  arg := "u32",
+                                        reftype := .Upptr }] }
+        , { name := "a_b", fields := [{ name := "c",   arg := "u32",
+                                        reftype := .Upptr }] } ] }
+    = [] := rfl
 
 /-- A ctype referring to other ctypes, one of them itself, is accepted.
 

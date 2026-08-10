@@ -3,9 +3,19 @@
 ## Now
 
 **`Llist.RemoveUnlinks`** — the two branch assemblies. Everything they need is
-proved; see "Where Remove stands" below.
+proved; see "Where Remove stands" below. Then `Thash.FindCorrect`.
 
 ## Done
+
+- **E — the C-name uniqueness obligation.** `Dmmeta.check` now rejects two
+  fields whose `<ctype>_<field>` qualified names collide (`a`/`b_c` versus
+  `a_b`/`c` — `c ++ "_" ++ f` is not injective in the pair), with a positive
+  and a negative `rfl` example. `Upptr.lookups_of_wf` proves that a program
+  `CSubset.Wf.check` accepts has pairwise-distinct function names, so
+  `CSubset.lookupFun_of_mem` supplies the hypothesis every accessor law
+  assumes. Without the checker clause a *legal* schema could emit two
+  functions with one name and every law would be vacuous for it, with nothing
+  to notice — which is what the obligation was.
 
 - **B — the chain invariant.** `Amcc/CSubset/Chain.lean`. `Reaches` is
   inductive, so finiteness/acyclicity/NULL-termination are consequences of
@@ -57,7 +67,11 @@ proved; see "Where Remove stands" below.
 
 - `Llist.RemoveUnlinks` — the two branch assemblies (see below)
 - `Thash.FindCorrect`, over `CSubset.Chain`
-- The C-name uniqueness obligation the `Upptr` laws push onto `Dmmeta.check`
+- The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
+  `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
+  on their sample schema; the array table has it for *every* accepted schema
+  (`genWellFormed`). Until that exists for the others, `lookups_of_wf`'s
+  hypothesis is discharged per-schema rather than once.
 
 ## Where `Remove` stands
 
@@ -81,6 +95,12 @@ exactly what the generated `if (_prev != NULL)` branches on.
 
 
 ## Decisions
+
+- **`Dmmeta.check` gained a qualified-name clause rather than each template
+  checking its own names.** Every template prefixes its operation names with
+  `<ctype>_<field>`, so the collision is a property of the schema, not of any
+  one generator; catching it once is what lets each template state its laws
+  against "a program in which the name resolves" and have that be reachable.
 
 - **`InsertLinks` and `RemoveUnlinks` were not provable as first stated, and
   are restated over `ListInv`.** The originals were purely local — "after

@@ -1,6 +1,7 @@
 import Amcc.Dmmeta
 import Amcc.CSubset.Wf
 import Amcc.CSubset.Calls
+import Amcc.Templates.ArrayTableWf
 
 /-!
 # AMCC — the `Upptr` template
@@ -182,6 +183,28 @@ theorem defsFor_subset {d : Dmmeta.Db} {c : Dmmeta.Ctype} {f : Dmmeta.Field}
   refine List.mem_flatMap.mpr ⟨(c.name, f), ?_, hfd⟩
   refine List.mem_flatMap.mpr ⟨c, hc, ?_⟩
   exact List.mem_filterMap.mpr ⟨f, hf, by rw [hr]; rfl⟩
+
+/-- **Acceptance discharges the resolution hypothesis.**
+
+Every law below assumes `lookupFun p nm.x = .ok (xDef …)`. That hypothesis is
+satisfiable exactly when the generated function names are distinct, and
+`CSubset.Wf.check` is where distinctness is decided — obligation 1, the
+`distinct "function"` clause. So a program the C subset accepts always
+supplies it, via `CSubset.lookupFun_of_mem`.
+
+The schema-level guard that makes acceptance reachable is new in
+`Dmmeta.check`: `c ++ "_" ++ f` is **not** injective in the pair — ctype `a`
+with field `b_c` and ctype `a_b` with field `c` both qualify to `a_b_c` — so
+without it a legal schema could emit two functions with one name, and every
+law here would be vacuous for that schema with nothing to notice.
+
+checked by: `lake build` -/
+theorem lookups_of_wf {d : Dmmeta.Db}
+    (h : CSubset.Wf.check (genUpptr d) = []) :
+    ((genUpptr d).funs.map FunDef.name).Pairwise (· ≠ ·) := by
+  simp only [CSubset.Wf.check, List.append_eq_nil_iff] at h
+  exact Templates.ArrayTable.dups_eq_nil_iff.mp
+    (List.map_eq_nil_iff.mp h.1.2)
 
 /-! ## The laws
 

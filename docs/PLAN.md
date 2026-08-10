@@ -57,6 +57,11 @@ tested against a real compiler by `scripts/smoke.sh`.
   `RemoveUnlinks` is **stated and not yet proved**: its last four statements
   are (`exec_removeTail`), the two branch assemblies are not. `PROGRESS.md`
   has the remaining steps.
+- **`Upptr.lookups_of_wf`** — a program `Wf.check` accepts has distinct
+  function names, so the resolution hypothesis every accessor law assumes is
+  supplied by acceptance. `Dmmeta.check` gained the matching schema-level
+  clause: two fields whose `<ctype>_<field>` collide are rejected, because
+  `c ++ "_" ++ f` is not injective in the pair.
 - **The chain invariant** (`CSubset.Chain`): `Reaches` with `det`, `nodup`,
   `frame`, `tail`, `splice`, `next_of_mem`; `Backlinked` with `split`;
   `Flagged` with `cons`/`erase`; `Counted`; `RowsDisjoint`; and the
@@ -117,11 +122,11 @@ Two gaps remain against the full measure, both recorded in
    proved; `PROGRESS.md` lists the steps.
 2. **`Thash.FindCorrect`**, over `CSubset.Chain` — a bucket is a chain, so the
    same `Reaches` applies with `nm.next` and the bucket head.
-3. **The C-name uniqueness obligation the `Upptr` laws push onto the checker.**
-   Those laws assume a program in which the field name resolves.
-   `child ++ "_" ++ fld` is not injective in the pair, so `a`/`b_c` and
-   `a_b`/`c` generate the same C name. If `Dmmeta.check` does not reject that,
-   the laws are vacuous for a legal schema and nothing would notice.
+3. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and
+   `Thash` each have `Wf.check … = []` only as a computational example on
+   their sample schema. The array table has it for *every* accepted schema.
+   Until the others do, `lookups_of_wf`'s hypothesis is discharged per-schema
+   rather than once.
 4. **Xref maintenance** tying the templates together, using the
    prepare/commit design from `Spec/Algebra.lean`.
 5. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other

@@ -74,7 +74,8 @@ that should fail does not.)
 
 ## Phase 2 — the schema DSL
 - `Schema` — the legacy single-table input language, and its checker
-- `Dmmeta` — the **ctype model**: `Ctype`, `Field` whose `arg` names another
+- `Dmmeta` — the **ctype model**, including the qualified-name clause that
+             rejects two fields printing to the same C identifier: `Ctype`, `Field` whose `arg` names another
   ctype, `Db` in declaration order, the full `Reftype` vocabulary with its
   `dmmeta/reftype.ssim` flags, and a checker that resolves every `arg` and
   keeps layout acyclic while letting pointers and indexes refer forwards
@@ -110,7 +111,9 @@ that should fail does not.)
                           flavour): nine functions, with the readers, both
                           idempotence guards and **`insertLinks`** proved over
                           `ListInv`. `RemoveUnlinks` is stated and owed
-- `Templates.Upptr`     — the **up-pointer template**: `Init`/`Get`/`Set`/`Q`
+- `Templates.Upptr`     — the **up-pointer template** (its `lookups_of_wf`
+                          shows `Wf.check` acceptance supplies the resolution
+                          hypothesis every accessor law assumes): `Init`/`Get`/`Set`/`Q`
                           for a `dmmeta.reftype Upptr` field, with the
                           read-back law (`get_set`) and the frame law proved
                           for every program the names resolve in
