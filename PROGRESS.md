@@ -2,13 +2,24 @@
 
 ## Now
 
-**The nine `checkFun`s for `Llist`.** Everything else in
-`Llist.genWellFormed` is proved — see "Where the every-schema gap stands" for
-the bundle lemma to write first and the hazard that cost time in `UpptrWf`.
-Then `Thash`, then the attribute join, whose blocking question is answered in
-`docs/DIVERGENCE.md` §3.7.
+**The self-list branch of `Llist.field_lookups`, then the assembly.** All nine
+`checkFun`s are proved; the only gap is that `field_lookups` assumes the
+database and element ctypes differ, which `Examples.selfDb` refutes. See
+"Where the every-schema gap stands" for the branch, written out, and the two
+things that went wrong when it was attempted.
 
 ## Done
+
+- **R — all nine `checkFun` obligations for `Llist`, and the field bundle.**
+  `field_lookups` (the five field equations against a symbolic `Wf.Ctx` over
+  the doubly-extended table), `global_lookup`, `checkFun_simple` for the seven
+  one-statement bodies, and `checkFun_insert` / `checkFun_remove` for the two
+  real ones. `LawfulBEq` for `ScalarTy`, `Ty` and `ValTy` moved from
+  `Templates.ArrayTable` into `CSubset.Wf`, since every well-formedness proof
+  needs them. The previous handoff's diagnosis was right on all three counts:
+  `find?_addFields` peels the outer extension first, `hdist_db` takes the
+  unextended parent struct, and the outer `Option` bind needs an explicit
+  `show` per field.
 
 - **Q — everything in `Llist.genWellFormed` except `checkFun`.** Six named
   lemmas, committed at four boundaries: the two preparatory ones
@@ -225,83 +236,73 @@ handoff below is the shape they follow.*
 
 ### What `Llist.genWellFormed` still needs
 
-**Everything except `checkFun`.** `Templates/LlistWf.lean` now has, all proved:
+**One branch of one lemma, and the final assembly.** Everything else is
+proved, in `Templates/LlistWf.lean`:
 
 - `names_pairwise` — the nine names;
-- `elemFields_names` / `dbFields_names` / `elemFields_ok` / `dbFields_ok` —
-  what the added fields are called and that their sizes, layout deps and
-  mentioned structs are fine;
+- `elemFields_ok` / `dbFields_ok` — sizes, layout deps, mentioned structs;
 - `hdist_elem` / `hdist_db` — the distinctness `checkStructs_addFields` wants,
-  and the one place `Dmmeta.check`'s `clashesGenerated` clause is spent.
-  `hdist_db` handles the self-list case, where the parent struct *is* the
-  element struct and already carries the three links;
-- **`checkStructs_gen_llist`** and **`checkGlobals_gen_llist`** — the struct
-  and global halves, assembled.
+  where `Layout.field_ne_generated` spends `Dmmeta.check`'s `clashesGenerated`
+  clause. `hdist_db` **already** handles the self-list case;
+- `checkStructs_gen_llist`, `checkGlobals_gen_llist` — the struct and global
+  halves;
+- `field_lookups` — the five field equations, and `global_lookup`;
+- **`checkFun_simple`** (the seven one-statement bodies), **`checkFun_insert`**
+  and **`checkFun_remove`** — all nine `checkFun` obligations.
 
-So `Wf.check p = []` reduces to `distinct "function"` (have it) plus
-`checkFun` for the nine bodies. That is the whole remainder.
+### The one obstacle: `field_lookups` assumes the two ctypes differ
 
-**The nine `checkFun`s.** All nine touch only the *five added* fields and the
-global — never the element's lowered fields — so the entire obligation depends
-on the schema through five `Wf.Ctx.field?` equations plus one `Ctx.global?`.
-The lookup lemmas are in place: `NameWf.struct?_addFields` resolves the
-extended struct by name and `NameWf.find?_field` reaches an appended field
-using the very `Pairwise` `hdist_elem`/`hdist_db` established.
+It carries `hne : mangle dbC.name ≠ mangle elemC.name`, and that hypothesis is
+**not** discharge-able in general: `Templates.Llist.Examples.selfDb` is a ctype
+that threads *itself*, `Dmmeta.check` accepts it, and `genLlist` emits a
+`Wf.check`-clean program for it. So `genWellFormed` cannot be assembled from
+`field_lookups` as it stands, and adding `hne` to `genWellFormed` would be
+weakening the statement — the schema is legitimate and the generator handles
+it.
 
-Do this next, in this order:
+**What the self branch looks like.** Both `addFields` calls land on one struct,
+whose fields are `own ++ elemFields ++ dbFields`, and all five lookups go into
+that one list:
 
-1. **A bundle lemma** giving all five equations at once against a *symbolic*
-   `Wf.Ctx` whose `structs` is the doubly-extended table — the `UpptrWf`
-   `hfield` shape, five entries instead of one. Write it before any
-   `checkFun`; every one of the nine consumes it and nothing else varies.
+```lean
+by_cases hne : dbN = elemN
+· -- self-list
+  have hboth := Layout.find?_addFields (n := dbN) (extra := dbFields nm elemN) _ hinnerE
+  rw [if_pos (beq_iff_eq.mpr (hen.trans hne.symm))] at hboth
+  -- the Pairwise comes from ONE `hdist_db` call, at the singly-extended struct
+  have hpw := hdist_db hchk hdb hfld elemN
+    ({ structOf d.withBuiltins elemC with
+       fields := (structOf d.withBuiltins elemC).fields ++ elemFields nm elemN })
+    (List.mem_map.mpr ⟨structOf d.withBuiltins elemC, …,
+       by rw [if_pos (beq_iff_eq.mpr hen)]⟩)
+    (hen.trans hne.symm)
+```
+then the same five `show`/`rw [NameWf.find?_field …]`/`rfl` triples, over
+`((own ++ elemFields) ++ dbFields)` instead of `own ++ elemFields`.
 
-   **This was attempted and reverted; everything but the last step works.**
-   What is proved and reusable: `Layout.find?_addFields` composes resolution
-   through *both* extensions (`struct?_addFields` handles only one, which is
-   the trap — the templates apply two), `Layout.ext_name`, and
-   `NameWf.find?_field`. The working shape, verified up to the final step:
+**Two things that went wrong when this was attempted and reverted:**
 
-   ```lean
-   have hen : (structOf d.withBuiltins elemC).name = elemN := Layout.structOf_name _ _
-   have hne' : dbN ≠ elemN := hne          -- restate on the let-bound names;
-                                           -- `▸` cannot see through the `let`
-   have hinnerE := Layout.find?_addFields _ hbase      -- element gains links
-   have hinnerD := Layout.find?_addFields _ hdbase     -- parent untouched
-   have helemS  := Layout.find?_addFields _ hinnerE    -- then the outer pass
-   have hdbS    := Layout.find?_addFields _ hinnerD
-   ```
-   with `if_pos (beq_iff_eq.mpr hen)` / `if_neg (fun e => hne' (hen ▸ …))`
-   picking the branches. **Order matters**: `find?_addFields` peels the
-   *outer* extension, so the inner `if` must be resolved first. `hdist_db`
-   must be applied to the **unextended** parent struct — it quantifies over
-   the singly-extended table, not the doubly-extended one.
+1. **Do not give `hboth` a type ascription.** Written out, the expected type
+   is `{ structOf … with fields := own ++ elemFields ++ dbFields }` and what
+   `find?_addFields` produces is `{ inner with fields := inner.fields ++ dbF }`
+   where `inner` is itself a structure update. They are defeq and Lean reports
+   a mismatch on the `let __src :=` form. Let the type be inferred and `rw` the
+   `if` inside it.
+2. **The `show` layout is load-bearing.** `show (do let fv ← … )` on one line
+   changes the `do` block's layout column and the parse fails at the next
+   `(`. Match the committed style exactly: `show (do` alone, then `let fv ← …`
+   on the following line — the whole `find?` application on that one line,
+   however long — then `some fv.2) = _` at the `let`'s column.
 
-   **Where it stops.** After
-   `simp only [Wf.Ctx.field?, Wf.Ctx.struct?, ctx, helemS, hdbS]` the goal is
-   `do let sd ← some {…}; let fv ← List.find? … sd.fields; some fv.2`, and the
-   outer bind will not reduce: `simp only []`, `simp only [Option.bind]` and
-   `Option.some_bind` all make no progress. `NameWf.ctx_field?` hit the same
-   thing and solved it with an explicit `show` of the peeled form — five of
-   them here, one per field, since the field name and type differ. Write the
-   five `show`s; do not look for a lemma.
-2. **The seven one-statement bodies** — `initDef`, `firstDef`, `nextDef`,
-   `prevDef`, `inQDef`, `emptyQDef`, `sizeDef`. These follow `UpptrWf`'s
-   `checkFun_defsFor` verbatim: `simp only [Wf.checkFun, <def>, names, …,
-   Wf.inferExpr, Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]` then
-   `simp [bundle, Wf.isValTy, Wf.distinct, Wf.dups, parRow]`.
-3. **`insertDef` (six statements, one `if`) and `removeDef` (eight, two)** —
-   the actual work. They read and write through the `_old` / `_prev` / `_next`
-   pointer locals, so beyond the five field equations they need
-   `Wf.Ctx.local?` on those, which is closed arithmetic on the `locals` list
-   the frame fixes. Expect the `simp` sets to need `Wf.binTy` and
-   `Wf.isPtrTy` as `testDef` did.
+**Then the assembly.** `genLlist d = some p` unwinds the `do` to give `dbName`,
+`dbC`, `fld`, `elemC`; `hdb`/`helem` from `Db.find?` membership, `hfld` from
+`List.find?` membership, `hroot` from `d.root = some dbName` with
+`Db.find?_name`, `hdbs` from `Dmmeta.check`'s root clause via
+`Layout.facts_of_check`, and `hes` from `Reftype.needsRecordArg .Llist`.
+`Wf.check p` is then `checkStructs_gen_llist ++ checkGlobals_gen_llist ++
+distinct(names_pairwise) ++ flatMap(checkFun_simple / _insert / _remove)`.
 
-**Hazard, from `UpptrWf`:** put the field bundle in the *closing* `simp`, not
-in the opening `simp only`. In the opening set it does not fire — the goal has
-not been unfolded far enough for `Wf.Ctx.field?` to appear yet — and the
-resulting error looks like the lemma being wrong rather than mistimed.
-
-`Thash` is the same shape with five functions. Two things there are new:
+`Thash` is the same shape with five functions. Two things are new there:
 `findDef` has a `forN` body, and `insertDef` has a `call` to `Find`, which
 needs `Wf.Ctx.fun?` to resolve it from `earlier` — `checkFun`'s `earlier` is
 `p.funs.take i` and `Find` is emitted first, so it is in the prefix, but no
@@ -403,6 +404,13 @@ mention `post` while the goal mentions `q1 :: post0`. Every membership side
 goal is then `by rw [hpost]; simp` rather than `simp`.
 
 ## Decisions
+
+- **A `checkFun` bundle must state its lookups with a leading `∀` over the
+  frame.** `Wf.Ctx.field?` and `Ctx.global?` do not read `locals`, so each
+  equation holds for every frame — but supplied as a specific instance `simp`
+  cannot instantiate it and silently leaves the goal. Stating
+  `∀ locals, (Ctx.mk … locals).field? … = …` and proving it `fun _ => h` is
+  what makes the seven simple bodies one `simp` each.
 
 - **Resolution through a *repeated* extension needs `find?_addFields`, not
   `struct?_addFields`.** The latter was written when only one `addFields` was

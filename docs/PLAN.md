@@ -118,6 +118,9 @@ tested against a real compiler by `scripts/smoke.sh`.
   program `Wf.check` accepts. The first of the three ctype-model templates to
   match what the generated headers already claim. `Templates/NameWf.lean`
   carries the function-name half for all three.
+- **All nine of `Llist`'s `checkFun` obligations** — `checkFun_simple` for the
+  seven one-statement bodies, `checkFun_insert` and `checkFun_remove` for the
+  two real ones, over `field_lookups`'s five field equations.
 - **`Llist`'s struct and global obligations** — `checkStructs_gen_llist` and
   `checkGlobals_gen_llist`, over the *extended* table, with
   `Layout.field_ne_generated` spending the `clashesGenerated` clause to make
@@ -210,12 +213,12 @@ conflated them. The two are separated below.
    is then a bounded char array. And the same mechanism is what `Bitfld` (75),
    `Charset` (23), `lenfld`, `substr` and `fconst` (337 records) all need —
    **one cheap mechanism unblocks five reftypes with no allocation anywhere.**
-2. **`Llist` and `Thash` `GenWellFormed`.** The generator rework is **done**,
-   and for `Llist` so is everything except `checkFun`: the name obligation,
-   both `hdist` lemmas, and the struct and global halves
-   (`checkStructs_gen_llist`, `checkGlobals_gen_llist`). What remains is the
-   nine bodies — seven of them one statement each — then `Thash`.
-   `PROGRESS.md` names the bundle lemma to write first. Ahead of the big reftypes because it is about
+2. **`Llist` and `Thash` `GenWellFormed`.** For `Llist`, **all nine
+   `checkFun`s are proved**, along with the names, both `hdist` lemmas and the
+   struct and global halves. One gap remains before assembly: `field_lookups`
+   assumes the database and element ctypes differ, which `Examples.selfDb` — a
+   ctype threading itself, accepted by `Dmmeta.check` and emitted cleanly —
+   refutes. `PROGRESS.md` writes out the missing branch. Then `Thash`. Ahead of the big reftypes because it is about
    whether the guarantee the *existing* templates ship is the one their
    generated headers claim.
 3. **`Ptrary` (136 fields).** An array of pointers over a base pool. Needs the

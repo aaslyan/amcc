@@ -557,8 +557,7 @@ theorem checkFun_insert {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block, Stmt.when]
   simp [hg, hfN, hfP, hfI, hfH, hfC, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
     tmpOld, Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.unTy, Wf.litTy,
-    Wf.Stmt.alwaysReturns, Wf.Stmt.assigns, Wf.inferExpr, Wf.addrChecks,
-    Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+    Wf.inferExpr, Wf.addrChecks, Wf.Ctx.local?, ValTy.toTy]
 
 theorem checkFun_remove {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
@@ -595,9 +594,8 @@ theorem checkFun_remove {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
   simp only [Wf.checkFun, removeDef, dbFld, ptrFld, ptrLocal, Wf.checkStmt,
     Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block, Stmt.when]
   simp [hg, hfN, hfP, hfI, hfH, hfC, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
-    tmpPrev, tmpNext, Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.unTy, Wf.litTy,
-    Wf.Stmt.alwaysReturns, Wf.Stmt.assigns, Wf.inferExpr, Wf.addrChecks,
-    Wf.inferLVal, Wf.Ctx.local?, ValTy.toTy]
+    tmpPrev, tmpNext, Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.litTy,
+    Wf.inferExpr, Wf.addrChecks, Wf.Ctx.local?, ValTy.toTy]
 
 end Llist
 end Templates

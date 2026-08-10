@@ -158,9 +158,11 @@ that should fail does not.)
                           Nothing about the reader is proved; the round trip is
                           what stands in (`docs/DIVERGENCE.md` §3.6)
 - `Templates.LlistWf`   — the intrusive list's every-schema obligation: the
-                          names, both `hdist` lemmas and the struct and global
-                          halves are **proved**; `checkFun` for the nine
-                          bodies is owed (`PROGRESS.md`)
+                          names, both `hdist` lemmas, the struct and global
+                          halves and **all nine `checkFun`s** are proved. One
+                          gap before assembly: `field_lookups` assumes the two
+                          ctypes differ, and a ctype may thread itself
+                          (`PROGRESS.md`)
 - `Templates.LayoutWf`  — **proved**: `layoutWellFormed` — every schema the
                           lowering accepts produces structs and globals
                           `Wf.check` accepts, including that struct nesting is
