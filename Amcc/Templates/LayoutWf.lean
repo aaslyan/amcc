@@ -195,7 +195,7 @@ theorem facts_of_check {d : Db} (h : check d = []) :
             ∧ (f.reftype.needsRecordArg = true →
                 ∃ ac, d.withBuiltins.find? f.arg = some ac ∧ ac.scalar = none) := by
   simp only [check, List.append_eq_nil_iff, List.map_eq_nil_iff] at h
-  obtain ⟨⟨⟨⟨hdup, hmdup⟩, hqdup⟩, hroot⟩, hcty⟩ := h
+  obtain ⟨⟨⟨⟨⟨hdup, hmdup⟩, hqdup⟩, hroot⟩, hcty⟩, _⟩ := h
   refine ⟨⟨hdup, hmdup, hqdup⟩, ?_, fun i hi => ?_⟩
   · intro r hr
     rw [hr] at hroot

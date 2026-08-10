@@ -173,7 +173,7 @@ template's distinctness proof starts from. -/
 theorem quals_pairwise {d : Db} (hchk : check d = []) :
     (qualNames d).Pairwise (· ≠ ·) := by
   simp only [check, List.append_eq_nil_iff, List.map_eq_nil_iff] at hchk
-  obtain ⟨⟨⟨_, hq⟩, _⟩, _⟩ := hchk
+  obtain ⟨⟨⟨⟨⟨_, _⟩, hq⟩, _⟩, _⟩, _⟩ := hchk
   rw [← qualNames_withBuiltins d]
   exact CSubset.dups_eq_nil_iff.mp hq
 

@@ -295,8 +295,19 @@ statement. Attempting the theorem is what exposed all four.
    which is what a self-index should produce.
    `Templates.Thash.Examples.selfDb` is the regression schema.
 
+5. **A field named what a template generates** — `task_row.zdl_todo_next`
+   against `TaskDb.zdl_todo`. Accepted; the struct then had two fields of one
+   name. **Fixed**: `Dmmeta.check` gained a `clashesGenerated` clause.
+   A *blanket* reservation of the nine suffixes was tried first and is wrong —
+   it rejects this repo's own `child_row.zd_next`, and `c_next`, `line_n` and
+   `prev_head` in the real corpus. The collision needs the stripped prefix to
+   be a **declared field name**, which is the narrower test that shipped.
+
 **Every template's `GenWellFormed` is a differential test between the two
-checkers, run at proof time over all schemas.** Three attempts, four holes.
+checkers, run at proof time over all schemas.** Four attempts, five holes —
+and the fifth was found by the *layout fix*, not by the proof, because
+extending the lowered table is what put a generated field next to a declared
+one in the same struct.
 
 ## How `Remove` went, in the end
 

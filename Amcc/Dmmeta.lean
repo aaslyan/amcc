@@ -412,6 +412,38 @@ def isCIdent (s : String) : Bool :=
   | c :: cs => (c.isAlpha || c == '_') && cs.all (fun d => d.isAlphanum || d == '_')
                && !cKeywords.contains s
 
+/-- The field-name suffixes a template appends to a struct the layout pass
+already emits: `Llist`'s links and flag, `Thash`'s bucket array, `Pool`'s free
+list, and the count both structures keep.
+
+A *blanket* reservation — reject any field ending in one of these — was tried
+first and is wrong: this file's own `child_row.zd_next` is a legitimate
+`Llist` field, and the corpus has `c_next`, `line_n` and `prev_head`. The
+collision only exists when the stripped prefix is **itself a declared field
+name**, because that is the only way a template generates the colliding name.
+`clashesGenerated` below is that narrower test. -/
+def genSuffixes : List String :=
+  [ "_next", "_prev", "_inlist", "_inhash", "_buckets", "_head", "_n"
+  , "_freenext", "_freehead" ]
+
+/-- Strip a suffix, if it is one. Reversed, so the suffix test is a **prefix**
+test — the same trick `Templates.NameWf.append_ne_rev` uses, and for the same
+reason: `List.isPrefixOf` is structural and reduces, where a suffix test needs
+length arithmetic. -/
+def dropSuffix (sfx n : List Char) : Option (List Char) :=
+  if sfx.reverse.isPrefixOf n.reverse then some (n.take (n.length - sfx.length))
+  else none
+
+/-- **Would a template generate this name?** `n` collides when stripping a
+generated suffix leaves a name that is itself declared — `zdl_todo_next`
+against a field `zdl_todo`. A field merely *ending* in `_next` is fine, which
+is why the test is not the blanket one. -/
+def clashesGenerated (names : List Ident) (n : Ident) : Bool :=
+  genSuffixes.any (fun sfx =>
+    match dropSuffix sfx.toList n.toList with
+    | none     => false
+    | some pre => names.contains (String.ofList pre))
+
 /-- Reserved for the generator's own locals. -/
 def isReservedName (n : Ident) : Bool := n.toList.head? == some '_'
 
@@ -481,6 +513,11 @@ two fields sharing it collide in the emitted translation unit however few
 templates run. -/
 def qualName (c : Ident) (f : Ident) : Ident := mangle c ++ "_" ++ mangle f
 
+/-- Every field's C name, across the schema — what a generated field name
+could collide with. -/
+def fieldCNames (d : Db) : List Ident :=
+  d.ctypes.flatMap (fun c => c.fields.map (fun f => mangle f.name))
+
 /-- Every `<ctype>_<field>` in the schema. -/
 def qualNames (d : Db) : List Ident :=
   d.ctypes.flatMap (fun c => c.fields.map (fun f => qualName c.name f.name))
@@ -511,6 +548,14 @@ def check (d : Db) : List String :=
           | some c => if c.scalar.isSome then [s!"root ctype {r} is a scalar"] else [])
     ++ full.ctypes.zipIdx.flatMap (fun ci =>
         checkCtype full ((full.ctypes.take ci.2).map Ctype.name) ci.1)
+    -- A declared field whose name is one a template would *generate* on the
+    -- same struct: `task_row.zdl_todo_next` against `TaskDb.zdl_todo`. The
+    -- struct then has two fields of one name, which `Dmmeta.check` accepted
+    -- and `CSubset.Wf.check` rejected until this clause existed.
+    ++ full.ctypes.flatMap (fun c => c.fields.filterMap (fun f =>
+         if clashesGenerated (fieldCNames full) (mangle f.name) then
+           some s!"{c.name}.{f.name}: collides with a field a template generates"
+         else none))
 
 def wf (d : Db) : Bool := (check d).isEmpty
 
@@ -613,6 +658,38 @@ example : check
         [ { name := "r", fields := [{ name := "id", arg := "u64",
                                       reftype := .Pkey }] } ] } = [] := rfl
 
+/-! ### Names a template would generate -/
+
+/-- **A field named what a template generates is rejected.** `TaskDb.zdl_todo`
+is an `Llist`, so the element struct gains `zdl_todo_next`; a schema declaring
+that field too produced a struct with two fields of one name, which
+`Dmmeta.check` accepted and `CSubset.Wf.check` rejected.
+
+checked by: `lake build` -/
+example : check
+    { ctypes :=
+        [ { name := "task_row"
+          , fields := [ { name := "id", arg := "u64", reftype := .Pkey }
+                      , { name := "zdl_todo_next", arg := "u64",
+                          reftype := .Val } ] }
+        , { name := "TaskDb"
+          , fields := [{ name := "zdl_todo", arg := "task_row",
+                         reftype := .Llist }] } ]
+      , root := some "TaskDb" }
+    = ["task_row.zdl_todo_next: collides with a field a template generates"] := rfl
+
+/-- **A field merely *ending* in a generated suffix is fine.** The blanket rule
+was tried first and rejected this file's own `child_row.zd_next`, and would
+reject `c_next`, `line_n` and `prev_head` in the real corpus. The collision
+needs the stripped prefix to be a declared field name.
+
+checked by: `lake build` -/
+example : check
+    { ctypes :=
+        [ { name := "r"
+          , fields := [{ name := "zd_next", arg := "u64", reftype := .Val }] } ] }
+    = [] := rfl
+
 /-! ### Mangling, against `amc::strptr_PrintCppIdent` -/
 
 /-- A plain name is its own C identifier. -/
@@ -678,10 +755,12 @@ example : (genStructs
     (fun sd => (sd.name, sd.fields.map Prod.fst))
     = [("dev_Arch", ["arch"]), ("abt_FArch", ["p_arch"])] := rfl
 
-/-- A ctype referring to other ctypes, one of them itself, is accepted.
-
-checked by: `lake build` -/
-example : check relational = [] := rfl
+-- A ctype referring to other ctypes, one of them itself, is accepted. `#guard`
+-- rather than `rfl`: `check` now mangles every name and tests every field
+-- against the reserved suffixes, and kernel-normalising that for the largest
+-- example is past the boundary `CLAUDE.md` draws.
+-- checked by: `lake build`
+#guard check relational == []
 
 /-- The row lowers to the struct the C subset expects. `Pkey` at scalar
 argument stays a scalar; `Upptr` becomes a pointer; the `Llist` link has no
