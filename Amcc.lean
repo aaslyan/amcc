@@ -110,7 +110,9 @@ that should fail does not.)
 - `Templates.Llist`     — the **intrusive doubly-linked list** (`amc`'s `zdl`
                           flavour): nine functions, with the readers, both
                           idempotence guards and **`insertLinks`** proved over
-                          `ListInv`. `RemoveUnlinks` is stated and owed
+                          `ListInv`, and `Remove`'s head case
+                          (`exec_removeHead`). `RemoveUnlinks` is stated and
+                          owed — the middle-case assembly remains
 - `Templates.Upptr`     — the **up-pointer template** (its `lookups_of_wf`
                           shows `Wf.check` acceptance supplies the resolution
                           hypothesis every accessor law assumes): `Init`/`Get`/`Set`/`Q`

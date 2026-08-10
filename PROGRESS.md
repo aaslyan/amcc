@@ -25,9 +25,10 @@ proved; see "Where Remove stands" below. Then `Thash.FindCorrect`.
   and the path-disjointness lemmas (`fldPath_disjoint`, `fldPath_ne_disjoint`,
   `overlaps_ext`, `overlaps_symm`). `Thash` will use the same module unchanged.
 
-- **C (half) — `Llist.InsertLinks`.** Proved over `ListInv`. `RemoveUnlinks` is
-  restated the same way and its last four statements are proved
-  (`exec_removeTail`); the two branch assemblies remain.
+- **C (most) — `Llist.InsertLinks`, and `Remove`'s head case.** `insertLinks`
+  is proved over `ListInv`. For `Remove`: `exec_removeTail` (the last four
+  statements) and `exec_removeHead` (the whole body when the row is the head)
+  are proved. `RemoveUnlinks` itself awaits the middle-case assembly.
 
 - **A — `Thash.BucketInRange`.** Proved, together with `mask_eq_mod` and
   `accepted_bucket_facts`. `PLAN.md`'s "Next, in order" corrected in the same
@@ -65,7 +66,8 @@ proved; see "Where Remove stands" below. Then `Thash.FindCorrect`.
 
 ## Next
 
-- `Llist.RemoveUnlinks` — the two branch assemblies (see below)
+- `Llist.RemoveUnlinks` — the middle-case assembly, then both through
+  `callFun_normal` (see "Where Remove stands")
 - `Thash.FindCorrect`, over `CSubset.Chain`
 - The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
   `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
@@ -75,26 +77,50 @@ proved; see "Where Remove stands" below. Then `Thash.FindCorrect`.
 
 ## Where `Remove` stands
 
-Determinate, not open-ended. `Backlinked.split` says a row on the chain is
-either the head or has a predecessor the chain splits around — which is
-exactly what the generated `if (_prev != NULL)` branches on.
+**Head case: done.** `Llist.exec_removeHead` is proved — `row->prev` is `NULL`,
+so `Backlinked.split` puts `q` first, the generated `if (_prev != NULL)` takes
+its else branch and writes `g.head = _next`, the new chain is `Reaches.tail`,
+and `erase_cons_self` turns `q :: post` into `qs.erase q`. `exec_removeTail`
+finishes. The A4 packaging (`if (_next != NULL) _next->prev = _prev`, split on
+whether `post` is empty) is in that proof and is what the middle case should
+copy — it is identical there except the value written is `.ptr pp` instead of
+`.null`.
 
-- **Head case.** `qs = q :: post`. A3 writes `g.head = _next`; the new chain is
-  `Reaches.tail`; `erase_cons_self` gives `qs.erase q = post`. A3 is already
-  proved in this shape (it was written and then cut back with the rest of the
-  branch, since a half-assembled theorem cannot be committed).
-- **Middle case.** `qs = pre ++ pp :: q :: post`. A3 writes
-  `_prev->next = _next`; the new chain is `Reaches.splice`;
-  `erase_append_cons_cons` gives `qs.erase q = pre ++ pp :: post`.
-- **Both.** A4 (`if (_next != NULL) _next->prev = _prev`) splits on whether
-  `post` is empty, exactly as `Insert`'s `if (_old != NULL)` does — copy that
-  packaging. Then `exec_removeTail`, which is proved. The invariant clauses
-  come out as they do for `Insert`: `Flagged.erase`, `Counted` via
-  `uint32_ofNat_pred`, and `fields` by cases on whether the row is `q` or the
-  successor whose `prev` A4 wrote.
+**Middle case: not assembled.** It was written once and cut back rather than
+committed under a `sorry`. Its shape, and everything it needs, is proved:
 
+- `hqs : qs = pre ++ pp :: q :: post` and `pval = .ptr pp`, both from
+  `Backlinked.split`.
+- A3 takes its *then* branch and writes `fldPath pp next := headOf post` —
+  `step_ptr` with `ptr := tmpPrev`, `q := pp`.
+- Chain: `Reaches.splice pre (headOf qs) pp q post`, then rewrite the head
+  value with `headOf_append_cons`.
+- Back-links: `Backlinked.of_append (pre ++ [pp]) .null (q :: post)` splits the
+  old chain; `Backlinked.append` puts it back with `post` re-rooted at `pp`
+  (`lastOr_append_singleton` is the bridge). The `post = q1 :: post0` sub-case
+  takes `q1.prev` from A4 and the rest from `of_append`'s second component.
+- Erase: `erase_append_cons_cons pre pp q post` needs `q ∉ pre` and `q ≠ pp`,
+  both from `List.pairwise_append.mp (hqs ▸ hnd)`.
 
+Three things went wrong in the cut-back attempt and are worth knowing:
+
+- `Ne.symm` direction on `hppPost`/`hqPost` — they give `pp ≠ r` and `q ≠ r`,
+  and `RowsDisjoint` wants the arguments in the order the rows appear.
+- `hsplit`'s `Backlinked.of_append` needs the list in `(pre ++ [pp]) ++ q ::
+  post` form; `hqs ▸ I.back` gives `pre ++ pp :: q :: post`, so the `▸` has to
+  be steered rather than left to unify.
+- The `fields` clause needs a fourth case in the middle branch: `r = pp`, whose
+  `next` A3 wrote. The head case has only three.
+
+**Then**: `removeUnlinks` assembles the two branches through `callFun_normal`
+exactly as `insertLinks` does.
 ## Decisions
+
+- **`Backlinked` gained `of_append`/`append` and `lastOr` rather than a
+  bespoke splice lemma.** An unlink is "split the chain, shorten the second
+  half, put it back", and the head case is the degenerate split at `[]`. One
+  pair of lemmas covers both branches and `Thash` will reuse them, where a
+  splice lemma specialised to `Llist`'s field names would not.
 
 - **`Dmmeta.check` gained a qualified-name clause rather than each template
   checking its own names.** Every template prefixes its operation names with

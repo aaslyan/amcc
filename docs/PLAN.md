@@ -55,8 +55,8 @@ tested against a real compiler by `scripts/smoke.sh`.
   **`Llist.insertLinks`** — `Insert` links the row at the head and preserves
   the representation invariant, with the chain becoming `q :: qs`.
   `RemoveUnlinks` is **stated and not yet proved**: its last four statements
-  are (`exec_removeTail`), the two branch assemblies are not. `PROGRESS.md`
-  has the remaining steps.
+  (`exec_removeTail`) and its whole head case (`exec_removeHead`) are proved;
+  the middle-case assembly is not. `PROGRESS.md` has the remaining steps.
 - **`Upptr.lookups_of_wf`** — a program `Wf.check` accepts has distinct
   function names, so the resolution hypothesis every accessor law assumes is
   supplied by acceptance. `Dmmeta.check` gained the matching schema-level
@@ -118,8 +118,9 @@ Two gaps remain against the full measure, both recorded in
 
 ## Next, in order
 
-1. **`Llist.RemoveUnlinks`** — the two branch assemblies. Every ingredient is
-   proved; `PROGRESS.md` lists the steps.
+1. **`Llist.RemoveUnlinks`** — the middle-case assembly (the head case is
+   proved as `exec_removeHead`). Every ingredient is proved; `PROGRESS.md`
+   lists the steps and the three things that went wrong last attempt.
 2. **`Thash.FindCorrect`**, over `CSubset.Chain` — a bucket is a chain, so the
    same `Reaches` applies with `nm.next` and the bucket head.
 3. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and

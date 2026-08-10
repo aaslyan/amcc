@@ -403,6 +403,40 @@ theorem Backlinked.split {m : Mem} {pv : Ident} :
       · exact Or.inr ⟨q0, [], post, by simp [h2], h1⟩
       · exact Or.inr ⟨pp, q0 :: pre, post, by simp [h1], h2⟩
 
+/-- The back-pointer a chain hung on the far side of `l` would carry: the last
+row of `l`, or `back` if `l` is empty. Written so that the recursive step
+threads the new back-pointer, which is exactly how `Backlinked` recurses. -/
+def lastOr : List Path → Value → Value
+  | [],      back => back
+  | q :: qs, _    => lastOr qs (.ptr q)
+
+theorem lastOr_append_singleton :
+    ∀ (l : List Path) (a : Path) (back : Value), lastOr (l ++ [a]) back = .ptr a
+  | [], _, _ => rfl
+  | b :: l, a, _ => lastOr_append_singleton l a (.ptr b)
+
+/-- **Splitting a back-linked chain.** Both halves are back-linked, the second
+from the first's last row. -/
+theorem Backlinked.of_append {m : Mem} {pv : Ident} :
+    ∀ (l1 : List Path) (back : Value) (l2 : List Path),
+      Backlinked m pv (l1 ++ l2) back →
+      Backlinked m pv l1 back ∧ Backlinked m pv l2 (lastOr l1 back)
+  | [], _, _, h => ⟨trivial, h⟩
+  | a :: l1, _, l2, h => by
+    obtain ⟨h1, h2⟩ := h
+    obtain ⟨h3, h4⟩ := Backlinked.of_append l1 (.ptr a) l2 h2
+    exact ⟨⟨h1, h3⟩, h4⟩
+
+/-- And putting them back together — which is what an unlink does, with a
+shorter second half. -/
+theorem Backlinked.append {m : Mem} {pv : Ident} :
+    ∀ (l1 : List Path) (back : Value) (l2 : List Path),
+      Backlinked m pv l1 back → Backlinked m pv l2 (lastOr l1 back) →
+      Backlinked m pv (l1 ++ l2) back
+  | [], _, _, _, h2 => h2
+  | a :: l1, _, l2, h1, h2 =>
+    ⟨h1.1, Backlinked.append l1 (.ptr a) l2 h1.2 h2⟩
+
 /-! ## Erasing a row from the chain -/
 
 theorem erase_cons_self (q : Path) (post : List Path) :
