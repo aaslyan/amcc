@@ -185,13 +185,15 @@ them is blocked by something else entirely.
    It gates eleven times as many fields as the largest missing reftype
    (`Lary`, 390). This was not on the roadmap at all before the corpus was
    measured; it is now the single highest-value thing to build.
-2. **`GenWellFormed` for the non-array templates.** `Upptr`, `Llist` and
-   `Thash` each have `Wf.check … = []` only as a computational example on
-   their sample schema. The array table has it for *every* accepted schema.
-   Until the others do, `lookups_of_wf`'s hypothesis is discharged per-schema
-   rather than once. The shared half is **done**
-   (`Layout.layoutWellFormed`); what remains is the per-template function
-   obligations, and `PROGRESS.md` carries the handoff. Ahead of the reftypes because it
+2. **`GenWellFormed` for `Llist` and `Thash`.** `Upptr` is done; the array
+   table was already. These two are **blocked on a generator defect** rather
+   than on proof effort: they emit two hand-built structs instead of the
+   lowered layout, so an element ctype with a record-typed field references a
+   struct that is not emitted, and a self-indexing `Thash` emits a duplicate
+   struct name. Both are accepted by `Dmmeta.check` and rejected by
+   `Wf.check`. The fix is to emit `genStructs` with the element and parent
+   structs *extended*, which is also what cross-references will need.
+   `PROGRESS.md` carries the handoff. Ahead of the reftypes because it
    is about whether the *existing* templates' guarantee is what the generated
    headers claim.
 3. **Xref maintenance** tying the templates together, using the
