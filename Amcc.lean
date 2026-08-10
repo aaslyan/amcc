@@ -93,9 +93,12 @@ that should fail does not.)
                           free-list allocator (`Tpool`'s shape) emitted as C,
                           with `Init`/`Alloc`/`Free`/`N`
 - `Templates.Thash`     — the **hash index**: five functions over a
-                          fixed-capacity, power-of-two bucket array, with the
-                          count and both idempotence guards proved and
-                          `FindCorrect` / `BucketInRange` stated
+                          fixed-capacity, power-of-two bucket array. The count
+                          and both idempotence guards are proved, and so is
+                          `bucketInRange` — the bucket subscript cannot trap —
+                          together with `mask_eq_mod`, which is what the
+                          power-of-two requirement actually buys. `FindCorrect`
+                          is stated and owed
 - `Templates.Llist`     — the **intrusive doubly-linked list** (`amc`'s `zdl`
                           flavour): nine functions, with the readers and both
                           idempotence guards proved and the linking laws
@@ -122,9 +125,7 @@ need.
 `Templates.Llist.InsertLinks` / `RemoveUnlinks` and `Templates.Thash`'s
 `FindCorrect`. All three need the same missing piece — a reachability
 predicate over the store, because a chain's shape is a property of a graph in
-the heap rather than of a carrier list. `Templates.Thash.BucketInRange` is
-separate and smaller: it is the no-trap obligation for the bucket subscript,
-and depends on nothing but the mask.
+the heap rather than of a carrier list. `Templates.Thash.BucketInRange` is closed.
 
 `Codegen.Print` is unverified — see `docs/DIVERGENCE.md` §3. A closed
 `MilestoneTheorem` certifies the generated **AST**; the C text is covered by

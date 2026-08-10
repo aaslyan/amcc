@@ -2,9 +2,15 @@
 
 ## Now
 
-**`Thash.BucketInRange`**, then the chain invariant.
+**The chain invariant** — one reachability predicate over the store, in its own
+module, used unchanged by `Llist` and `Thash`.
 
 ## Done
+
+- **A — `Thash.BucketInRange`.** Proved, together with `mask_eq_mod` and
+  `accepted_bucket_facts`. `PLAN.md`'s "Next, in order" corrected in the same
+  commit: it still listed `Thash` as upcoming after it had shipped, and its
+  numbering ran 0,1,2,3,3.
 
 - **D — `Thash`.** `Templates/Thash.lean` emits five functions over a
   fixed-capacity, power-of-two bucket array and passes `Wf.check`. Proved:
@@ -37,11 +43,33 @@
 
 ## Next
 
-- `BucketInRange` — `key & (NB-1) < NB` for `NB` a power of two
 - The chain invariant, and with it `Llist.InsertLinks` / `RemoveUnlinks` and
   `Thash.FindCorrect`
+- The C-name uniqueness obligation the `Upptr` laws push onto `Dmmeta.check`
 
 ## Decisions
+
+- **`BucketInRange` was false as stated and is now correct.** It quantified
+  over every `nb` including `0`, where `Nat` subtraction makes the mask `0` and
+  `0 < 0` fails. Added `0 < nb`, which `genThash` already enforces. This is a
+  correction, not a weakening: the old statement could not have been
+  discharged for any schema, so nothing that used to be claimed is now
+  claimed less.
+
+- **The power-of-two condition does not keep the subscript in range.** Masking
+  clears bits, so `key & (NB-1) < NB` for *any* positive `NB`. What
+  power-of-two buys is `mask_eq_mod` — that the mask is the modulus — which is
+  the claim `DIVERGENCE` §3.2 makes and which is now checked rather than
+  asserted. Stating them as two theorems keeps the two claims from being
+  confused, as the module docstring had invited.
+
+- **`genThash`'s power-of-two guard now returns the exponent.** It was
+  `Nat.land nb (nb-1) == 0`, from which recovering `nb = 2 ^ e` needs a real
+  induction over `Nat.land` that core does not supply. `pow2Exp? pow2Fuel nb`
+  is a structural search that hands the witness straight to the proofs. It is
+  not `2 ^ Nat.log2 n == n`, because `Nat.log2` is well-founded and does not
+  reduce in the kernel — that would have cost every schema check in the file
+  its `rfl`.
 
 - **`Path.overlaps` now means something.** It was defined in `Value.lean` with
   a docstring promising "no aliasing analysis — a prefix test" and *never

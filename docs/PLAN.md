@@ -54,8 +54,14 @@ tested against a real compiler by `scripts/smoke.sh`.
 - `Llist.init_correct`, the five readers, and both idempotence guards
   (`insert_noop`, `remove_noop`). The linking laws are **stated and not
   proved** — `InsertLinks` / `RemoveUnlinks`; see below.
-- `Thash.size_correct` and both idempotence guards. `FindCorrect` and
-  `BucketInRange` are **stated and not proved**.
+- `Thash.size_correct` and both idempotence guards.
+- **`Thash.bucketInRange`** — the bucket subscript is always in range, so the
+  only partial operation the hash index introduced cannot trap. Needs only
+  `0 < NB`, not the power-of-two condition. `Thash.mask_eq_mod` proves what
+  the power-of-two condition *does* buy: the mask is the modulus, which is the
+  claim `docs/DIVERGENCE.md` §3.2 makes. `accepted_bucket_facts` ties both to
+  the generator's own guard. `Thash.FindCorrect` remains **stated and not
+  proved**.
 - `Store.readPath_writePath_disjoint` — the frame law the above rests on, and
   the first thing that makes `Path.overlaps` mean something: a prefix test on
   access paths *is* a sufficient aliasing analysis, because a path names an
@@ -99,28 +105,28 @@ Two gaps remain against the full measure, both recorded in
 
 ## Next, in order
 
-0. **`Thash.BucketInRange`** — `key & (NB-1)` is a legal index into an
-   `NB`-bucket array when `NB` is a power of two. Small, self-contained, and
-   the no-trap obligation for the only new partial operation this round
-   introduced.
 1. **The chain invariant, and with it `Llist.InsertLinks` / `RemoveUnlinks`
    and `Thash.FindCorrect`.**
    A linked list's shape is a property of a graph in the heap, not of a
    carrier list, so the invariant needs a *reachability* predicate over the
-   store — the chain from `head` along `next` is finite, acyclic and
-   `NULL`-terminated, `prev` is its inverse, `inlist` marks exactly its
-   members, `n` is its length. `Store.readPath_writePath_disjoint` supports
-   the frame reasoning but does not supply that predicate. `Thash` needs the
-   same thing (a bucket *is* a chain), so it is worth building once.
-2. **`Thash`.** The bucket walk fits the capacity-bounded `forN` we already
-   have; correctness does not depend on hash quality, only the expected-time
-   claim does. No subset extension needed.
-3. **Xref maintenance** tying them together, using the prepare/commit design
-   from `Spec/Algebra.lean`.
-3. **Proofs for the above**, drawing on the machinery `ArrayTableFind.lean`
-   already banked: slot resolution, the pointer-deref path with `nullDeref` and
-   `useAfterFree` discharged, field writes with their frame property, and the
-   call path with frame save/restore.
+   store — the chain from a head along `next` is finite, acyclic and
+   `NULL`-terminated, `prev` is its inverse, the membership flag marks exactly
+   its members, the count is its length.
+   `Store.readPath_writePath_disjoint` supports the frame reasoning but does
+   not supply that predicate. A `Thash` bucket *is* a chain, so one predicate
+   serves both templates — which is the whole argument for building it in its
+   own module rather than inside either.
+2. **The C-name uniqueness obligation the `Upptr` laws push onto the checker.**
+   Those laws assume a program in which the field name resolves.
+   `child ++ "_" ++ fld` is not injective in the pair, so `a`/`b_c` and
+   `a_b`/`c` generate the same C name. If `Dmmeta.check` does not reject that,
+   the laws are vacuous for a legal schema and nothing would notice.
+3. **Xref maintenance** tying the templates together, using the
+   prepare/commit design from `Spec/Algebra.lean`.
+4. **The remaining reftypes** — `Bheap`, `Atree`, `Ptrary`, `Count`, the other
+   seven `Llist` flavours, and cursors for all of them. `docs/GOALS.md` puts
+   the whole vocabulary in scope; `docs/DIVERGENCE.md` §3 is the standing list
+   of what is not attempted.
 
 ---
 

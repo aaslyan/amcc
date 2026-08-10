@@ -282,6 +282,46 @@ def dbStruct (nm : Names) (dbC elem : Ident) (nb : Nat) : StructDef where
   fields := [ (nm.buckets, .arr (.ptr (.strct elem)) nb)
             , (nm.count, .scalar .u32) ]
 
+/-- `some e` when `n = 2 ^ e` for some `e ≤ fuel`, `none` otherwise.
+
+Written as a structural search rather than `2 ^ Nat.log2 n == n` because
+`Nat.log2` is defined by well-founded recursion and does not reduce in the
+kernel, which would cost every schema check in this file its `rfl` proof. The
+search *returns the exponent*, so accepting a schema hands the proofs a witness
+instead of leaving them to recover one from a bit trick. -/
+def pow2Exp? (fuel n : Nat) : Option Nat :=
+  match fuel with
+  | 0      => if n == 1 then some 0 else none
+  | e + 1  => if n == 2 ^ (e + 1) then some (e + 1) else pow2Exp? e n
+
+/-- Bucket counts are searched up to `2 ^ 31`, which also keeps `NB - 1` inside
+a `uint32_t` — the mask is a `u32` literal, so a larger count would truncate. -/
+def pow2Fuel : Nat := 31
+
+theorem pow2_of_exp? : ∀ (fuel n e : Nat), pow2Exp? fuel n = some e → n = 2 ^ e
+  | 0, n, e, h => by
+    simp only [pow2Exp?] at h
+    split at h
+    · next hn => cases h; simpa using hn
+    · exact Option.noConfusion h
+  | f + 1, n, e, h => by
+    simp only [pow2Exp?] at h
+    split at h
+    · next hn => cases h; simpa using hn
+    · exact pow2_of_exp? f n e h
+
+theorem exp?_le : ∀ (fuel n e : Nat), pow2Exp? fuel n = some e → e ≤ fuel
+  | 0, n, e, h => by
+    simp only [pow2Exp?] at h
+    split at h
+    · cases h; omega
+    · exact Option.noConfusion h
+  | f + 1, n, e, h => by
+    simp only [pow2Exp?] at h
+    split at h
+    · cases h; omega
+    · exact Nat.le_succ_of_le (exp?_le f n e h)
+
 /-- The element's `Pkey` field, which is what the index is keyed by. -/
 def keyField? (c : Dmmeta.Ctype) : Option Dmmeta.Field :=
   c.fields.find? (fun f => f.reftype == .Pkey)
@@ -303,7 +343,7 @@ def genThash (d : Dmmeta.Db) : Option Program := do
   let key ← keyField? elemC
   guard (key.arg == "u32")
   let nb ← full.inlaryMax? dbC.name fld.name
-  guard (nb != 0 && Nat.land nb (nb - 1) == 0)
+  guard (pow2Exp? pow2Fuel nb).isSome
   -- An upper bound on any chain: no more elements can be indexed than the
   -- schema declares room for.
   let cap ← full.inlaryMax? dbC.name fld.name
@@ -458,11 +498,78 @@ of two. That is an algebraic fact about `UInt32.land`, not a consequence of any
 invariant, and it is the one place where the generator's power-of-two
 precondition is cashed. -/
 
-/-- **The subscript never traps.** `_b = key & (NB-1)` with `NB` a power of two
-is always a legal bucket index. Stated separately from the index invariant
-because it depends on nothing but the mask. -/
+/-- **The subscript never traps.** `_b = key & (NB-1)` is always a legal index
+into an `NB`-bucket array. Stated separately from the index invariant because
+it depends on nothing but the mask.
+
+The `0 < nb` hypothesis was missing when this was first stated, and the
+statement was false without it: `Nat` subtraction makes the mask `0` when
+`nb = 0`, and `0 < 0` does not hold. `genThash` already refuses `nb = 0`, so
+nothing generated was ever at risk — but the obligation as written could not
+have been discharged, which is exactly the failure mode stating obligations is
+meant to prevent. -/
 def BucketInRange (nb : Nat) : Prop :=
-  ∀ k : UInt32, (k &&& UInt32.ofNat (nb - 1)).toNat < nb
+  0 < nb → ∀ k : UInt32, (k &&& UInt32.ofNat (nb - 1)).toNat < nb
+
+/-- **Proved.** And it needs *only* positivity — not the power-of-two
+condition. Masking clears bits, so `key & (NB-1) ≤ NB-1 < NB` whatever `NB`
+is; `UInt32`'s truncation of the mask can only make it smaller.
+
+That is worth stating plainly, because the module docstring could be read as
+claiming the power-of-two requirement is what keeps the subscript in range. It
+is not. What the power-of-two requirement buys is `mask_eq_mod` below — that
+the mask *is* the modulus, so the index is a hash bucket rather than an
+arbitrary function of the key.
+
+checked by: `lake build` -/
+theorem bucketInRange (nb : Nat) : BucketInRange nb := by
+  intro hpos k
+  have h1 : (k &&& UInt32.ofNat (nb - 1)).toNat
+      = k.toNat &&& (UInt32.ofNat (nb - 1)).toNat := rfl
+  have h2 : (UInt32.ofNat (nb - 1)).toNat = (nb - 1) % 4294967296 := by
+    simp [UInt32.toNat_ofNat']
+  have h3 : k.toNat &&& ((nb - 1) % 4294967296) ≤ (nb - 1) % 4294967296 :=
+    Nat.and_le_right
+  have h4 : (nb - 1) % 4294967296 ≤ nb - 1 := Nat.mod_le _ _
+  rw [h1, h2]
+  omega
+
+/-- **The mask is the modulus.** This is what the power-of-two requirement
+actually buys, and what `docs/DIVERGENCE.md` §3.2 claims when it says
+`key & (NB-1)` "is the same function when `NB` is a power of two". Now checked
+rather than asserted.
+
+`e ≤ pow2Fuel` keeps `NB ≤ 2 ^ 31`, so `NB - 1` survives the `u32` literal the
+generator emits — a larger bucket count would truncate the mask and this would
+be false.
+
+checked by: `lake build` -/
+theorem mask_eq_mod {nb e : Nat} (hp : nb = 2 ^ e) (he : e ≤ pow2Fuel)
+    (k : UInt32) : (k &&& UInt32.ofNat (nb - 1)).toNat = k.toNat % nb := by
+  have hlt : nb - 1 < 4294967296 := by
+    have : (2 : Nat) ^ e ≤ 2 ^ pow2Fuel := Nat.pow_le_pow_right (by omega) he
+    simp only [pow2Fuel] at this
+    omega
+  have h1 : (k &&& UInt32.ofNat (nb - 1)).toNat
+      = k.toNat &&& (UInt32.ofNat (nb - 1)).toNat := rfl
+  have h2 : (UInt32.ofNat (nb - 1)).toNat = nb - 1 := by
+    simp [UInt32.toNat_ofNat', Nat.mod_eq_of_lt hlt]
+  rw [h1, h2, hp]
+  exact Nat.and_two_pow_sub_one_eq_mod _ _
+
+/-- **Every schema `genThash` accepts has both.** The guard is what carries
+`0 < nb` and the exponent, so acceptance is the hypothesis both theorems above
+need — nothing is left to the caller.
+
+checked by: `lake build` -/
+theorem accepted_bucket_facts {nb e : Nat} (h : pow2Exp? pow2Fuel nb = some e) :
+    0 < nb ∧ (∀ k : UInt32,
+      (k &&& UInt32.ofNat (nb - 1)).toNat = k.toNat % nb
+      ∧ (k &&& UInt32.ofNat (nb - 1)).toNat < nb) := by
+  have hpow := pow2_of_exp? _ _ _ h
+  have hle := exp?_le _ _ _ h
+  have hpos : 0 < nb := by rw [hpow]; exact Nat.two_pow_pos e
+  exact ⟨hpos, fun k => ⟨mask_eq_mod hpow hle k, bucketInRange nb hpos k⟩⟩
 
 /-- **What `Find` should be proved to do**, once the index invariant exists. -/
 def FindCorrect (nm : Names) (elem key : Ident) (mask cap : Nat) : Prop :=
@@ -519,6 +626,13 @@ example : (genThash Examples.hashDb).map
     (fun p => p.structs.map (fun sd => (sd.name, sd.fields.map Prod.fst)))
     = some [("item_row", ["id", "qty", "ind_item_next", "ind_item_inhash"]),
             ("ItemDb", ["ind_item_buckets", "ind_item_n"])] := rfl
+
+/-- The example schema's bucket count is accepted with its exponent, so
+`accepted_bucket_facts` applies to it: the mask is the modulus and the
+subscript is in range.
+
+checked by: `lake build` -/
+example : pow2Exp? pow2Fuel 8 = some 3 := rfl
 
 /-- A bucket count that is not a power of two is refused, because the mask
 would not be the modulus.
