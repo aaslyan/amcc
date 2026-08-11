@@ -86,6 +86,7 @@ def atLocal (s : Schema) : LocalDef :=
 def field (s : Schema) (i : Ident) (f : Ident) : LVal := .fld (slot s i) f
 
 def zeroLit : ScalarTy → Lit
+  | .u8   => .u8 0
   | .u32  => .u32 0
   | .u64  => .u64 0
   | .bool => .bool false

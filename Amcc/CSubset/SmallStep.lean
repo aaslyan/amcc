@@ -287,6 +287,7 @@ theorem execAt_sound {p : Program} {callee : Stmt → Store → Except Err (Stor
       cases b with
       | true  => exact .head (.condT hc) (ih₁ σ σ' out k h)
       | false => exact .head (.condF hc) (ih₂ σ σ' out k h)
+    | u8 _    => exact Except.noConfusion h
     | u32 _   => exact Except.noConfusion h
     | u64 _   => exact Except.noConfusion h
     | ptr _   => exact Except.noConfusion h

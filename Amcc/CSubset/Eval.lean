@@ -157,6 +157,7 @@ mismatches, which `Wf.check` rules out. -/
 
 def evalUn : UnOp → Value → Except Err Value
   | .lnot, .bool b => .ok (.bool (!b))
+  | .bnot, .u8 a   => .ok (.u8 (~~~a))
   | .bnot, .u32 a  => .ok (.u32 (~~~a))
   | .bnot, .u64 a  => .ok (.u64 (~~~a))
   | _, _           => .error .typeErr
@@ -164,18 +165,25 @@ def evalUn : UnOp → Value → Except Err Value
 /-- The non-short-circuiting operators. `land` and `lor` are handled in
 `evalExpr`, which is where their C-faithful short-circuiting lives. -/
 def evalBin : BinOp → Value → Value → Except Err Value
+  | .add,  .u8 a,  .u8 b  => .ok (.u8 (a + b))
   | .add,  .u32 a, .u32 b => .ok (.u32 (a + b))
   | .add,  .u64 a, .u64 b => .ok (.u64 (a + b))
+  | .sub,  .u8 a,  .u8 b  => .ok (.u8 (a - b))
   | .sub,  .u32 a, .u32 b => .ok (.u32 (a - b))
   | .sub,  .u64 a, .u64 b => .ok (.u64 (a - b))
+  | .mul,  .u8 a,  .u8 b  => .ok (.u8 (a * b))
   | .mul,  .u32 a, .u32 b => .ok (.u32 (a * b))
   | .mul,  .u64 a, .u64 b => .ok (.u64 (a * b))
+  | .band, .u8 a,  .u8 b  => .ok (.u8 (a &&& b))
   | .band, .u32 a, .u32 b => .ok (.u32 (a &&& b))
   | .band, .u64 a, .u64 b => .ok (.u64 (a &&& b))
+  | .bor,  .u8 a,  .u8 b  => .ok (.u8 (a ||| b))
   | .bor,  .u32 a, .u32 b => .ok (.u32 (a ||| b))
   | .bor,  .u64 a, .u64 b => .ok (.u64 (a ||| b))
+  | .bxor, .u8 a,  .u8 b  => .ok (.u8 (a ^^^ b))
   | .bxor, .u32 a, .u32 b => .ok (.u32 (a ^^^ b))
   | .bxor, .u64 a, .u64 b => .ok (.u64 (a ^^^ b))
+  | .eq,   .u8 a,  .u8 b  => .ok (.bool (a == b))
   | .eq,   .u32 a, .u32 b => .ok (.bool (a == b))
   | .eq,   .u64 a, .u64 b => .ok (.bool (a == b))
   | .eq,   .bool a, .bool b => .ok (.bool (a == b))
@@ -183,6 +191,7 @@ def evalBin : BinOp → Value → Value → Except Err Value
   | .eq,   .null,  .null  => .ok (.bool true)
   | .eq,   .ptr _, .null  => .ok (.bool false)
   | .eq,   .null,  .ptr _ => .ok (.bool false)
+  | .ne,   .u8 a,  .u8 b  => .ok (.bool (a != b))
   | .ne,   .u32 a, .u32 b => .ok (.bool (a != b))
   | .ne,   .u64 a, .u64 b => .ok (.bool (a != b))
   | .ne,   .bool a, .bool b => .ok (.bool (a != b))
@@ -190,8 +199,10 @@ def evalBin : BinOp → Value → Value → Except Err Value
   | .ne,   .null,  .null  => .ok (.bool false)
   | .ne,   .ptr _, .null  => .ok (.bool true)
   | .ne,   .null,  .ptr _ => .ok (.bool true)
+  | .lt,   .u8 a,  .u8 b  => .ok (.bool (a < b))
   | .lt,   .u32 a, .u32 b => .ok (.bool (a < b))
   | .lt,   .u64 a, .u64 b => .ok (.bool (a < b))
+  | .le,   .u8 a,  .u8 b  => .ok (.bool (a ≤ b))
   | .le,   .u32 a, .u32 b => .ok (.bool (a ≤ b))
   | .le,   .u64 a, .u64 b => .ok (.bool (a ≤ b))
   | _, _, _ => .error .typeErr
@@ -199,12 +210,19 @@ def evalBin : BinOp → Value → Value → Except Err Value
 /-- Explicit conversions. Every case is total: widening is exact, narrowing
 truncates as C defines for unsigned, and `bool` round-trips through `0`/`1`. -/
 def evalCast : ScalarTy → Value → Except Err Value
+  | .u8,   .u8 a   => .ok (.u8 a)
+  | .u8,   .u32 a  => .ok (.u8 a.toUInt8)
+  | .u8,   .u64 a  => .ok (.u8 a.toUInt8)
+  | .u8,   .bool b => .ok (.u8 (if b then 1 else 0))
+  | .u32,  .u8 a   => .ok (.u32 a.toUInt32)
   | .u32,  .u32 a  => .ok (.u32 a)
   | .u32,  .u64 a  => .ok (.u32 a.toUInt32)
   | .u32,  .bool b => .ok (.u32 (if b then 1 else 0))
+  | .u64,  .u8 a   => .ok (.u64 a.toUInt64)
   | .u64,  .u32 a  => .ok (.u64 a.toUInt64)
   | .u64,  .u64 a  => .ok (.u64 a)
   | .u64,  .bool b => .ok (.u64 (if b then 1 else 0))
+  | .bool, .u8 a   => .ok (.bool (a != 0))
   | .bool, .u32 a  => .ok (.bool (a != 0))
   | .bool, .u64 a  => .ok (.bool (a != 0))
   | .bool, .bool b => .ok (.bool b)
@@ -216,6 +234,7 @@ Pure and store-independent-of-order: every subexpression reads the same `σ`,
 so there is no evaluation-order question to answer. -/
 
 def evalExpr (σ : Store) : Expr → Except Err Value
+  | .lit (.u8 a)   => .ok (.u8 a)
   | .lit (.u32 a)  => .ok (.u32 a)
   | .lit (.u64 a)  => .ok (.u64 a)
   | .lit (.bool b) => .ok (.bool b)

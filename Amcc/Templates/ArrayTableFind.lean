@@ -173,6 +173,7 @@ theorem occupied_of_rowOk {row : Value} (h : RowOk s row) :
     rw [hb]
     congr 1
     simp only [rowOccupied, hb]
+  | u8 _ => simp at hb
   | u32 _ => simp at hb
   | u64 _ => simp at hb
   | bool _ => simp at hb
@@ -193,6 +194,7 @@ of `Interface.Key.ofValue_toValue`. -/
 theorem toValue_ofValue {v : Value} {k : Interface.Key}
     (h : Interface.Key.ofValue? v = some k) : k.toValue = v := by
   cases v with
+  | u8 a   => cases h; rfl
   | u32 a  => cases h; rfl
   | u64 a  => cases h; rfl
   | bool b => cases h; rfl
@@ -330,6 +332,7 @@ theorem strct_of_rowOk {row : Value} (h : RowOk s row) :
   | strct fs =>
     refine ⟨fs, b, rfl, hb, ?_⟩
     simp only [rowOccupied, hb]
+  | u8 _ => exact Option.noConfusion hb
   | u32 _ => exact Option.noConfusion hb
   | u64 _ => exact Option.noConfusion hb
   | bool _ => exact Option.noConfusion hb

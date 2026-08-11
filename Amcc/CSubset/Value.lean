@@ -115,10 +115,11 @@ instance : LawfulBEq Path where
 
 /-- Runtime values.
 
-`u32`/`u64` are Lean's wrapping machine words, which is precisely C's defined
-behaviour for `uint32_t`/`uint64_t`. There is no null pointer constructor —
+`u8`/`u32`/`u64` are Lean's wrapping machine words, which is precisely C's
+defined behaviour for `uint8_t`/`uint32_t`/`uint64_t`. There is no null pointer constructor —
 `ptr` carries a `Path`, and every `Path` denotes an object. -/
 inductive Value where
+  | u8    : UInt8 → Value
   | u32   : UInt32 → Value
   | u64   : UInt64 → Value
   | bool  : Bool → Value
@@ -716,6 +717,7 @@ so a pointer had no zero, so a global could not contain one. That restriction
 is gone, and with it the reason a list could not be rooted in a global head
 pointer. -/
 def zeroOfTy (tbl : List (Ident × Value)) : Ty → Option Value
+  | .scalar .u8   => some (.u8 0)
   | .scalar .u32  => some (.u32 0)
   | .scalar .u64  => some (.u64 0)
   | .scalar .bool => some (.bool false)

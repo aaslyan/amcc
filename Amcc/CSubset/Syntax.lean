@@ -140,11 +140,17 @@ abbrev Ident := String
 
 /-- Scalar types.
 
-Unsigned only, and exactly-sized: these correspond to `uint32_t`, `uint64_t`
-and `bool` from `<stdint.h>` / `<stdbool.h>`, whose widths and wraparound
-behaviour C *defines*. Signed types are excluded because signed overflow is
-undefined behaviour, and there is nothing a generated table needs them for. -/
+Unsigned only, and exactly-sized: these correspond to `uint8_t`, `uint32_t`,
+`uint64_t` and `bool` from `<stdint.h>` / `<stdbool.h>`, whose widths and
+wraparound behaviour C *defines*. Signed types are excluded because signed
+overflow is undefined behaviour, and there is nothing a generated table needs
+them for. -/
 inductive ScalarTy where
+  /-- `uint8_t` — the byte. `amc` spells it `u8` and stores every inline
+  string in it (`u8 ch[N];`), so five reftypes need it and none of them can be
+  expressed without it. Added under `docs/GOALS.md`'s standing rule: the
+  subset changes when it cannot express what `amc` generates. -/
+  | u8
   /-- `uint32_t` — indices, capacities, slot counters. -/
   | u32
   /-- `uint64_t` — keys and payload values. -/
@@ -197,6 +203,7 @@ unsigned-overflow behaviour exactly.
 
 There is deliberately no pointer literal: that is what "non-null" means. -/
 inductive Lit where
+  | u8   : UInt8 → Lit
   | u32  : UInt32 → Lit
   | u64  : UInt64 → Lit
   | bool : Bool → Lit
@@ -206,7 +213,7 @@ inductive Lit where
 inductive UnOp where
   /-- `!` — logical negation, `bool → bool`. -/
   | lnot
-  /-- `~` — bitwise complement, `u32 → u32` or `u64 → u64`. -/
+  /-- `~` — bitwise complement, on any of the three unsigned widths. -/
   | bnot
   deriving DecidableEq, Repr, Inhabited, BEq
 
@@ -409,6 +416,7 @@ structure LocalDef where
 
 /-- A zero-initialised scalar local — the common case. -/
 def LocalDef.zeroed (name : Ident) : ScalarTy → LocalDef
+  | .u8   => { name, ty := .scalar .u8,   init := .lit (.u8 0) }
   | .u32  => { name, ty := .scalar .u32,  init := .lit (.u32 0) }
   | .u64  => { name, ty := .scalar .u64,  init := .lit (.u64 0) }
   | .bool => { name, ty := .scalar .bool, init := .lit (.bool false) }

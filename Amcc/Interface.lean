@@ -46,6 +46,7 @@ deriving handler cannot see through them, whereas `Key` is flat. Keys need
 decidable equality (every law below branches on `k' = k`); stored values do
 not. -/
 inductive Key where
+  | u8   : UInt8 → Key
   | u32  : UInt32 → Key
   | u64  : UInt64 → Key
   | bool : Bool → Key
@@ -57,11 +58,13 @@ inductive Key where
 comparison against a key of the wrong type does not evaluate to `false` — it
 raises `typeErr`. Anything that compares keys therefore has to know this. -/
 def Key.ty : Key → CSubset.ScalarTy
+  | .u8 _   => .u8
   | .u32 _  => .u32
   | .u64 _  => .u64
   | .bool _ => .bool
 
 def Key.toValue : Key → Value
+  | .u8 a   => .u8 a
   | .u32 a  => .u32 a
   | .u64 a  => .u64 a
   | .bool b => .bool b
@@ -69,6 +72,7 @@ def Key.toValue : Key → Value
 /-- `none` on an aggregate or a pointer, which the schema checker prevents a
 primary key from being. -/
 def Key.ofValue? : Value → Option Key
+  | .u8 a   => some (.u8 a)
   | .u32 a  => some (.u32 a)
   | .u64 a  => some (.u64 a)
   | .bool b => some (.bool b)

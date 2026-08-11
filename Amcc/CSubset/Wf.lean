@@ -50,6 +50,10 @@ namespace Wf
 /-- One past the largest value a `uint32_t` bound may take. -/
 def u32Bound : Nat := 4294967296
 
+/-- `uint8_t`'s modulus, for the one place a bound has to fit a byte: an
+`rpascal` count. -/
+def u8Bound : Nat := 256
+
 /-! ## Types -/
 
 /-- Every struct name a type mentions. -/
@@ -81,7 +85,11 @@ def Ty.hasPtr : Ty → Bool
   | .ptr _    => true
   | .arr t _  => Ty.hasPtr t
 
+/-- The unsigned machine words: what arithmetic, comparison and `~` accept.
+`u8` is one of them — `amc` increments a `u8` count and masks `u8` bytes, and
+the C the printer emits does the same with `uint8_t`. -/
 def isWord : Ty → Bool
+  | .scalar .u8  => true
   | .scalar .u32 => true
   | .scalar .u64 => true
   | _            => false
@@ -162,6 +170,7 @@ def rootIsLocal : LVal → Bool
   | .idx l _ => rootIsLocal l
 
 def litTy : Lit → Ty
+  | .u8 _   => .scalar .u8
   | .u32 _  => .scalar .u32
   | .u64 _  => .scalar .u64
   | .bool _ => .scalar .bool

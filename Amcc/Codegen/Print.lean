@@ -50,6 +50,7 @@ namespace Print
 open CSubset
 
 def scalarTy : ScalarTy → String
+  | .u8   => "uint8_t"
   | .u32  => "uint32_t"
   | .u64  => "uint64_t"
   | .bool => "bool"
@@ -70,6 +71,10 @@ def declare : Ty → String → String
 def declareVal (vt : ValTy) (x : String) : String := declare vt.toTy x
 
 def lit : Lit → String
+  -- No `uint8_t` literal suffix exists in C: an integer constant is an `int`,
+  -- and the assignment or initialisation converts. `u` keeps it unsigned so
+  -- the conversion is the defined one and `-Wsign-conversion` stays quiet.
+  | .u8 v   => s!"{v}u"
   | .u32 v  => s!"{v}u"
   | .u64 v  => s!"{v}ull"
   | .bool b => if b then "true" else "false"
