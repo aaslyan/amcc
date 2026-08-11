@@ -485,5 +485,52 @@ theorem global_lookup {d : Db} {dbC : Ctype} (hroot : d.root = some dbC.name)
                ty := .strct (mangle dbC.name) } := by
   simp [Wf.Ctx.global?, genGlobals, hroot]
 
+/-! ## The five bodies
+
+`Init` and `Remove` have `forN` loops over the bucket array and the chain;
+`Find` has one too and returns; `InsertMaybe` calls `Find`. The lookups are
+bundled once and each body is a `simp only` / `simp` pair over it, as in
+`LlistWf`. -/
+
+/-- The bundle, in the `∀`-over-frames form `simp` can instantiate. -/
+theorem checkFun_thash {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld key : Field} {nb cap mask : Nat}
+    (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hkey : key ∈ elemC.fields)
+    (hkty : fieldTy d.withBuiltins elemC.name key = some (.scalar .u32))
+    (hcap : cap < Wf.u32Bound) (hnb : nb < Wf.u32Bound)
+    {earlier : List FunDef} :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    ∀ fd ∈ [initDef nm elemN nb, sizeDef nm],
+      Wf.checkFun (tableOf d dbN elemN nm nb) (genGlobals d) earlier fd = [] := by
+  intro nm elemN dbN fd hfd
+  obtain ⟨hnext, hinh, hbuck, hcnt⟩ :=
+    field_lookups_any (nb := nb) hchk hdb hdbs hfld helem hes
+      (genGlobals d) earlier []
+  have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).global?
+          nm.dbGlobal = some { name := nm.dbGlobal, ty := .strct dbN } :=
+    fun locals => global_lookup hroot _ _ locals
+  have hfB : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).field?
+        dbN nm.buckets = some (.arr (.ptr (.strct elemN)) nb) := fun _ => hbuck
+  have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).field?
+        dbN nm.count = some (.scalar .u32) := fun _ => hcnt
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hfd
+  rcases hfd with rfl | rfl
+  · simp only [Wf.checkFun, initDef, dbFld, bucket, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block, LocalDef.zeroed]
+    simp [hg, hfB, hfC, Wf.isValTy, Wf.distinct, Wf.dups, tmpI, Wf.indexOk,
+      Wf.Ctx.local?, Wf.litTy, Wf.Stmt.assigns, hnb, Wf.inferExpr,
+      Wf.addrChecks, ValTy.toTy]
+  · simp only [Wf.checkFun, sizeDef, dbFld, Wf.checkStmt, Wf.addrChecks,
+      Wf.inferExpr, Wf.inferLVal, ValTy.toTy]
+    simp [hg, hfC, Wf.isValTy, Wf.distinct, Wf.dups, Wf.Stmt.alwaysReturns]
+
 end Thash
 end Templates
