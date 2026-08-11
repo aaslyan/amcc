@@ -90,9 +90,13 @@ that should fail does not.)
              `strptr_PrintCppIdent`, which is what lets a namespace-qualified
              schema become C at all — and the qualified-name clause that
              rejects two fields printing to the same C identifier: `Ctype`, `Field` whose `arg` names another
-  ctype, `Db` in declaration order, the full `Reftype` vocabulary with its
-  `dmmeta/reftype.ssim` flags, and a checker that resolves every `arg` and
-  keeps layout acyclic while letting pointers and indexes refer forwards
+  ctype, `Db` in declaration order, the full `Reftype` vocabulary — all
+  **thirty-five** rows of `dmmeta/reftype.ssim`, with their flags — the
+  per-field **attribute join** (`AttrTag`, `AttrData`, `Db.attr?`,
+  `checkAttr`) that carries `dmmeta.inlary` and `dmmeta.smallstr` and gives
+  every table the same named missing-record error, and a checker that resolves
+  every `arg` and keeps layout acyclic while letting pointers and indexes
+  refer forwards
 
 ## Phase 3 — the array-table template
 - `Interface`                  — the abstract map (`MapLaws`) a table implements
@@ -164,6 +168,12 @@ that should fail does not.)
                           `Wf.check` accepts, the self-threading case
                           included. Second of the three ctype-model templates
                           to match what the generated headers claim
+- `Templates.Smallstr`  — all three `dmmeta.strtype` abstractions, with
+                          `rpascal`'s read-back law **proved** and the two
+                          padded forms' ambiguity exhibited as checked
+                          witnesses. Nothing is emitted: `amc` writes `u8` and
+                          the C subset has no eight-bit scalar
+                          (`docs/DIVERGENCE.md` §3.8)
 - `Templates.ThashWf`   — **proved**: `Thash.genWellFormed` — the same for the
                           hash index, self-indexing included. `InsertMaybe`
                           calls `Find`, the first generated body to make

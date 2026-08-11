@@ -2,14 +2,54 @@
 
 ## Now
 
-**The attribute-join mechanism, then `Smallstr` `rpascal`.** The every-schema
-gap is **closed**: `Upptr`, `Llist` and `Thash` `genWellFormed` are all proved,
-so the banner in `scripts/gen/*.h` is true for all five templates, for every
-schema `Dmmeta.check` accepts rather than only for the samples. What is next is
-the join that lets a field carry a second record (`dmmeta.smallstr` and
-friends), which unblocks five reftypes at once — see `docs/PLAN.md` §Next.
+**`u8` in the C subset.** Everything else in the `Smallstr` route is done: the
+attribute join is a mechanism, the record is read, joined, checked and
+round-tripped, and `Templates/Smallstr.lean` states all three `strtype`
+abstractions with `rpascal`'s read-back law proved. Emission is blocked on one
+thing — `amc` writes `u8 ch[N+1]; u8 n_ch;` and `CSubset.ScalarTy` is
+`u32 | u64 | bool`. `docs/DIVERGENCE.md` §3.8 says what the change costs. It is
+bulk, not a decision, and it unblocks five reftypes.
 
 ## Done
+
+- **V — the attribute join, the vocabulary, and `Smallstr`'s abstractions.**
+
+  - **The join is a mechanism.** `AttrTag` names the table, `AttrData` carries
+    the payload, `Db.attr?` is the join, `inlaryMax?`/`smallstr?` are the typed
+    views, `checkAttr` is the **one** clause that gives every table the named
+    error "field claims a reftype whose attribute record is missing", and
+    `Ssim.attrHeads` is the one registry that gives every table its reader,
+    printer and round trip. Adding `bitfld`, `charset`, `lenfld`, `substr` or
+    `fconst` is a payload arm and a registry entry; nothing else moves.
+    `inlary_facts_of_checkAttr` reads `Inlary`'s facts back out in exactly the
+    shape `Layout` and the templates already consumed, so nothing downstream
+    changed shape.
+  - **The reftype vocabulary was 20 of 35.** Not deferred — *absent*. The
+    census reported the fifteen missing ones as `unknown reftype`, which reads
+    as a typo in the corpus rather than as a gap in AMCC. Flags transcribed
+    from `reftype.ssim` the same way the original twenty were.
+  - **`Smallstr` is modelled and not emitted.** All three abstractions are
+    stated; `absRpascal_encode` (read-back, no side condition) and
+    `encodeRpascal_injective` are proved; `rightpad_ambiguous` and
+    `leftpad_ambiguous` are *checked witnesses* that the padded forms are
+    lossy, so §3.7's central claim is a fact in the build. The blocker is
+    `u8`: `amc` writes `u8 ch[N+1]; u8 n_ch;`, and there is no eight-bit
+    scalar in the C subset. §3.8 is the entry, and the census keeps
+    `Smallstr`'s 140 fields in the rejected column until it lands.
+  - **One correction to §3.7 while transcribing `cpp/amc/smallstr.cpp`.**
+    `rpascal` does not keep its count in `ch[N]`. `amc` emits `u8 ch[N+1];`
+    *and a separate* `u8 n_ch;`, and `ch_N` reads `n_ch`. The classic in-band
+    Pascal layout is not the one `amc` generates. `RpascalInv` is `n ≤ N` over
+    the pair.
+
+- **U — the census, re-run.** 140 records move out of the unmodelled tally
+  (10302 → 10162, 59.2% → 58.4%) because the reader now joins
+  `dmmeta.smallstr`, and `Ssim.Conformance` classifies attribute records
+  through the same `attrHeads` registry rather than a second list. Headline
+  unchanged at 3909 of 5659 (69.1%). Three additions to "what the numbers do
+  not capture": rejections are now gaps rather than unknown names, `Smallstr`
+  is modelled *and* still rejected and why, and the join makes the next five
+  tables cheap rather than free.
 
 - **T — the every-schema gap, closed.** `Llist.genWellFormed` and
   `Thash.genWellFormed` are both proved, joining `Upptr`'s. Three things came
@@ -254,10 +294,13 @@ friends), which unblocks five reftypes at once — see `docs/PLAN.md` §Next.
 
 ## Next
 
-- The attribute-join mechanism, then `Smallstr` `rpascal`
-- Re-measure `docs/CONFORMANCE.md` after the join lands
+- `u8` in the C subset, then `Smallstr` `rpascal` emission and its law
+- The other attribute tables: `bitfld`, `charset`, `lenfld`, `substr`,
+  `fconst` — a payload arm each, then a lowering and a law each
 - `Ptrary`, then the growable pools — see `docs/PLAN.md` §Next for the order
   and the reason it is cost order rather than corpus order
+- Still owed and deliberately unchosen: which of §3.7's two routes discharges
+  `leftpad`/`rightpad`
 
 ## Where the every-schema gap stands
 
@@ -416,6 +459,28 @@ mention `post` while the goal mentions `q1 :: post0`. Every membership side
 goal is then `by rw [hpost]; simp` rather than `simp`.
 
 ## Decisions
+
+- **`rpascal`'s count goes where `amc` puts it, not where the classic layout
+  puts it.** The instruction for the round described the abstraction as
+  `ch[0 … ch[N]]` on the invariant `ch[N] ≤ N` — the count in the last byte of
+  the array. `cpp/amc/smallstr.cpp` emits `u8 ch[N+1];` *and* a separate
+  `u8 n_ch;`, and `ch_N` reads `n_ch`. The rule is that `amc`'s actual
+  behaviour decides, so `RpascalInv` is `n ≤ N` over the pair and
+  `docs/DIVERGENCE.md` §3.7 is corrected. Same content, same injectivity, the
+  count in the field `amc` uses.
+
+- **`Smallstr` stays out of `Ssim.supported` this round.** `supported` is tied
+  to `Conformance.verdictOfReftype` by `verdict_iff_supported`, so listing it
+  would force a non-`rejected` census verdict, and the honest verdict is
+  `rejected` until `u8` exists. Modelling, joining, checking and
+  round-tripping the record needs none of that, and none of it is wasted when
+  the line is added.
+
+- **The whole reftype vocabulary went in, not just `Smallstr`.** Adding one
+  constructor would have left fourteen reftypes reported as `unknown` by the
+  census, which is a wrong fact about the corpus rather than a missing
+  feature. Flags are transcribed from `reftype.ssim`; no template or lowering
+  was added for any of them.
 
 - **A `checkFun` bundle must state its lookups with a leading `∀` over the
   frame.** `Wf.Ctx.field?` and `Ctx.global?` do not read `locals`, so each
