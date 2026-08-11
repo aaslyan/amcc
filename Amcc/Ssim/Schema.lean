@@ -8,25 +8,32 @@ second half of the front end and the place where the standing rule bites:
 
 > **The reader must never run ahead of what the generator can produce.**
 
-`dmmeta` declares twenty reftypes. AMCC has templates or a lowering for eight
-of them. A reader that accepted the other twelve would parse a schema, hand it
-to `Dmmeta.check`, and get a `Db` for which nothing can be emitted — or worse,
+`dmmeta` declares thirty-five reftypes. AMCC has templates or a lowering for
+eight of them. A reader that accepted the other twenty-seven would parse a
+schema, hand it to `Dmmeta.check`, and get a `Db` for which nothing can be
+emitted — or worse,
 a `Db` whose unsupported fields are silently dropped, so what is generated is
 provably correct about a schema the user did not write. `supported` below is
 the list, each entry justified by the template or the lowering that consumes
 it, and everything else is a named rejection.
 
-## The four record types
+## The record types
 
 ```
-dmmeta.ctype   ctype:<name>                              comment:""
-dmmeta.field   field:<ctype>.<name>  arg:<ctype>  reftype:<R>  comment:""
-dmmeta.inlary  field:<ctype>.<name>  min:0  max:<n>      comment:""
-amcc.root      ctype:<name>                              comment:""
+dmmeta.ctype     ctype:<name>                                   comment:""
+dmmeta.field     field:<ctype>.<name>  arg:<ctype>  reftype:<R>  comment:""
+dmmeta.inlary    field:<ctype>.<name>  min:0  max:<n>           comment:""
+dmmeta.smallstr  field:<ctype>.<name>  length:<n>  strtype:<T>  pad:<c>  strict:<Y|N>
+amcc.root        ctype:<name>                                   comment:""
 ```
 
-The first three are `amc`'s, key for key (`data/dmmeta/ctype.ssim`,
-`field.ssim`, `inlary.ssim`). The fourth is not: `amc` designates the database
+The two attribute tables — `inlary` and `smallstr` — are read and written by
+**one** pair of functions over `Dmmeta.AttrTag`, not one pair each. That is the
+join: adding `bitfld`, `charset`, `lenfld`, `substr` or `fconst` is a payload
+arm here and a payload arm in `Dmmeta`, and nothing else.
+
+The first four are `amc`'s, key for key (`data/dmmeta/ctype.ssim`,
+`field.ssim`, `inlary.ssim`, `smallstr.ssim`). The fourth is not: `amc` designates the database
 ctype by the `<ns>.FDb` naming convention inside a namespace declared by
 `dmmeta.nsdb`, and AMCC's `Dmmeta.Db` has no namespaces — a schema is a flat
 list of ctypes with one of them named as the root. Reusing `dmmeta.nsdb` would
@@ -37,8 +44,8 @@ happening. Recorded in `docs/DIVERGENCE.md` §3.5.
 ## Ordering, because the round trip is byte-for-byte
 
 `ofDb` emits the tuple heads in table order — every `dmmeta.ctype`, then every
-`dmmeta.field`, then every `dmmeta.inlary`, then `amcc.root` — which is what a
-concatenation of `amc`'s per-table files looks like. Within a head, schema
+`dmmeta.field`, then every attribute record in file order, then `amcc.root` —
+which is what a concatenation of `amc`'s per-table files looks like. Within a head, schema
 declaration order is preserved. `readDb` is insensitive to the interleaving of
 heads (it makes two passes, so a field may precede its ctype), so the round
 trip pins a *canonical* form rather than the only accepted one.
@@ -56,8 +63,14 @@ list being in one place. -/
 
 /-- The reftypes AMCC can act on. `Val`, `Base`, `Pkey`, `Upptr`, `Ptr` and
 `Inlary` have a storage lowering (`Dmmeta.fieldTy`); `Thash` and `Llist` have
-templates that emit their operations. The remaining twelve of `dmmeta`'s
-twenty are rejected by name. -/
+templates that emit their operations. The remaining twenty-seven of `dmmeta`'s
+thirty-five are rejected by name.
+
+`Smallstr` is **modelled** — `Dmmeta.AttrData.smallstr` and the
+`dmmeta.smallstr` record round-trip — and still absent here, because
+`Dmmeta.fieldTy` cannot lower it: `amc` emits `u8 ch[N+1]; u8 n_ch;` and the C
+subset has no eight-bit scalar. `docs/DIVERGENCE.md` §3.8 is the entry, and
+the line to add here is one line once `u8` lands. -/
 def supported : List Reftype :=
   [.Val, .Base, .Pkey, .Upptr, .Ptr, .Inlary, .Thash, .Llist]
 
@@ -103,7 +116,7 @@ concatenated ssim directory is by table, not by dependency. -/
 structure Raw where
   ctypes : List Ident := []
   fields : List (Ident × Field) := []
-  inlary : List Inlary := []
+  attrs  : List Dmmeta.Attr := []
   root   : Option Ident := none
   deriving Inhabited
 
@@ -112,6 +125,65 @@ structure Raw where
 `ofDb ∘ readDb` the identity — a reader that accepted and dropped them would
 print back a shorter file. -/
 def builtinNames : List Ident := builtins.map Ctype.name
+
+/-! ### The attribute tables, once
+
+`attrHeads` is the whole registry: a `dmmeta` head, the table it belongs to,
+and how to read and write its payload. `readTuple` and `ofDb` consult it
+rather than growing an arm per table, which is what makes the next attribute
+record a data change instead of a code change. -/
+
+def readBool (s : String) : Except String Bool :=
+  if s == "Y" then .ok true
+  else if s == "N" then .ok false
+  else .error s!"{s}: expected Y or N"
+
+def readStrtype (s : String) : Except String Strtype :=
+  match Strtype.ofName? s with
+  | some t => .ok t
+  | none   => .error s!"unknown strtype {s}"
+
+/-- One attribute table's reader and writer, keyed by its `dmmeta` head. The
+`field:` key is shared — it is what the join is on — so only the payload
+differs, and only the payload appears here. -/
+structure AttrHead where
+  head    : String
+  tag     : AttrTag
+  /-- Payload out of the record's other attributes. -/
+  read    : Tuple → Except String Dmmeta.AttrData
+  /-- Payload back into them, in `amc`'s key order, `field:` excluded. -/
+  write   : Dmmeta.AttrData → List Ssim.Attr
+
+def attrHeads : List AttrHead :=
+  [ { head := "dmmeta.inlary", tag := .inlary
+    , read := fun t => do .ok (.inlary (← readNat (← need t "max")))
+    , write := fun a => match a with
+        | .inlary n => [⟨"min", "0"⟩, ⟨"max", toString n⟩, ⟨"comment", ""⟩]
+        | _         => [] }
+  , { head := "dmmeta.smallstr", tag := .smallstr
+    , read := fun t => do
+        let length ← readNat (← need t "length")
+        let strtype ← readStrtype (← need t "strtype")
+        let pad ← need t "pad"
+        let strict ← readBool (← need t "strict")
+        .ok (.smallstr length strtype pad strict)
+    , write := fun a => match a with
+        | .smallstr n st pad strict =>
+            [ ⟨"length", toString n⟩, ⟨"strtype", st.name⟩, ⟨"pad", pad⟩
+            , ⟨"strict", if strict then "Y" else "N"⟩ ]
+        | _ => [] } ]
+
+/-- The writer for the table a payload belongs to. Total by construction: the
+registry has an entry per `AttrTag`, pinned in `Ssim.Checks`. -/
+def attrWrite (a : Dmmeta.AttrData) : List Ssim.Attr :=
+  match attrHeads.find? (fun h => h.tag == a.tag) with
+  | some h => h.write a
+  | none   => []
+
+def attrHeadName (a : Dmmeta.AttrData) : String :=
+  match attrHeads.find? (fun h => h.tag == a.tag) with
+  | some h => h.head
+  | none   => "dmmeta." ++ a.tag.name
 
 def readTuple (r : Raw) (t : Tuple) : Except String Raw := do
   match t.head with
@@ -128,17 +200,19 @@ def readTuple (r : Raw) (t : Tuple) : Except String Raw := do
     let arg ← need t "arg"
     let rt ← readReftype (← need t "reftype")
     .ok { r with fields := r.fields ++ [(owner, { name, arg, reftype := rt })] }
-  | "dmmeta.inlary" =>
-    let q ← need t "field"
-    let (ctype, field) ← splitQual q
-    let max ← readNat (← need t "max")
-    .ok { r with inlary := r.inlary ++ [{ ctype, field, max }] }
   | "amcc.root" =>
     let n ← need t "ctype"
     match r.root with
     | some _ => .error "amcc.root: declared twice"
     | none   => .ok { r with root := some n }
-  | h => .error s!"unknown tuple head {h}"
+  | h =>
+    match attrHeads.find? (fun a => a.head == h) with
+    | some ah =>
+      let q ← need t "field"
+      let (ctype, field) ← splitQual q
+      let data ← ah.read t
+      .ok { r with attrs := r.attrs ++ [{ ctype, field, data }] }
+    | none => .error s!"unknown tuple head {h}"
 
 /-- Attach each field to the ctype its qualified name names. A field whose
 owner was never declared is an error rather than an implicit declaration:
@@ -148,9 +222,9 @@ def assemble (r : Raw) : Except String Db := do
   for (owner, f) in r.fields do
     if !r.ctypes.contains owner then
       throw s!"field {owner}.{f.name}: ctype {owner} is not declared"
-  for i in r.inlary do
-    if !r.ctypes.contains i.ctype then
-      throw s!"inlary {i.ctype}.{i.field}: ctype {i.ctype} is not declared"
+  for a in r.attrs do
+    if !r.ctypes.contains a.ctype then
+      throw s!"{a.data.tag.name} {a.ctype}.{a.field}: ctype {a.ctype} is not declared"
   match r.root with
   | some n =>
     if !r.ctypes.contains n then throw s!"amcc.root: ctype {n} is not declared"
@@ -158,7 +232,7 @@ def assemble (r : Raw) : Except String Db := do
   .ok { ctypes := r.ctypes.map (fun n =>
           { name := n
           , fields := (r.fields.filter (fun cf => cf.1 == n)).map Prod.snd })
-      , inlary := r.inlary
+      , attrs  := r.attrs
       , root   := r.root }
 
 /-- **Located tuples into a schema.** Record-level rejections are prefixed
@@ -194,12 +268,11 @@ def fieldTuple (owner : Ident) (f : Field) : Tuple :=
              , ⟨"reftype", f.reftype.name⟩
              , ⟨"comment", ""⟩ ] }
 
-def inlaryTuple (i : Inlary) : Tuple :=
-  { head := "dmmeta.inlary"
-  , attrs := [ ⟨"field", i.ctype ++ "." ++ i.field⟩
-             , ⟨"min", "0"⟩
-             , ⟨"max", toString i.max⟩
-             , ⟨"comment", ""⟩ ] }
+/-- An attribute record, through the registry: the shared `field:` key, then
+whatever its table writes. -/
+def attrTuple (a : Dmmeta.Attr) : Tuple :=
+  { head  := attrHeadName a.data
+  , attrs := ⟨"field", a.ctype ++ "." ++ a.field⟩ :: attrWrite a.data }
 
 def rootTuple (n : Ident) : Tuple :=
   { head := "amcc.root", attrs := [⟨"ctype", n⟩, ⟨"comment", ""⟩] }
@@ -209,7 +282,7 @@ by file, and in declaration order within each head. -/
 def ofDb (d : Db) : List Tuple :=
   d.ctypes.map ctypeTuple
     ++ d.ctypes.flatMap (fun c => c.fields.map (fieldTuple c.name))
-    ++ d.inlary.map inlaryTuple
+    ++ d.attrs.map attrTuple
     ++ (match d.root with | none => [] | some n => [rootTuple n])
 
 /-- **A schema as ssim text.** -/

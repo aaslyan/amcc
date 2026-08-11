@@ -238,20 +238,10 @@ theorem facts_of_check {d : Db} (h : check d = []) :
       cases hcon : ((d.withBuiltins.ctypes.take i).map Ctype.name).contains f.arg with
       | true  => rfl
       | false => rw [hld, hcon] at hdep; simp at hdep
-    · intro hinlary
-      rw [hinlary] at hinl
-      cases hm : d.withBuiltins.inlaryMax? (d.withBuiltins.ctypes[i]'hi).name f.name with
-      | none => rw [hm] at hinl; simp at hinl
-      | some n =>
-        rw [hm] at hinl
-        simp only [] at hinl
-        refine ⟨n, rfl, ?_, ?_⟩ <;>
-          · cases hr : (0 < n && n < Wf.u32Bound) with
-            | true =>
-              simp only [Bool.and_eq_true, decide_eq_true_eq] at hr
-              first | exact hr.1 | exact hr.2
-            | false =>
-              rw [hr] at hinl; simp at hinl
+    · -- the attribute clause is generic now; `inlary_facts_of_checkAttr` reads
+      -- the `Inlary` shape back out of it, in the shape this proof always had
+      intro hinlary
+      exact inlary_facts_of_checkAttr hinlary hinl
     · -- a pointer or an index resolves to a record
       intro hnr
       refine ⟨ac, rfl, ?_⟩
@@ -425,8 +415,12 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
       cases hk'
       simp only [Wf.Ty.sizesOk, Bool.and_eq_true, decide_eq_true_eq]
       exact ⟨⟨hpos, hlt⟩, h3⟩
+  -- everything with no storage lowering: `fieldTy` returns `none`, so the
+  -- hypothesis that it returned `some t` is already false
   | Lary | Tary | Tpool | Lpool | Blkpool | Malloc | Sbrk | Delptr | Thash
-  | Llist | Bheap | Atree | Ptrary | Count =>
+  | Llist | Bheap | Atree | Ptrary | Count
+  | Alias | Bitfld | Charset | Cppstack | Ctype | Exec | Fbuf | Global | Hook
+  | Opt | Regx | RegxSql | Smallstr | Varlen | ZSListMT =>
     all_goals (rw [hr] at ht; simp at ht)
 
 /-- A layout dependency is a mentioned struct — the inclusion the nesting

@@ -89,6 +89,37 @@ inductive Reftype where
   | Ptrary
   /-- Bookkeeping counter over linked records. -/
   | Count
+  /-- A second name for another field of the same ctype. -/
+  | Alias
+  /-- Named bit range inside an integer field. -/
+  | Bitfld
+  /-- Character-class membership table. -/
+  | Charset
+  /-- Value whose lifetime is the enclosing C++ scope. -/
+  | Cppstack
+  /-- The field *is* a ctype, reflected. -/
+  | Ctype
+  /-- Command executed as a subprocess. -/
+  | Exec
+  /-- File-descriptor buffer. -/
+  | Fbuf
+  /-- Process-wide singleton. -/
+  | Global
+  /-- Call-out point the generated code invokes. -/
+  | Hook
+  /-- Command-line option. -/
+  | Opt
+  /-- Compiled regular expression. -/
+  | Regx
+  /-- Compiled SQL-style regular expression. -/
+  | RegxSql
+  /-- Fixed-capacity string stored inline: `rpascal`, `leftpad` or `rightpad`,
+  with the shape in a `dmmeta.smallstr` record. -/
+  | Smallstr
+  /-- Variable-length trailing field. -/
+  | Varlen
+  /-- Zero-sized multi-threaded list. -/
+  | ZSListMT
   deriving DecidableEq, Repr, Inhabited, BEq
 
 /-- The `deriving` handler registers `BEq` but not `LawfulBEq`, and without it
@@ -104,7 +135,9 @@ namespace Reftype
 
 /-- `dmmeta.reftype.isval` — the field stores its value inline. -/
 def isval : Reftype → Bool
-  | Val | Lary | Tary | Inlary | Tpool | Lpool | Blkpool | Malloc | Sbrk => true
+  | Val | Lary | Tary | Inlary | Tpool | Lpool | Blkpool | Malloc | Sbrk
+  | Alias | Bitfld | Charset | Cppstack | Fbuf | Global | Opt | Smallstr
+  | Varlen => true
   | _ => false
 
 /-- `dmmeta.reftype.isxref` — the field is an index over another ctype's
@@ -116,12 +149,13 @@ def isxref : Reftype → Bool
 /-- `dmmeta.reftype.usebasepool` — the field obtains memory from a base pool,
 so `dmmeta.basepool` composition applies to it. -/
 def usebasepool : Reftype → Bool
-  | Lary | Tary | Tpool | Lpool | Blkpool | Delptr | Thash | Bheap | Ptrary => true
+  | Lary | Tary | Tpool | Lpool | Blkpool | Delptr | Thash | Bheap | Ptrary
+  | Fbuf => true
   | _ => false
 
 /-- `dmmeta.reftype.up` — the field points *up*, at a parent record. -/
 def up : Reftype → Bool
-  | Pkey | Base | Upptr => true
+  | Pkey | Base | Upptr | Regx | RegxSql => true
   | _ => false
 
 /-- Storage provider: a field of this reftype is where records live. -/
@@ -178,15 +212,28 @@ def name : Reftype → String
   | Malloc => "Malloc" | Sbrk => "Sbrk" | Delptr => "Delptr"
   | Thash => "Thash" | Llist => "Llist" | Bheap => "Bheap" | Atree => "Atree"
   | Ptrary => "Ptrary" | Count => "Count"
+  | Alias => "Alias" | Bitfld => "Bitfld" | Charset => "Charset"
+  | Cppstack => "Cppstack" | Ctype => "Ctype" | Exec => "Exec"
+  | Fbuf => "Fbuf" | Global => "Global" | Hook => "Hook" | Opt => "Opt"
+  | Regx => "Regx" | RegxSql => "RegxSql" | Smallstr => "Smallstr"
+  | Varlen => "Varlen" | ZSListMT => "ZSListMT"
 
 /-- The whole vocabulary, in `dmmeta/reftype.ssim`'s order. Written out rather
 than derived because a front end has to turn a *name* back into a reftype, and
-the two directions must not drift: `Checks` below pins that `all` has twenty
-entries and that `name` is injective on it, so a new constructor that is not
-added here fails the count. -/
+the two directions must not drift: `Checks` below pins that `all` has **all
+thirty-five** entries and that `name` is injective on it, so a new constructor
+that is not added here fails the count.
+
+It was twenty until the attribute join went in, and the fifteen that were
+missing were not *deferred* — they were absent, so the census reported them as
+`unknown reftype`, which reads as "the corpus has a typo" rather than "AMCC
+does not model this". The flags are transcribed from `reftype.ssim` the same
+way the original twenty were. -/
 def all : List Reftype :=
   [ Val, Pkey, Base, Upptr, Ptr, Lary, Tary, Inlary, Tpool, Lpool, Blkpool
-  , Malloc, Sbrk, Delptr, Thash, Llist, Bheap, Atree, Ptrary, Count ]
+  , Malloc, Sbrk, Delptr, Thash, Llist, Bheap, Atree, Ptrary, Count
+  , Alias, Bitfld, Charset, Cppstack, Ctype, Exec, Fbuf, Global, Hook, Opt
+  , Regx, RegxSql, Smallstr, Varlen, ZSListMT ]
 
 /-- The reftype with this name, if there is one. -/
 def ofName? (s : String) : Option Reftype := all.find? (fun r => r.name == s)
@@ -213,23 +260,108 @@ structure Ctype where
   fields : List Field := []
   deriving DecidableEq, Repr, Inhabited
 
-/-- `dmmeta.inlary` — the bound on an `Inlary` field's inline array.
+/-! ## Per-field attribute records — the join
 
-A separate record keyed by field, as in `dmmeta`, rather than an extra column
-on `Field`: attributes that apply to one reftype live in their own table, which
-is what lets the vocabulary grow without disturbing every field. -/
-structure Inlary where
+A field's *shape* does not live in `dmmeta.field`. It lives in a table of its
+own, keyed by the field: `dmmeta.inlary` carries an array bound,
+`dmmeta.smallstr` carries a length and a padding discipline, and `bitfld`,
+`charset`, `lenfld`, `substr` and `fconst` are all that same shape. Joining
+one onto a field is therefore a *mechanism*, not a per-reftype chore, and it
+is written once here:
+
+- `AttrTag` names the table, so `Reftype.needsAttr` can say which record a
+  reftype requires without naming its contents;
+- `AttrData` carries the payload, one constructor per table;
+- `Db.attr?` is the join, and the typed views below (`inlaryMax?`,
+  `smallstr?`) are the only thing a client sees;
+- `checkAttr` is the single checker clause: **a field that claims a reftype
+  whose attribute record is missing is a named error**, for every table at
+  once.
+
+Adding the next table is one `AttrTag`, one `AttrData` constructor, one typed
+view, one `checkAttrData` arm, and one reader/printer head. Nothing else moves.
+-/
+
+/-- Which `dmmeta` attribute table a record belongs to. -/
+inductive AttrTag where
+  /-- `dmmeta.inlary` — the bound on an inline array. -/
+  | inlary
+  /-- `dmmeta.smallstr` — the length and padding of an inline string. -/
+  | smallstr
+  deriving DecidableEq, Repr, Inhabited, BEq
+
+/-- The `deriving` handler registers `BEq` but not the lawfulness, and the
+join compares tags with `==` while every fact about it is stated with `=`. -/
+instance : LawfulBEq AttrTag where
+  eq_of_beq {a b} h := by revert h; cases a <;> cases b <;> decide
+  rfl {a} := by cases a <;> rfl
+
+/-- The table's `dmmeta` name, for the record head and for error messages. -/
+def AttrTag.name : AttrTag → String
+  | inlary   => "inlary"
+  | smallstr => "smallstr"
+
+/-- `dmmeta.strtype` — how a `Smallstr` field's bytes encode its length.
+
+`rpascal` stores the count out of band, in a `n_<field>` byte, and pads
+nothing; `leftpad` and `rightpad` store no count and recover the length by
+scanning off the pad character. That difference is why only `rpascal`'s
+abstraction is injective — see `docs/DIVERGENCE.md` §3.7. -/
+inductive Strtype where
+  | rpascal
+  | leftpad
+  | rightpad
+  deriving DecidableEq, Repr, Inhabited, BEq
+
+/-- Same gap as `AttrTag`'s. -/
+instance : LawfulBEq Strtype where
+  eq_of_beq {a b} h := by revert h; cases a <;> cases b <;> decide
+  rfl {a} := by cases a <;> rfl
+
+def Strtype.name : Strtype → String
+  | rpascal => "rpascal" | leftpad => "leftpad" | rightpad => "rightpad"
+
+def Strtype.all : List Strtype := [.rpascal, .leftpad, .rightpad]
+
+def Strtype.ofName? (s : String) : Option Strtype :=
+  Strtype.all.find? (fun t => t.name == s)
+
+/-- One attribute record's payload, one constructor per table.
+
+`pad` is kept as the **text** `amc` writes (`"'0'"`, `"' '"`) rather than as a
+character: it is a C character literal in the ssim file, the round trip is
+byte-for-byte, and nothing AMCC emits yet interprets it. `strict` likewise —
+`docs/DIVERGENCE.md` §3.7 records what it actually guards, which is naming
+conventions and not values. -/
+inductive AttrData where
+  | inlary   (max : Nat)
+  | smallstr (length : Nat) (strtype : Strtype) (pad : String) (strict : Bool)
+  deriving DecidableEq, Repr, Inhabited
+
+def AttrData.tag : AttrData → AttrTag
+  | .inlary _      => .inlary
+  | .smallstr .. => .smallstr
+
+/-- One attribute record: which field it is about, and its payload. -/
+structure Attr where
   ctype : Ident
   field : Ident
-  max   : Nat
+  data  : AttrData
   deriving DecidableEq, Repr, Inhabited
+
+/-- **Which attribute record a reftype requires**, if any. This is the whole
+requirement table; `checkAttr` turns it into the named error. -/
+def Reftype.needsAttr : Reftype → Option AttrTag
+  | .Inlary   => some .inlary
+  | .Smallstr => some .smallstr
+  | _         => none
 
 /-- The ctypes of one schema, **in declaration order**. Order is meaningful:
 a layout-carrying field may only name a ctype declared earlier. -/
 structure Db where
   ctypes : List Ctype
-  /-- Sizes for the `Inlary` fields. -/
-  inlary : List Inlary := []
+  /-- The per-field attribute records, in file order. -/
+  attrs  : List Attr := []
   /-- The database ctype, if there is one: `amc`'s `FDb`, the single global
   whose fields are the pools and the indexes. -/
   root   : Option Ident := none
@@ -266,9 +398,48 @@ theorem find?_of_mem_pairwise : ∀ (l : List Ctype),
       simp only [List.find?, beq_eq_false_iff_ne.mpr hne]
       exact find?_of_mem_pairwise l hp.2 c hc'
 
+/-! ### The join, and the typed views over it -/
+
+/-- **The join.** One field's record from one attribute table. The tag is part
+of the key, so two tables may both carry a record for the same field — which
+is what `bitfld` over a `Val` field will need. -/
+def attr? (d : Db) (tag : AttrTag) (owner f : Ident) : Option AttrData :=
+  (d.attrs.find? (fun a =>
+    a.ctype == owner && a.field == f && a.data.tag == tag)).map Attr.data
+
+/-- A joined record belongs to the table it was asked for. Needed wherever a
+view has to rule out the wrong payload. -/
+theorem attr?_tag {d : Db} {tag : AttrTag} {owner f : Ident} {a : AttrData}
+    (h : d.attr? tag owner f = some a) : a.tag = tag := by
+  simp only [attr?, Option.map_eq_some_iff] at h
+  obtain ⟨r, hr, ha⟩ := h
+  have := List.find?_some hr
+  simp only [Bool.and_eq_true, beq_iff_eq] at this
+  rw [← ha]; exact this.2
+
 /-- The declared bound on one `Inlary` field. -/
 def inlaryMax? (d : Db) (owner f : Ident) : Option Nat :=
-  (d.inlary.find? (fun i => i.ctype == owner && i.field == f)).map Inlary.max
+  match d.attr? .inlary owner f with
+  | some (.inlary n) => some n
+  | _                => none
+
+/-- The declared shape of one `Smallstr` field. -/
+def smallstr? (d : Db) (owner f : Ident) :
+    Option (Nat × Strtype × String × Bool) :=
+  match d.attr? .smallstr owner f with
+  | some (.smallstr n st pad strict) => some (n, st, pad, strict)
+  | _                                => none
+
+/-- **A joined `inlary` record always yields a bound.** The tag is part of the
+key, so the payload cannot be a `smallstr`; the `_ => none` arm of
+`inlaryMax?` is unreachable and this is what says so. -/
+theorem inlaryMax?_of_attr? {d : Db} {owner f : Ident} {a : AttrData}
+    (h : d.attr? .inlary owner f = some a) :
+    ∃ n, a = .inlary n ∧ d.inlaryMax? owner f = some n := by
+  have ht := attr?_tag h
+  cases a with
+  | inlary n => exact ⟨n, rfl, by simp [inlaryMax?, h]⟩
+  | smallstr => exact absurd ht (by simp [AttrData.tag])
 
 end Db
 
@@ -450,6 +621,67 @@ def isReservedName (n : Ident) : Bool := n.toList.head? == some '_'
 def dups (xs : List Ident) : List Ident :=
   (xs.filter (fun x => 1 < xs.countP (fun y => y == x))).eraseDups
 
+/-- **Is one attribute record's payload usable?** One arm per table. The
+join, the requirement and the missing-record error are `checkAttr`'s and are
+shared; only this is per-table.
+
+The `Inlary` bound becomes a C array size, and the subset's obligation 3 rules
+out a zero-length array and one past the `u32` range. That arm was originally
+only an `isNone` test, which let a schema with `max:0` pass `Dmmeta.check` and
+then be *rejected* by `CSubset.Wf.check` — the front end running ahead of the
+back end, and the reason `Layout.layoutWellFormed` could not be proved as
+stated. See `PROGRESS.md` under Decisions.
+
+The `rpascal` ceiling of 255 is `amc`'s own: `cpp/amc/smallstr.cpp` reports
+`smallstr.toobig` above it, because the count is stored in one byte. -/
+def checkAttrData (owner fname : Ident) : AttrData → List String
+  | .inlary n =>
+      if 0 < n && n < CSubset.Wf.u32Bound then []
+      else [s!"{owner}.{fname}: Inlary bound {n} is not a legal array size"]
+  | .smallstr n st _ _ =>
+      (if 0 < n && n < CSubset.Wf.u32Bound then []
+       else [s!"{owner}.{fname}: smallstr length {n} is not a legal array size"])
+      ++ (if st == .rpascal && 255 < n then
+            [s!"{owner}.{fname}: rpascal smallstr length {n} exceeds 255"]
+          else [])
+
+/-- **A field that claims a reftype whose attribute record is missing is a
+named error** — for every table at once, from `Reftype.needsAttr`.
+
+This is the clause the join exists for. Before it there was one bespoke test
+for `Inlary`, and each of `Smallstr`, `Bitfld`, `Charset`, `lenfld`, `substr`
+and `fconst` would have added another. -/
+def checkAttr (d : Db) (owner : Ident) (f : Field) : List String :=
+  match f.reftype.needsAttr with
+  | none     => []
+  | some tag =>
+    match d.attr? tag owner f.name with
+    | none   =>
+      [s!"{owner}.{f.name}: {f.reftype.name} needs a dmmeta.{tag.name} record"]
+    | some a => checkAttrData owner f.name a
+
+/-- **The `Inlary` facts, back out of the generic clause.** `Layout` and every
+template's well-formedness proof consume exactly this shape, and consumed it
+from the bespoke clause before the join existed — so it is stated once here
+rather than re-derived at each use.
+
+checked by: `lake build` -/
+theorem inlary_facts_of_checkAttr {d : Db} {owner : Ident} {f : Field}
+    (hr : f.reftype = .Inlary) (h : checkAttr d owner f = []) :
+    ∃ n, d.inlaryMax? owner f.name = some n ∧ 0 < n ∧ n < CSubset.Wf.u32Bound := by
+  simp only [checkAttr, hr, Reftype.needsAttr] at h
+  cases ha : d.attr? .inlary owner f.name with
+  | none => rw [ha] at h; simp at h
+  | some a =>
+    obtain ⟨n, rfl, hn⟩ := Db.inlaryMax?_of_attr? ha
+    refine ⟨n, hn, ?_⟩
+    rw [ha] at h
+    simp only [checkAttrData] at h
+    by_cases hb : (0 < n && n < CSubset.Wf.u32Bound) = true
+    · simp only [Bool.and_eq_true, decide_eq_true_eq] at hb
+      exact hb
+    · simp [hb] at h
+
 /-- Check one field against the ctypes declared **before** its owner. -/
 def checkField (d : Db) (earlier : List Ident) (owner : Ident) (f : Field) :
     List String :=
@@ -476,20 +708,7 @@ def checkField (d : Db) (earlier : List Ident) (owner : Ident) (f : Field) :
         ++ (if f.reftype.needsRecordArg && c.scalar.isSome then
               [s!"{owner}.{f.name}: {f.reftype.name} needs a record, and {f.arg} is a machine scalar"]
             else [])
-        ++ (if f.reftype == .Inlary then
-              match d.inlaryMax? owner f.name with
-              | none   => [s!"{owner}.{f.name}: Inlary needs a declared bound"]
-              -- The bound becomes a C array size, and the subset's obligation 3
-              -- rules out a zero-length array and one past the `u32` range. The
-              -- clause was originally only `isNone`, which let a schema with
-              -- `max:0` pass `Dmmeta.check` and then be *rejected* by
-              -- `CSubset.Wf.check` — the front end running ahead of the back
-              -- end, and the reason `Layout.layoutWellFormed` could not be
-              -- proved as stated. See `PROGRESS.md` under Decisions.
-              | some n =>
-                if 0 < n && n < CSubset.Wf.u32Bound then []
-                else [s!"{owner}.{f.name}: Inlary bound {n} is not a legal array size"]
-            else []))
+        ++ checkAttr d owner f)
 
 def checkCtype (d : Db) (earlier : List Ident) (c : Ctype) : List String :=
   -- Builtin ctypes are named after the machine types they denote (`bool` is a
@@ -813,7 +1032,7 @@ def boundedDb : Db where
     [ orderRow
     , { name   := "OrderDb"
       , fields := [{ name := "row", arg := "order_row", reftype := .Inlary }] } ]
-  inlary := [{ ctype := "OrderDb", field := "row", max := 4 }]
+  attrs  := [{ ctype := "OrderDb", field := "row", data := .inlary 4 }]
   root   := some "OrderDb"
 
 /-- checked by: `lake build` -/
@@ -821,8 +1040,8 @@ example : check boundedDb = [] := rfl
 
 /-- An `Inlary` without a declared bound is rejected: there is no capacity to
 emit. -/
-example : check { boundedDb with inlary := [] }
-    = ["OrderDb.row: Inlary needs a declared bound"] := rfl
+example : check { boundedDb with attrs := [] }
+    = ["OrderDb.row: Inlary needs a dmmeta.inlary record"] := rfl
 
 /-- And a bound that is not a legal C array size is rejected too.
 
@@ -835,13 +1054,14 @@ why `Layout.LayoutWellFormed` could not be proved as stated.
 
 checked by: `lake build` -/
 example : check { boundedDb with
-      inlary := [{ ctype := "OrderDb", field := "row", max := 0 }] }
+      attrs := [{ ctype := "OrderDb", field := "row", data := .inlary 0 }] }
     = ["OrderDb.row: Inlary bound 0 is not a legal array size"] := rfl
 
 /-- The other end of the range, where the bound would not survive the `u32`
 literal the generator emits. -/
 example : check { boundedDb with
-      inlary := [{ ctype := "OrderDb", field := "row", max := 4294967296 }] }
+      attrs := [{ ctype := "OrderDb", field := "row"
+                , data := .inlary 4294967296 }] }
     = ["OrderDb.row: Inlary bound 4294967296 is not a legal array size"] := rfl
 
 /-- A root that names nothing is rejected. -/
@@ -862,18 +1082,18 @@ example : Reftype.up .Upptr = true := rfl
 example : Reftype.layoutDep .Val = true := rfl
 example : Reftype.layoutDep .Llist = false := rfl
 
-/-- `dmmeta/reftype.ssim` has twenty rows, and `Reftype.all` has twenty
-entries. A constructor added without a line in `all` fails here.
+/-- `dmmeta/reftype.ssim` has thirty-five rows, and `Reftype.all` has
+thirty-five entries. A constructor added without a line in `all` fails here.
 
 checked by: `lake build` -/
-example : Reftype.all.length = 20 := rfl
+example : Reftype.all.length = 35 := rfl
 
 /-- `name` is injective on the vocabulary, so `ofName?` inverts it — which is
 what the ssim front end needs and what makes a mistyped name a diagnostic
 rather than a wrong reftype.
 
 checked by: `lake build` -/
-example : (Reftype.all.map Reftype.name).eraseDups.length = 20 := rfl
+example : (Reftype.all.map Reftype.name).eraseDups.length = 35 := rfl
 
 /-- checked by: `lake build` -/
 example : Reftype.all.all (fun r => Reftype.ofName? r.name == some r) = true := rfl

@@ -638,7 +638,7 @@ def hashDb : Dmmeta.Db where
                   , { name := "qty", arg := "u32", reftype := .Val } ] }
     , { name   := "ItemDb"
       , fields := [{ name := "ind_item", arg := "item_row", reftype := .Thash }] } ]
-  inlary := [{ ctype := "ItemDb", field := "ind_item", max := 8 }]
+  attrs  := [{ ctype := "ItemDb", field := "ind_item", data := .inlary 8 }]
   root   := some "ItemDb"
 
 /-- **Regression: an element ctype with a record-typed field.** This schema is
@@ -655,7 +655,7 @@ def nestedDb : Dmmeta.Db where
                   , { name := "qty", arg := "u32", reftype := .Val } ] }
     , { name   := "ItemDb"
       , fields := [{ name := "ind_item", arg := "item_row", reftype := .Thash }] } ]
-  inlary := [{ ctype := "ItemDb", field := "ind_item", max := 8 }]
+  attrs  := [{ ctype := "ItemDb", field := "ind_item", data := .inlary 8 }]
   root   := some "ItemDb"
 
 /-- **Regression: a ctype indexing itself.** `elemC = dbC`, so the two
@@ -668,7 +668,7 @@ def selfDb : Dmmeta.Db where
     [ { name   := "ItemDb"
       , fields := [ { name := "id",       arg := "u32",    reftype := .Pkey }
                   , { name := "ind_item", arg := "ItemDb", reftype := .Thash } ] } ]
-  inlary := [{ ctype := "ItemDb", field := "ind_item", max := 8 }]
+  attrs  := [{ ctype := "ItemDb", field := "ind_item", data := .inlary 8 }]
   root   := some "ItemDb"
 
 end Examples
@@ -739,7 +739,7 @@ would not be the modulus.
 
 checked by: `lake build` -/
 example : (genThash { Examples.hashDb with
-    inlary := [{ ctype := "ItemDb", field := "ind_item", max := 6 }] }) = none :=
+    attrs := [{ ctype := "ItemDb", field := "ind_item", data := .inlary 6 }] }) = none :=
   rfl
 
 /-- So is a key the mask cannot be applied to.
