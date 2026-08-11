@@ -632,6 +632,13 @@ theorem isPrefixOf_self_append {α : Type _} [BEq α] [LawfulBEq α] :
   | [], _ => rfl
   | x :: a, b => by simp [isPrefixOf_self_append a b]
 
+/-- The mirror of `dropSuffix_append`, and simpler: a prefix test *is*
+structural, so no reversal is needed. -/
+theorem dropPrefix_append (pfx g : String) :
+    dropPrefix pfx.toList (pfx ++ g).toList = some g.toList := by
+  simp only [dropPrefix, String.toList_append]
+  rw [if_pos (isPrefixOf_self_append _ _), List.drop_left]
+
 /-- Stripping a suffix that really is one gives back the prefix. -/
 theorem dropSuffix_append (g sfx : String) :
     dropSuffix sfx.toList (g ++ sfx).toList = some g.toList := by
@@ -675,8 +682,30 @@ theorem field_ne_generated {d : Db} (hchk : check d = [])
   have hno := no_clash_of_check hchk c hc f hf
   rw [hfm, hme] at hno
   have hyes : clashesGenerated (fieldCNames d.withBuiltins) (g ++ sfx) = true := by
-    refine List.any_eq_true.mpr ⟨sfx, hsfx, ?_⟩
+    refine Bool.or_eq_true_iff.mpr (Or.inl (List.any_eq_true.mpr ⟨sfx, hsfx, ?_⟩))
     rw [dropSuffix_append]
+    simpa using List.elem_eq_true_of_mem hg
+  rw [hyes] at hno
+  exact absurd hno (by simp)
+
+/-- **The prefix companion.** `amc` puts a smallstr's count byte at
+`n_<field>`, so the same obligation has to hold in the other direction: a
+declared field's C name is never a declared field's C name with a generated
+prefix in front.
+
+checked by: `lake build` -/
+theorem field_ne_prefixed {d : Db} (hchk : check d = [])
+    {m g : Dmmeta.Ident} (hm : m ∈ fieldCNames d.withBuiltins)
+    (hg : g ∈ fieldCNames d.withBuiltins) {pfx : String}
+    (hpfx : pfx ∈ genPrefixes) : m ≠ pfx ++ g := by
+  intro hme
+  simp only [fieldCNames, List.mem_flatMap, List.mem_map] at hm
+  obtain ⟨c, hc, f, hf, hfm⟩ := hm
+  have hno := no_clash_of_check hchk c hc f hf
+  rw [hfm, hme] at hno
+  have hyes : clashesGenerated (fieldCNames d.withBuiltins) (pfx ++ g) = true := by
+    refine Bool.or_eq_true_iff.mpr (Or.inr (List.any_eq_true.mpr ⟨pfx, hpfx, ?_⟩))
+    rw [dropPrefix_append]
     simpa using List.elem_eq_true_of_mem hg
   rw [hyes] at hno
   exact absurd hno (by simp)

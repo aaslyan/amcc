@@ -618,15 +618,29 @@ def dropSuffix (sfx n : List Char) : Option (List Char) :=
   if sfx.reverse.isPrefixOf n.reverse then some (n.take (n.length - sfx.length))
   else none
 
+/-- The prefixes a template puts *in front* of a field's C name. `amc` names
+an `rpascal` smallstr's count byte `n_$name`, so this is the mirror of
+`genSuffixes` and needs the mirror test. -/
+def genPrefixes : List String := ["n_"]
+
+/-- Strip a prefix, if it is one. -/
+def dropPrefix (pfx n : List Char) : Option (List Char) :=
+  if pfx.isPrefixOf n then some (n.drop pfx.length) else none
+
 /-- **Would a template generate this name?** `n` collides when stripping a
-generated suffix leaves a name that is itself declared — `zdl_todo_next`
-against a field `zdl_todo`. A field merely *ending* in `_next` is fine, which
-is why the test is not the blanket one. -/
+generated suffix — or prefix — leaves a name that is itself declared:
+`zdl_todo_next` against a field `zdl_todo`, `n_ch` against a field `ch`. A
+field merely *ending* in `_next` or *starting* with `n_` is fine, which is why
+the test is not the blanket one. -/
 def clashesGenerated (names : List Ident) (n : Ident) : Bool :=
   genSuffixes.any (fun sfx =>
     match dropSuffix sfx.toList n.toList with
     | none     => false
     | some pre => names.contains (String.ofList pre))
+  || genPrefixes.any (fun pfx =>
+    match dropPrefix pfx.toList n.toList with
+    | none      => false
+    | some rest => names.contains (String.ofList rest))
 
 /-- Reserved for the generator's own locals. -/
 def isReservedName (n : Ident) : Bool := n.toList.head? == some '_'
