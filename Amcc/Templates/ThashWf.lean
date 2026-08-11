@@ -625,7 +625,7 @@ theorem checkFun_walk {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
   · simp only [Wf.checkFun, findDef, findLoopBody, dbFld, ptrFld, bucket,
       ptrLocal, Wf.checkStmt, Wf.addrChecks, Wf.inferExpr, Wf.inferLVal,
       ValTy.toTy, Stmt.block, Stmt.when, LocalDef.zeroed]
-    simp [hg, hfN, hfI, hfB, hfC, hkf, Wf.isValTy, Wf.distinct, Wf.dups,
+    simp [hg, hfN, hfB, hkf, Wf.isValTy, Wf.distinct, Wf.dups,
       parKey, tmpB, tmpP, tmpHit, tmpI, Wf.indexOk, Wf.Ctx.local?, Wf.litTy,
       Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.Stmt.assigns, Wf.Stmt.alwaysReturns,
       hcap, Wf.inferExpr, Wf.addrChecks, ValTy.toTy]
@@ -636,6 +636,130 @@ theorem checkFun_walk {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       parRow, tmpB, tmpP, tmpPrev, tmpI, Wf.indexOk, Wf.Ctx.local?, Wf.litTy,
       Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.Stmt.assigns, hcap, Wf.inferExpr,
       Wf.addrChecks, ValTy.toTy]
+
+/-- **`InsertMaybe`.** The one body that *calls* another generated function:
+`_p = D_f_Find(row->k)`. Obligation 4 asks that the callee be declared
+earlier, so `Wf.Ctx.fun?` has to resolve `Find` out of the `earlier` list —
+`checkFun`'s `earlier` is `p.funs.take i`, and `defsFor` emits `Find` second,
+so at `InsertMaybe`'s index the prefix contains it. No template had exercised
+this path before.
+
+checked by: `lake build` -/
+theorem checkFun_insert {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld key : Field} {nb cap mask : Nat}
+    (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hkey : key ∈ elemC.fields)
+    (hkty : fieldTy d.withBuiltins elemC.name key = some (.scalar .u32)) :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    Wf.checkFun (tableOf d dbN elemN nm nb) (genGlobals d)
+      [initDef nm elemN nb, findDef nm elemN (mangle key.name) mask cap]
+      (insertDef nm elemN (mangle key.name) mask) = [] := by
+  intro nm elemN dbN
+  obtain ⟨⟨_, _, hqdup⟩, _, _⟩ := Layout.facts_of_check hchk
+  -- `field?`/`global?` ignore the function list, so these are stated over an
+  -- arbitrary `funs`: the closing `simp` unfolds `findDef` inside the context,
+  -- and a lookup pinned to the folded list would stop matching at that point.
+  have hkf : ∀ (funs : List FunDef) (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) funs
+        locals).field? elemN (mangle key.name) = some (.scalar .u32) := by
+    intro funs locals
+    have hbase : (genStructs d).find? (fun sd => sd.name == elemN)
+        = some (structOf d.withBuiltins elemC) := by
+      have h := CSubset.find?_of_mem_pairwise (f := StructDef.name) (genStructs d)
+        (structOf d.withBuiltins elemC)
+        (List.mem_filterMap.mpr ⟨elemC, helem, by simp [hes]⟩)
+        (Layout.structs_distinct (nf := fun c => mangle c.name) (fun _ => rfl)
+          (Layout.facts_of_check hchk).1.2.1)
+      rwa [Layout.structOf_name] at h
+    have hlow : (structOf d.withBuiltins elemC).fields.find?
+        (fun fv => fv.1 == mangle key.name)
+        = some (mangle key.name, Ty.scalar .u32) :=
+      NameWf.struct_field? (Layout.mangled_fields_pairwise_mem hqdup helem)
+        hkey hkty
+    obtain ⟨rest, hres⟩ : ∃ rest,
+        (tableOf d dbN elemN nm nb).find? (fun sd => sd.name == elemN)
+          = some { structOf d.withBuiltins elemC with
+                   fields := (structOf d.withBuiltins elemC).fields ++ rest } := by
+      have hen : (structOf d.withBuiltins elemC).name = elemN :=
+        Layout.structOf_name _ _
+      have hinner : (Layout.addFields elemN (elemFields nm elemN)
+          (genStructs d)).find? (fun sd => sd.name == elemN)
+          = some { structOf d.withBuiltins elemC with
+                   fields := (structOf d.withBuiltins elemC).fields
+                             ++ elemFields nm elemN } := by
+        rw [Layout.find?_addFields _ hbase, if_pos (beq_iff_eq.mpr hen)]
+      by_cases hne : dbN = elemN
+      · refine ⟨elemFields nm elemN ++ dbFields nm elemN nb, ?_⟩
+        simp only [tableOf, ← List.append_assoc]
+        rw [Layout.find?_addFields _ hinner,
+          if_pos (beq_iff_eq.mpr (hen.trans hne.symm))]
+      · refine ⟨elemFields nm elemN, ?_⟩
+        simp only [tableOf]
+        rw [Layout.find?_addFields _ hinner,
+          if_neg (fun e => hne (hen ▸ (eq_of_beq e).symm))]
+    simp only [Wf.Ctx.field?, Wf.Ctx.struct?, tableOf] at hres ⊢
+    rw [hres]
+    show (do
+      let fv ← ((structOf d.withBuiltins elemC).fields ++ rest).find? (fun fv : CSubset.Ident × Ty => fv.1 == mangle key.name)
+      some fv.2) = _
+    rw [List.find?_append, hlow]
+    rfl
+  have hg : ∀ (funs : List FunDef) (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) funs
+        locals).global? nm.dbGlobal
+        = some { name := nm.dbGlobal, ty := .strct dbN } :=
+    fun funs locals => global_lookup hroot _ _ locals
+  have hfN : ∀ (funs : List FunDef) (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) funs
+        locals).field? elemN nm.next = some (.ptr (.strct elemN)) :=
+    fun funs locals => (field_lookups_any (nb := nb) hchk hdb hdbs hfld helem hes
+      (genGlobals d) funs locals).1
+  have hfI : ∀ (funs : List FunDef) (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) funs
+        locals).field? elemN nm.inhash = some (.scalar .bool) :=
+    fun funs locals => (field_lookups_any (nb := nb) hchk hdb hdbs hfld helem hes
+      (genGlobals d) funs locals).2.1
+  have hfB : ∀ (funs : List FunDef) (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) funs
+        locals).field? dbN nm.buckets = some (.arr (.ptr (.strct elemN)) nb) :=
+    fun funs locals => (field_lookups_any (nb := nb) hchk hdb hdbs hfld helem hes
+      (genGlobals d) funs locals).2.2.1
+  have hfC : ∀ (funs : List FunDef) (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) funs
+        locals).field? dbN nm.count = some (.scalar .u32) :=
+    fun funs locals => (field_lookups_any (nb := nb) hchk hdb hdbs hfld helem hes
+      (genGlobals d) funs locals).2.2.2
+  -- obligation 4: `Find` is in the prefix, and `Init` does not shadow it
+  have hfun : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d)
+        [initDef nm elemN nb, findDef nm elemN (mangle key.name) mask cap]
+        locals).fun? nm.find
+        = some (findDef nm elemN (mangle key.name) mask cap) := by
+    intro locals
+    have hne : ((initDef nm elemN nb).name == nm.find) = false :=
+      beq_eq_false_iff_ne.mpr (by
+        show nm.init ≠ nm.find
+        simp only [nm, names]
+        exact CSubset.append_ne
+          (s := mangle dbC.name ++ "_" ++ mangle fld.name) (by decide))
+    have heq : ((findDef nm elemN (mangle key.name) mask cap).name == nm.find)
+        = true := by simp [findDef]
+    simp only [Wf.Ctx.fun?, List.find?, hne, heq]
+  simp only [Wf.checkFun, insertDef, dbFld, ptrFld, bucket, ptrLocal,
+    Wf.checkStmt, Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, ValTy.toTy,
+    Stmt.block, Stmt.when, LocalDef.zeroed]
+  -- `findDef` stays folded here: unfolding it first would stop `hfun` and the
+  -- field lookups from matching the context syntactically.
+  simp [hg, hfN, hfI, hfB, hfC, hkf, hfun, Wf.isValTy, Wf.distinct, Wf.dups,
+    parRow, tmpB, tmpP, Wf.Ctx.local?, Wf.litTy, Wf.binTy, Wf.isPtrTy,
+    Wf.isWord, Wf.unTy, Wf.Stmt.alwaysReturns, Wf.inferExpr, Wf.addrChecks,
+    ValTy.toTy]
+  simp [findDef, parKey, tmpB, tmpP, tmpHit, tmpI, hkf, Wf.Ctx.local?,
+    Wf.inferExpr, Wf.inferLVal, Wf.indexOk, Wf.isValTy]
 
 end Thash
 end Templates
