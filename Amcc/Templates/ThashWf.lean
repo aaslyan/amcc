@@ -116,5 +116,162 @@ theorem dbFields_ok (nm : Names) (elem : CSubset.Ident) {nb : Nat}
     · intro m hm
       simp [Wf.Ty.allStructs] at hm
 
+/-! ## The extended struct table -/
+
+/-- The doubly-extended table `genThash` emits. -/
+def tableOf (d : Db) (dbN elemN : CSubset.Ident) (nm : Names) (nb : Nat) :
+    List StructDef :=
+  Layout.addFields dbN (dbFields nm elemN nb)
+    (Layout.addFields elemN (elemFields nm elemN) (genStructs d))
+
+/-- **The added link names do not collide with the element's own fields.**
+`Layout.field_ne_generated` spends `Dmmeta.check`'s `clashesGenerated` clause;
+`_next` and `_inhash` are both reserved suffixes. -/
+theorem hdist_elem {d : Db} (hchk : check d = []) {dbC : Ctype} {fld : Field}
+    (hdb : dbC ∈ d.withBuiltins.ctypes) (hfld : fld ∈ dbC.fields)
+    (elemN : CSubset.Ident) :
+    ∀ sd ∈ genStructs d, sd.name = elemN →
+      ((sd.fields.map Prod.fst)
+        ++ (elemFields (names (mangle dbC.name) (mangle fld.name)) elemN).map
+             Prod.fst).Pairwise (· ≠ ·) := by
+  obtain ⟨⟨_, _, hqdup⟩, _, _⟩ := Layout.facts_of_check hchk
+  intro sd hsd _
+  obtain ⟨c, hc, _, rfl⟩ := Layout.struct_of_mem hsd
+  have hgm : mangle fld.name ∈ fieldCNames d.withBuiltins :=
+    Layout.mem_fieldCNames hdb hfld
+  rw [elemFields_names]
+  refine List.pairwise_append.mpr ⟨?_, ?_, ?_⟩
+  · exact Layout.fields_distinct (nf := fun f => mangle f.name) (fun _ _ _ => rfl)
+      (Layout.mangled_fields_pairwise_mem hqdup hc)
+  · simp only [names]
+    refine List.pairwise_cons.mpr ⟨?_, by simp⟩
+    intro b hb
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+    rcases hb with rfl
+    exact CSubset.append_ne (s := mangle fld.name) (by decide)
+  · intro m hm b hb
+    simp only [names, List.mem_cons, List.not_mem_nil, or_false] at hb
+    have hmm := Layout.mem_fieldCNames_of_struct hsd hm
+    rcases hb with rfl | rfl <;>
+      exact Layout.field_ne_generated hchk hmm hgm (by decide)
+
+/-- The same for the parent's bucket array and count, over the *already
+extended* table — so in the self-indexing case the struct already carries the
+two links. -/
+theorem hdist_db {d : Db} (hchk : check d = []) {dbC : Ctype} {fld : Field}
+    (hdb : dbC ∈ d.withBuiltins.ctypes) (hfld : fld ∈ dbC.fields)
+    (elemN : CSubset.Ident) (nb : Nat) :
+    ∀ sd ∈ Layout.addFields elemN
+        (elemFields (names (mangle dbC.name) (mangle fld.name)) elemN)
+        (genStructs d),
+      sd.name = mangle dbC.name →
+      ((sd.fields.map Prod.fst)
+        ++ (dbFields (names (mangle dbC.name) (mangle fld.name)) elemN nb).map
+             Prod.fst).Pairwise (· ≠ ·) := by
+  obtain ⟨⟨_, _, hqdup⟩, _, _⟩ := Layout.facts_of_check hchk
+  intro sd hsd _
+  obtain ⟨sd0, hsd0, rfl⟩ := Layout.mem_addFields hsd
+  have hgm : mangle fld.name ∈ fieldCNames d.withBuiltins :=
+    Layout.mem_fieldCNames hdb hfld
+  obtain ⟨c, hc, _, rfl⟩ := Layout.struct_of_mem hsd0
+  have hown : ∀ m ∈ (structOf d.withBuiltins c).fields.map Prod.fst,
+      ∀ b ∈ (dbFields (names (mangle dbC.name) (mangle fld.name)) elemN nb).map
+        Prod.fst, m ≠ b := by
+    intro m hm b hb
+    simp only [dbFields_names, names, List.mem_cons, List.not_mem_nil,
+      or_false] at hb
+    have hmm := Layout.mem_fieldCNames_of_struct hsd0 hm
+    rcases hb with rfl | rfl <;>
+      exact Layout.field_ne_generated hchk hmm hgm (by decide)
+  have hpair2 : ((dbFields (names (mangle dbC.name) (mangle fld.name)) elemN nb).map
+      Prod.fst).Pairwise (· ≠ ·) := by
+    simp only [dbFields_names, names]
+    refine List.pairwise_cons.mpr ⟨?_, by simp⟩
+    intro b hb
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+    rcases hb with rfl
+    exact CSubset.append_ne (s := mangle fld.name) (by decide)
+  have hown0 : ((structOf d.withBuiltins c).fields.map Prod.fst).Pairwise (· ≠ ·) :=
+    Layout.fields_distinct (nf := fun f => mangle f.name) (fun _ _ _ => rfl)
+      (Layout.mangled_fields_pairwise_mem hqdup hc)
+  have hlinks : ((elemFields (names (mangle dbC.name) (mangle fld.name)) elemN).map
+      Prod.fst).Pairwise (· ≠ ·) := by
+    simp only [elemFields_names, names]
+    refine List.pairwise_cons.mpr ⟨?_, by simp⟩
+    intro b hb
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+    rcases hb with rfl
+    exact CSubset.append_ne (s := mangle fld.name) (by decide)
+  have hcrossL : ∀ m ∈ (structOf d.withBuiltins c).fields.map Prod.fst,
+      ∀ b ∈ (elemFields (names (mangle dbC.name) (mangle fld.name)) elemN).map
+        Prod.fst, m ≠ b := by
+    intro m hm b hb
+    simp only [elemFields_names, names, List.mem_cons, List.not_mem_nil,
+      or_false] at hb
+    have hmm := Layout.mem_fieldCNames_of_struct hsd0 hm
+    rcases hb with rfl | rfl <;>
+      exact Layout.field_ne_generated hchk hmm hgm (by decide)
+  have hLvD : ∀ m ∈ (elemFields (names (mangle dbC.name) (mangle fld.name)) elemN).map
+        Prod.fst,
+      ∀ b ∈ (dbFields (names (mangle dbC.name) (mangle fld.name)) elemN nb).map
+        Prod.fst, m ≠ b := by
+    intro m hm b hb
+    simp only [elemFields_names, names, List.mem_cons, List.not_mem_nil,
+      or_false] at hm
+    simp only [dbFields_names, names, List.mem_cons, List.not_mem_nil,
+      or_false] at hb
+    rcases hm with rfl | rfl <;> rcases hb with rfl | rfl <;>
+      exact CSubset.append_ne (s := mangle fld.name) (by decide)
+  by_cases hn : (structOf d.withBuiltins c).name = elemN
+  · rw [if_pos (beq_iff_eq.mpr hn)]
+    simp only [List.map_append]
+    refine List.pairwise_append.mpr
+      ⟨List.pairwise_append.mpr ⟨hown0, hlinks, hcrossL⟩, hpair2, ?_⟩
+    intro m hm b hb
+    simp only [List.mem_append] at hm
+    rcases hm with hm | hm
+    · exact hown m hm b hb
+    · exact hLvD m hm b hb
+  · rw [if_neg (fun h => hn (eq_of_beq h))]
+    exact List.pairwise_append.mpr ⟨hown0, hpair2, hown⟩
+
+/-- **The emitted struct table is well-formed.**
+
+checked by: `lake build` -/
+theorem checkStructs_gen_thash {d : Db} (hchk : check d = [])
+    {dbC elemC : Ctype} {fld : Field} {nb : Nat}
+    (hdb : dbC ∈ d.withBuiltins.ctypes) (hfld : fld ∈ dbC.fields)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hpos : 0 < nb) (hlt : nb < Wf.u32Bound) :
+    Wf.checkStructs
+      (tableOf d (mangle dbC.name) (mangle elemC.name)
+        (names (mangle dbC.name) (mangle fld.name)) nb) = [] := by
+  have hmem := Layout.mem_genStructs_name helem hes
+  obtain ⟨se, sl, sa⟩ := elemFields_ok (names (mangle dbC.name) (mangle fld.name))
+    (mangle elemC.name)
+  obtain ⟨de, dl, da⟩ := dbFields_ok (names (mangle dbC.name) (mangle fld.name))
+    (mangle elemC.name) hpos hlt
+  refine Layout.checkStructs_addFields
+    (Layout.checkStructs_addFields (Layout.checkStructs_gen hchk)
+      (hdist_elem hchk hdb hfld _) se ?_ sl)
+    (hdist_db hchk hdb hfld _ nb) de ?_ dl
+  · intro fv hfv m hm
+    rw [sa fv hfv m hm]
+    exact hmem
+  · intro fv hfv m hm
+    rw [Layout.addFields_names, da fv hfv m hm]
+    exact hmem
+
+/-- **And the global.**
+
+checked by: `lake build` -/
+theorem checkGlobals_gen_thash {d : Db} (hchk : check d = [])
+    (n₁ n₂ : CSubset.Ident) (e₁ e₂ : List (CSubset.Ident × Ty)) :
+    Wf.checkGlobals
+      (Layout.addFields n₂ e₂ (Layout.addFields n₁ e₁ (genStructs d)))
+      (genGlobals d) = [] :=
+  Layout.checkGlobals_addFields (Layout.checkGlobals_addFields
+    (Layout.checkGlobals_gen hchk))
+
 end Thash
 end Templates
