@@ -761,5 +761,140 @@ theorem checkFun_insert {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
   simp [findDef, parKey, tmpB, tmpP, tmpHit, tmpI, hkf, Wf.Ctx.local?,
     Wf.inferExpr, Wf.inferLVal, Wf.indexOk, Wf.isValTy]
 
+/-! ## What the generator's own guard buys
+
+A `Thash` field is **not** an `Inlary`, so `Dmmeta.check`'s array-bound clause
+never reaches its bucket count: nothing in the schema checker says the count is
+positive or fits a `u32`. `genThash` guards it itself, with `pow2Exp?`, and
+this is where that guard is cashed in. -/
+
+/-- **An accepted bucket count is positive and fits a `u32`.** `pow2Exp?` only
+succeeds at `nb = 2 ^ e` with `e ≤ 31`, which bounds `nb` by `2 ^ 31`. The
+companion `Thash.accepted_bucket_facts` draws the *masking* consequences out of
+the same guard; this one draws the two the well-formedness checker asks for.
+
+checked by: `lake build` -/
+theorem accepted_bucket_fits {nb : Nat} (h : (pow2Exp? pow2Fuel nb).isSome) :
+    0 < nb ∧ nb < Wf.u32Bound := by
+  obtain ⟨e, he⟩ := Option.isSome_iff_exists.mp h
+  have hn : nb = 2 ^ e := pow2_of_exp? _ _ _ he
+  have hle : e ≤ pow2Fuel := exp?_le _ _ _ he
+  subst hn
+  refine ⟨Nat.two_pow_pos e, ?_⟩
+  calc 2 ^ e ≤ 2 ^ 31 := Nat.pow_le_pow_right (by decide) hle
+    _ < Wf.u32Bound := by decide
+
+/-! ## The assembly -/
+
+/-- **Every accepted schema that generates a hash index generates an accepted
+program.**
+
+The unwinding is `Llist.genWellFormed`'s, with two extra kinds of step:
+`genThash` also picks the element's `Pkey` field and `guard`s both its type and
+the bucket count. `guard` is `if p then pure () else failure`, so each one is
+discharged by `by_cases` on its condition and reducing the `else` branch to
+`none = some _`.
+
+checked by: `lake build` -/
+theorem genWellFormed : GenWellFormed := by
+  intro d p hchk hgen
+  simp only [genThash, bind, Option.bind_eq_some_iff] at hgen
+  obtain ⟨dbName, hr, dbC, hdbf, fld, hfldf, elemC, helemf, key, hkeyf,
+    _u₁, hgk, nb, hnbf, _u₂, hgp, cap, hcapf, hgen⟩ := hgen
+  -- the two guards
+  have hkarg : key.arg = "u32" := by
+    by_cases hb : (key.arg == "u32") = true
+    · exact eq_of_beq hb
+    · simp [guard, hb] at hgk
+  have hp2 : (pow2Exp? pow2Fuel nb).isSome = true := by
+    by_cases hb : (pow2Exp? pow2Fuel nb).isSome = true
+    · exact hb
+    · simp [guard, hb] at hgp
+  obtain ⟨hpos, hlt⟩ := accepted_bucket_fits hp2
+  -- the capacity is the bucket count; both come from the same lookup
+  have hcn : cap = nb := Option.some.inj (hcapf.symm.trans hnbf)
+  rw [hcn] at hgen
+  -- the facts every lemma above takes
+  have hdb : dbC ∈ d.withBuiltins.ctypes :=
+    List.mem_of_find?_eq_some (by simpa [Db.find?] using hdbf)
+  have helem : elemC ∈ d.withBuiltins.ctypes :=
+    List.mem_of_find?_eq_some (by simpa [Db.find?] using helemf)
+  have hfld : fld ∈ dbC.fields := List.mem_of_find?_eq_some hfldf
+  have hkey : key ∈ elemC.fields :=
+    List.mem_of_find?_eq_some (by simpa [keyField?] using hkeyf)
+  have hdbn : dbC.name = dbName := Db.find?_name hdbf
+  have hrootC : d.root = some dbC.name := by rw [hdbn]; exact hr
+  obtain ⟨_, hrt, hcty⟩ := Layout.facts_of_check hchk
+  obtain ⟨rc, hrc, hrcs⟩ := hrt dbC.name hrootC
+  have hdbs : dbC.scalar = none := by
+    have heq : rc = dbC :=
+      Option.some.inj (hrc.symm.trans (by rw [hdbn]; exact hdbf))
+    rw [← heq]; exact hrcs
+  have hfr : fld.reftype = Reftype.Thash := by
+    have h := List.find?_some hfldf
+    simpa using h
+  have hes : elemC.scalar = none := by
+    obtain ⟨i, hi, hci⟩ : ∃ i, ∃ hi : i < d.withBuiltins.ctypes.length,
+        (d.withBuiltins.ctypes[i]'hi) = dbC := by
+      obtain ⟨i, hi⟩ := List.mem_iff_getElem.mp hdb
+      exact ⟨i, hi.1, hi.2⟩
+    obtain ⟨_, _, hff⟩ := hcty i hi
+    rw [hci] at hff
+    obtain ⟨_, _, _, hrec⟩ := hff fld hfld
+    obtain ⟨ac, hac, hacs⟩ := hrec (by rw [hfr]; rfl)
+    have heq : ac = elemC := Option.some.inj (hac.symm.trans helemf)
+    rw [← heq]; exact hacs
+  -- the key is a `Pkey` at `u32`, so it lowers to a `u32` field
+  have hkrt : key.reftype = Reftype.Pkey := by
+    have h := List.find?_some (by simpa [keyField?] using hkeyf)
+    simpa using h
+  have hkty : fieldTy d.withBuiltins elemC.name key = some (.scalar .u32) := by
+    have hu32 : d.withBuiltins.find? "u32"
+        = some { name := "u32", scalar := some .u32 } := by
+      simp [Db.find?, Db.withBuiltins, builtins]
+    simp [fieldTy, hkarg, hu32, hkrt]
+  -- and the four obligations
+  rw [← Option.some.inj hgen]
+  simp only [Wf.check, List.append_eq_nil_iff]
+  refine ⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩
+  · exact checkStructs_gen_thash hchk hdb hfld helem hes hpos hlt
+  · exact checkGlobals_gen_thash hchk _ _ _ _
+  · exact CSubset.distinct_eq_nil (names_pairwise _ _ _ _ _ _ _)
+  · rw [List.flatMap_eq_nil_iff]
+    rintro ⟨fd, i⟩ hfdi
+    rw [List.mem_zipIdx_iff_getElem?] at hfdi
+    -- `InsertMaybe` needs its *own* index: the prefix at that point is exactly
+    -- `[Init, Find]`, which is what makes its call resolve. So the five cases
+    -- are taken by position rather than by membership.
+    rcases i with _ | _ | _ | _ | _ | i
+    · have h : initDef (names (mangle dbC.name) (mangle fld.name))
+          (mangle elemC.name) nb = fd := by simpa [defsFor] using hfdi
+      subst h
+      exact checkFun_thash (nb := nb) hchk hdb hdbs hfld hrootC helem hes hlt
+        _ (by simp)
+    · have h : findDef (names (mangle dbC.name) (mangle fld.name))
+          (mangle elemC.name) (mangle key.name) (nb - 1) nb = fd := by
+        simpa [defsFor] using hfdi
+      subst h
+      exact checkFun_walk (mask := nb - 1) (cap := nb) hchk hdb hdbs hfld
+        hrootC helem hes hkey hkty hlt _ (by simp)
+    · have h : insertDef (names (mangle dbC.name) (mangle fld.name))
+          (mangle elemC.name) (mangle key.name) (nb - 1) = fd := by
+        simpa [defsFor] using hfdi
+      subst h
+      exact checkFun_insert hchk hdb hdbs hfld hrootC helem hes hkey hkty
+    · have h : removeDef (names (mangle dbC.name) (mangle fld.name))
+          (mangle elemC.name) (mangle key.name) (nb - 1) nb = fd := by
+        simpa [defsFor] using hfdi
+      subst h
+      exact checkFun_walk (mask := nb - 1) (cap := nb) hchk hdb hdbs hfld
+        hrootC helem hes hkey hkty hlt _ (by simp)
+    · have h : sizeDef (names (mangle dbC.name) (mangle fld.name)) = fd := by
+        simpa [defsFor] using hfdi
+      subst h
+      exact checkFun_thash (nb := nb) hchk hdb hdbs hfld hrootC helem hes hlt
+        _ (by simp)
+    · simp [defsFor] at hfdi
+
 end Thash
 end Templates
