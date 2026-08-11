@@ -494,14 +494,11 @@ bundled once and each body is a `simp only` / `simp` pair over it, as in
 
 /-- The bundle, in the `∀`-over-frames form `simp` can instantiate. -/
 theorem checkFun_thash {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
-    {fld key : Field} {nb cap mask : Nat}
+    {fld : Field} {nb : Nat}
     (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
     (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
     (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
-    (hkey : key ∈ elemC.fields)
-    (hkty : fieldTy d.withBuiltins elemC.name key = some (.scalar .u32))
-    (hcap : cap < Wf.u32Bound) (hnb : nb < Wf.u32Bound)
-    {earlier : List FunDef} :
+    (hnb : nb < Wf.u32Bound) {earlier : List FunDef} :
     let nm := names (mangle dbC.name) (mangle fld.name)
     let elemN := mangle elemC.name
     let dbN := mangle dbC.name
@@ -527,7 +524,7 @@ theorem checkFun_thash {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block, LocalDef.zeroed]
     simp [hg, hfB, hfC, Wf.isValTy, Wf.distinct, Wf.dups, tmpI, Wf.indexOk,
       Wf.Ctx.local?, Wf.litTy, Wf.Stmt.assigns, hnb, Wf.inferExpr,
-      Wf.addrChecks, ValTy.toTy]
+      Wf.addrChecks]
   · simp only [Wf.checkFun, sizeDef, dbFld, Wf.checkStmt, Wf.addrChecks,
       Wf.inferExpr, Wf.inferLVal, ValTy.toTy]
     simp [hg, hfC, Wf.isValTy, Wf.distinct, Wf.dups, Wf.Stmt.alwaysReturns]
