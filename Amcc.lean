@@ -157,12 +157,11 @@ that should fail does not.)
                           both directions, plus the exact rejection messages.
                           Nothing about the reader is proved; the round trip is
                           what stands in (`docs/DIVERGENCE.md` §3.6)
-- `Templates.LlistWf`   — the intrusive list's every-schema obligation: the
-                          names, both `hdist` lemmas, the struct and global
-                          halves and **all nine `checkFun`s** are proved. One
-                          gap before assembly: `field_lookups` assumes the two
-                          ctypes differ, and a ctype may thread itself
-                          (`PROGRESS.md`)
+- `Templates.LlistWf`   — **proved**: `Llist.genWellFormed` — every schema
+                          `Dmmeta.check` accepts generates a program
+                          `Wf.check` accepts, the self-threading case
+                          included. Second of the three ctype-model templates
+                          to match what the generated headers claim
 - `Templates.LayoutWf`  — **proved**: `layoutWellFormed` — every schema the
                           lowering accepts produces structs and globals
                           `Wf.check` accepts, including that struct nesting is

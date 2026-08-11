@@ -2070,6 +2070,11 @@ neither the array table nor the pool produced.
 checked by: `lake build` -/
 example : (genLlist Examples.listDb).map CSubset.Wf.check = some [] := rfl
 
+/-- ...and **for every accepted schema**, not just these:
+`Templates.Llist.genWellFormed` in `LlistWf.lean`. The instances here are
+subsumed by it and kept because they also pin concrete outputs. -/
+example : True := trivial
+
 /-- **Both regression schemas are accepted and both generate accepted
 programs.** Before the layout rework the second half of each was false.
 

@@ -576,7 +576,7 @@ theorem checkFun_simple {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
     (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
     (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
-    (hne : mangle dbC.name ≠ mangle elemC.name) {earlier : List FunDef} :
+    {earlier : List FunDef} :
     let nm := names (mangle dbC.name) (mangle fld.name)
     let elemN := mangle elemC.name
     let dbN := mangle dbC.name
@@ -585,7 +585,7 @@ theorem checkFun_simple {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       Wf.checkFun (tableOf d dbN elemN nm) (genGlobals d) earlier fd = [] := by
   intro nm elemN dbN fd hfd
   obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
-    field_lookups hchk hdb hdbs hfld helem hes hne (genGlobals d) earlier []
+    field_lookups_any hchk hdb hdbs hfld helem hes (genGlobals d) earlier []
   -- `Ctx.field?` and `Ctx.global?` do not read `locals`, so each equation
   -- holds for every frame; stated with the `∀` so `simp` can instantiate it
   have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
@@ -649,7 +649,7 @@ theorem checkFun_insert {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
     (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
     (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
-    (hne : mangle dbC.name ≠ mangle elemC.name) {earlier : List FunDef} :
+    {earlier : List FunDef} :
     let nm := names (mangle dbC.name) (mangle fld.name)
     let elemN := mangle elemC.name
     let dbN := mangle dbC.name
@@ -657,7 +657,7 @@ theorem checkFun_insert {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       (insertDef nm elemN) = [] := by
   intro nm elemN dbN
   obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
-    field_lookups hchk hdb hdbs hfld helem hes hne (genGlobals d) earlier []
+    field_lookups_any hchk hdb hdbs hfld helem hes (genGlobals d) earlier []
   have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).global?
           nm.dbGlobal = some { name := nm.dbGlobal, ty := .strct dbN } :=
@@ -687,7 +687,7 @@ theorem checkFun_remove {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
     (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
     (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
-    (hne : mangle dbC.name ≠ mangle elemC.name) {earlier : List FunDef} :
+    {earlier : List FunDef} :
     let nm := names (mangle dbC.name) (mangle fld.name)
     let elemN := mangle elemC.name
     let dbN := mangle dbC.name
@@ -695,7 +695,7 @@ theorem checkFun_remove {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       (removeDef nm elemN) = [] := by
   intro nm elemN dbN
   obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
-    field_lookups hchk hdb hdbs hfld helem hes hne (genGlobals d) earlier []
+    field_lookups_any hchk hdb hdbs hfld helem hes (genGlobals d) earlier []
   have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).global?
           nm.dbGlobal = some { name := nm.dbGlobal, ty := .strct dbN } :=
@@ -720,6 +720,82 @@ theorem checkFun_remove {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
   simp [hg, hfN, hfP, hfI, hfH, hfC, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
     tmpPrev, tmpNext, Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.litTy,
     Wf.inferExpr, Wf.addrChecks, Wf.Ctx.local?, ValTy.toTy]
+
+/-! ## Assembly
+
+`genLlist`'s `do` block unwinds to the four things every lemma above wants,
+and `Wf.check` is the concatenation of the four obligations they discharge. -/
+
+/-- **Every accepted schema that generates a list generates an accepted
+program.** The banner in `scripts/gen/llist_gen.h` says what each function is
+guaranteed to do is machine-checked *for every accepted schema*; for this
+template that is now true of the well-formedness half as well as the
+behavioural one.
+
+checked by: `lake build` -/
+theorem genWellFormed : GenWellFormed := by
+  intro d p hchk hgen
+  -- unwind the generator, one `Option` step at a time
+  -- the `do` is the `Monad Option` bind, so `bind` has to be unfolded before
+  -- `Option.bind_eq_some_iff` can see it; without it the rewrite silently
+  -- does nothing and the unwinding looks impossible
+  simp only [genLlist, bind, Option.bind_eq_some_iff] at hgen
+  obtain ⟨dbName, hr, dbC, hdbf, fld, hfldf, elemC, helemf, hgen⟩ := hgen
+  -- the facts every lemma above takes
+  have hdb : dbC ∈ d.withBuiltins.ctypes :=
+    List.mem_of_find?_eq_some (by simpa [Db.find?] using hdbf)
+  have helem : elemC ∈ d.withBuiltins.ctypes :=
+    List.mem_of_find?_eq_some (by simpa [Db.find?] using helemf)
+  have hfld : fld ∈ dbC.fields := List.mem_of_find?_eq_some hfldf
+  have hdbn : dbC.name = dbName := Db.find?_name hdbf
+  have hrootC : d.root = some dbC.name := by rw [hdbn]; exact hr
+  obtain ⟨_, hrt, hcty⟩ := Layout.facts_of_check hchk
+  obtain ⟨rc, hrc, hrcs⟩ := hrt dbC.name hrootC
+  have hdbs : dbC.scalar = none := by
+    have heq : rc = dbC :=
+      Option.some.inj (hrc.symm.trans (by rw [hdbn]; exact hdbf))
+    rw [← heq]; exact hrcs
+  have hfr : fld.reftype = Reftype.Llist := by
+    have h := List.find?_some hfldf
+    simpa using h
+  -- the element is a record, from the `needsRecordArg` clause
+  have hes : elemC.scalar = none := by
+    obtain ⟨i, hi, hci⟩ : ∃ i, ∃ hi : i < d.withBuiltins.ctypes.length,
+        (d.withBuiltins.ctypes[i]'hi) = dbC := by
+      obtain ⟨i, hi⟩ := List.mem_iff_getElem.mp hdb
+      exact ⟨i, hi.1, hi.2⟩
+    obtain ⟨_, _, hff⟩ := hcty i hi
+    rw [hci] at hff
+    obtain ⟨_, _, _, hrec⟩ := hff fld hfld
+    obtain ⟨ac, hac, hacs⟩ := hrec (by rw [hfr]; rfl)
+    have heq : ac = elemC := Option.some.inj (hac.symm.trans helemf)
+    rw [← heq]; exact hacs
+  -- and the four obligations
+  rw [← Option.some.inj hgen]
+  simp only [Wf.check, List.append_eq_nil_iff]
+  refine ⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩
+  · exact checkStructs_gen_llist hchk hdb hfld helem hes
+  · exact checkGlobals_gen_llist hchk _ _ _ _
+  · exact CSubset.distinct_eq_nil (names_pairwise _ _)
+  · rw [List.flatMap_eq_nil_iff]
+    rintro ⟨fd, i⟩ hfdi
+    rw [List.mem_zipIdx_iff_getElem?] at hfdi
+    have hmem : fd ∈ defsFor (names (mangle dbC.name) (mangle fld.name))
+        (mangle elemC.name) := List.mem_of_getElem? hfdi
+    simp only [defsFor, List.mem_cons, List.not_mem_nil, or_false] at hmem
+    have hsimple := checkFun_simple (d := d) (earlier := (defsFor
+      (names (mangle dbC.name) (mangle fld.name)) (mangle elemC.name)).take i)
+      hchk hdb hdbs hfld hrootC helem hes
+    rcases hmem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    · exact hsimple _ (by simp)
+    · exact checkFun_insert hchk hdb hdbs hfld hrootC helem hes
+    · exact checkFun_remove hchk hdb hdbs hfld hrootC helem hes
+    · exact hsimple _ (by simp)
+    · exact hsimple _ (by simp)
+    · exact hsimple _ (by simp)
+    · exact hsimple _ (by simp)
+    · exact hsimple _ (by simp)
+    · exact hsimple _ (by simp)
 
 end Llist
 end Templates
