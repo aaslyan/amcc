@@ -1,4 +1,5 @@
 import Amcc.CSubset.Eval
+import Amcc.CSubset.Wf
 
 /-!
 # AMCC — reasoning about a call, template-independently
@@ -167,6 +168,41 @@ theorem lookupFun_of_mem {p : Program} {fd : FunDef} (hmem : fd ∈ p.funs)
     (hpw : (p.funs.map FunDef.name).Pairwise (· ≠ ·)) :
     lookupFun p fd.name = .ok fd := by
   simp only [lookupFun, find?_of_mem_pairwise p.funs fd hmem hpw]
+
+/-! ## Acceptance discharges resolution, once
+
+`lookupFun_of_mem`'s side condition is a whole-schema property, and
+`Wf.check`'s third clause is where that property is decided. So a single
+`Wf.check p = []` — which each template's `genWellFormed` derives from
+`Dmmeta.check d = []` — supplies the `hlook` hypothesis of *every* law about
+*every* function of `p`, instead of each schema discharging it by computation.
+-/
+
+/-- **An accepted program's function names are pairwise distinct.** Obligation
+3, read back out of `Wf.check`.
+
+checked by: `lake build` -/
+theorem funNames_pairwise_of_wf {p : Program} (h : Wf.check p = []) :
+    (p.funs.map FunDef.name).Pairwise (· ≠ ·) := by
+  simp only [Wf.check, List.append_eq_nil_iff] at h
+  exact dups_eq_nil_iff.mp (List.map_eq_nil_iff.mp h.1.2)
+
+/-- **Every function of an accepted program resolves to itself.**
+
+checked by: `lake build` -/
+theorem lookupFun_of_wf {p : Program} {fd : FunDef} (h : Wf.check p = [])
+    (hmem : fd ∈ p.funs) : lookupFun p fd.name = .ok fd :=
+  lookupFun_of_mem hmem (funNames_pairwise_of_wf h)
+
+/-- The depth budget the call lemmas ask for. A program that contains a
+function has at least one, which is all `callFun_ret` needs.
+
+checked by: `lake build` -/
+theorem funs_length_pos {p : Program} {fd : FunDef} (hmem : fd ∈ p.funs) :
+    ∃ n, p.funs.length = n + 1 := by
+  cases hl : p.funs with
+  | nil => rw [hl] at hmem; exact absurd hmem (List.not_mem_nil)
+  | cons _ t => exact ⟨t.length, rfl⟩
 
 /-! ## Getting in and out of a call
 

@@ -235,5 +235,45 @@ theorem genWellFormed : GenWellFormed := by
       exact absurd hf (by simp)
   exact checkFun_defsFor hchk hcb hcs hf hrr fd hfd
 
+/-! ## The schema-level entry point
+
+`Upptr.lookups_of_wf` takes `Wf.check (genUpptr d) = []`, which a consumer used
+to discharge per schema by computing it. `genWellFormed` retires that: schema
+acceptance is the only hypothesis, and the four resolutions for a given field
+come out together. -/
+
+/-- **Schema acceptance is enough to apply every law**, for every `Upptr` field
+the schema declares.
+
+checked by: `lake build` -/
+theorem laws_apply {d : Dmmeta.Db} (hchk : Dmmeta.check d = [])
+    {c : Dmmeta.Ident} {f : Dmmeta.Field} (hup : (c, f) ∈ upFields d) :
+    let child  := mangle c
+    let fld    := mangle f.name
+    let parent := mangle f.arg
+    let nm     := names child fld
+    (∃ n, (genUpptr d).funs.length = n + 1)
+    ∧ lookupFun (genUpptr d) nm.init = .ok (initDef nm child fld parent)
+    ∧ lookupFun (genUpptr d) nm.get  = .ok (getDef nm child fld parent)
+    ∧ lookupFun (genUpptr d) nm.set  = .ok (setDef nm child fld parent)
+    ∧ lookupFun (genUpptr d) nm.test = .ok (testDef nm child fld parent) := by
+  intro child fld parent nm
+  have hwf : Wf.check (genUpptr d) = [] := genWellFormed d hchk
+  have hres : ∀ fd ∈ defsFor child fld parent,
+      lookupFun (genUpptr d) fd.name = .ok fd := by
+    intro fd hfd
+    refine CSubset.lookupFun_of_wf hwf ?_
+    simp only [genUpptr]
+    exact List.mem_flatMap.mpr ⟨(c, f), hup, hfd⟩
+  refine ⟨CSubset.funs_length_pos (fd := initDef nm child fld parent)
+      (by simp only [genUpptr]
+          exact List.mem_flatMap.mpr
+            ⟨(c, f), hup, by simp [defsFor, nm, child, fld, parent]⟩), ?_⟩
+  refine ⟨hres (initDef nm child fld parent) ?_,
+    hres (getDef nm child fld parent) ?_,
+    hres (setDef nm child fld parent) ?_,
+    hres (testDef nm child fld parent) ?_⟩ <;>
+    simp [defsFor, nm, child, fld, parent]
+
 end Upptr
 end Templates

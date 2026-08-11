@@ -797,5 +797,67 @@ theorem genWellFormed : GenWellFormed := by
     · exact hsimple _ (by simp)
     · exact hsimple _ (by simp)
 
+/-! ## The schema-level entry point
+
+Every law in `Llist.lean` assumes `lookupFun p nm.x = .ok (xDef nm elem)` and a
+depth budget. Before this, a consumer discharged those *per schema*, by
+computing `Wf.check` on its own generated program. `genWellFormed` makes that
+unnecessary: schema acceptance is the only hypothesis, and all nine resolutions
+come out together. -/
+
+/-- **Schema acceptance is enough to apply every law.** The names and the
+element are what `genLlist` chose; a consumer that wants them by name reads
+them off `hfuns`.
+
+checked by: `lake build` -/
+theorem laws_apply {d : Db} {p : Program} (hchk : check d = [])
+    (hgen : genLlist d = some p) :
+    ∃ (nm : Names) (elem : CSubset.Ident),
+      p.funs = defsFor nm elem
+      ∧ (∃ n, p.funs.length = n + 1)
+      ∧ lookupFun p nm.init   = .ok (initDef nm elem)
+      ∧ lookupFun p nm.insert = .ok (insertDef nm elem)
+      ∧ lookupFun p nm.remove = .ok (removeDef nm elem)
+      ∧ lookupFun p nm.first  = .ok (firstDef nm elem)
+      ∧ lookupFun p nm.nextFn = .ok (nextDef nm elem)
+      ∧ lookupFun p nm.prevFn = .ok (prevDef nm elem)
+      ∧ lookupFun p nm.inQ    = .ok (inQDef nm elem)
+      ∧ lookupFun p nm.emptyQ = .ok (emptyQDef nm elem)
+      ∧ lookupFun p nm.size   = .ok (sizeDef nm) := by
+  have hwf : Wf.check p = [] := genWellFormed d p hchk hgen
+  simp only [genLlist, bind, Option.bind_eq_some_iff] at hgen
+  obtain ⟨_, _, dbC, _, fld, _, elemC, _, hgen⟩ := hgen
+  refine ⟨names (mangle dbC.name) (mangle fld.name), mangle elemC.name, ?_⟩
+  have hfuns : p.funs
+      = defsFor (names (mangle dbC.name) (mangle fld.name)) (mangle elemC.name) := by
+    rw [← Option.some.inj hgen]
+  refine ⟨hfuns, CSubset.funs_length_pos
+    (fd := initDef (names (mangle dbC.name) (mangle fld.name)) (mangle elemC.name))
+    (by rw [hfuns]; simp [defsFor]), ?_⟩
+  -- unifying `.ok fd` with `.ok (xDef …)` fixes `fd`, and `(xDef …).name`
+  -- reduces to the name the law asks about
+  have hres : ∀ fd ∈ defsFor (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name), lookupFun p fd.name = .ok fd :=
+    fun _ hmem => CSubset.lookupFun_of_wf hwf (by rw [hfuns]; exact hmem)
+  refine ⟨
+    hres (initDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (insertDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (removeDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (firstDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (nextDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (prevDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (inQDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (emptyQDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (sizeDef (names (mangle dbC.name) (mangle fld.name))) ?_⟩ <;>
+    simp [defsFor]
+
 end Llist
 end Templates

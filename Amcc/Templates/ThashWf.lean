@@ -896,5 +896,68 @@ theorem genWellFormed : GenWellFormed := by
         _ (by simp)
     · simp [defsFor] at hfdi
 
+/-! ## The schema-level entry point
+
+As in `LlistWf`: schema acceptance is the only hypothesis a consumer needs, and
+all five resolutions come out together instead of being recomputed per schema.
+`ThashFind`'s laws additionally need the bucket facts, so those come out here
+too — `pow2Exp?` is the generator's guard, not the schema checker's, and this
+is the one place both are available at once. -/
+
+/-- **Schema acceptance is enough to apply every law.**
+
+checked by: `lake build` -/
+theorem laws_apply {d : Db} {p : Program} (hchk : check d = [])
+    (hgen : genThash d = some p) :
+    ∃ (nm : Names) (elem key : CSubset.Ident) (nb : Nat),
+      p.funs = defsFor nm elem key (nb - 1) nb nb
+      ∧ 0 < nb
+      ∧ nb < Wf.u32Bound
+      ∧ (∀ k : UInt32, (k &&& UInt32.ofNat (nb - 1)).toNat = k.toNat % nb
+          ∧ (k &&& UInt32.ofNat (nb - 1)).toNat < nb)
+      ∧ (∃ n, p.funs.length = n + 1)
+      ∧ lookupFun p nm.init   = .ok (initDef nm elem nb)
+      ∧ lookupFun p nm.find   = .ok (findDef nm elem key (nb - 1) nb)
+      ∧ lookupFun p nm.insert = .ok (insertDef nm elem key (nb - 1))
+      ∧ lookupFun p nm.remove = .ok (removeDef nm elem key (nb - 1) nb)
+      ∧ lookupFun p nm.size   = .ok (sizeDef nm) := by
+  have hwf : Wf.check p = [] := genWellFormed d p hchk hgen
+  simp only [genThash, bind, Option.bind_eq_some_iff] at hgen
+  obtain ⟨_, _, dbC, _, fld, _, elemC, _, key, _,
+    _u₁, _, nb, hnbf, _u₂, hgp, cap, hcapf, hgen⟩ := hgen
+  have hp2 : (pow2Exp? pow2Fuel nb).isSome = true := by
+    by_cases hb : (pow2Exp? pow2Fuel nb).isSome = true
+    · exact hb
+    · simp [guard, hb] at hgp
+  obtain ⟨e, he⟩ := Option.isSome_iff_exists.mp hp2
+  obtain ⟨hpos, hlt⟩ := accepted_bucket_fits hp2
+  have hcn : cap = nb := Option.some.inj (hcapf.symm.trans hnbf)
+  rw [hcn] at hgen
+  refine ⟨names (mangle dbC.name) (mangle fld.name), mangle elemC.name,
+    mangle key.name, nb, ?_⟩
+  have hfuns : p.funs = defsFor (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name) (mangle key.name) (nb - 1) nb nb := by
+    rw [← Option.some.inj hgen]
+  have hres : ∀ fd ∈ defsFor (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name) (mangle key.name) (nb - 1) nb nb,
+      lookupFun p fd.name = .ok fd :=
+    fun _ hmem => CSubset.lookupFun_of_wf hwf (by rw [hfuns]; exact hmem)
+  refine ⟨hfuns, hpos, hlt, (accepted_bucket_facts he).2,
+    CSubset.funs_length_pos
+      (fd := initDef (names (mangle dbC.name) (mangle fld.name))
+        (mangle elemC.name) nb)
+      (by rw [hfuns]; simp [defsFor]), ?_⟩
+  refine ⟨
+    hres (initDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name) nb) ?_,
+    hres (findDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name) (mangle key.name) (nb - 1) nb) ?_,
+    hres (insertDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name) (mangle key.name) (nb - 1)) ?_,
+    hres (removeDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name) (mangle key.name) (nb - 1) nb) ?_,
+    hres (sizeDef (names (mangle dbC.name) (mangle fld.name))) ?_⟩ <;>
+    simp [defsFor]
+
 end Thash
 end Templates
