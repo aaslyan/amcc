@@ -1,4 +1,6 @@
 import Amcc.Dmmeta
+import Amcc.Templates.Layout
+import Amcc.CSubset.Calls
 
 /-!
 # AMCC — `Smallstr`, and why only one of its three shapes is safe to emit
@@ -55,17 +57,30 @@ by design, and a read-back law for the padded shapes needs a side condition on
 the value that AMCC would have to invent. §3.7 gives two routes to discharging
 that; picking between them is not this module's business.
 
-## Why nothing is generated yet
+## What is generated, and what is not
 
-`amc` emits `u8`, and `CSubset.ScalarTy` is `u32 | u64 | bool`. The C subset
-has no eight-bit scalar, so `Dmmeta.fieldTy` cannot lower a `Smallstr` field
-and `Ssim.supported` does not list it. That is a subset change, not a design
-question — `docs/GOALS.md`'s standing rule says the subset changes when it
-cannot express what `amc` generates — and it is recorded as owed in
-`docs/DIVERGENCE.md` §3.8 and `docs/PLAN.md`.
+`u8` is in the C subset now, so `Dmmeta.fieldTy` lowers the array and this
+module emits four of `amc`'s functions for an `rpascal` field:
 
-Everything below is therefore about the *representation*, stated over Lean
-byte lists, and is independent of how the C subset eventually spells them.
+```c
+void  C_f_Init(C *row);            // row->n_f = 0
+uint8_t C_f_N(C *row);             // return row->n_f
+uint32_t C_f_Max(void);            // return N
+void  C_f_Add(C *row, uint8_t c);  // if (n < N) { f[n] = c; n = n + 1; }
+```
+
+`Getary` and `SetStrptr` are **not** emitted: their signatures are
+`algo::aryptr<char>` and `algo::strptr`, and the C subset has no aggregate
+value type and no way to pass one. `docs/DIVERGENCE.md` §3.9.
+
+Only `rpascal` is emitted at all. `leftpad` and `rightpad` lower to their
+array — a schema declaring one gets the storage — and get no operations,
+because their read-back law is false without a side condition AMCC would have
+to invent (§3.7).
+
+The abstraction functions below are stated over Lean byte lists and are
+independent of how the C subset spells them; `Templates/SmallstrCorrect.lean`
+is where the generated `Add` is tied to `absRpascal`.
 -/
 
 namespace Templates
@@ -241,6 +256,218 @@ checked by: `lake build` -/
 theorem abs_rpascal_encode {N : Nat} (pad : UInt8) (s : Str) :
     abs .rpascal pad ⟨(encodeRpascal N s).1, (encodeRpascal N s).2⟩ = s :=
   absRpascal_encode s
+
+/-! ## The generated code
+
+Per-field, like `Upptr`: a smallstr has no storage of its own beyond the array
+the layout pass already emits, plus one count byte this template adds. -/
+
+open CSubset
+
+/-- The C names, `amc`'s: `<ctype>_<field>_<Op>` for the functions, and
+`n_<field>` for the count byte — the one *prefixed* generated name in AMCC,
+which is why `Dmmeta.genPrefixes` exists. -/
+structure Names where
+  /-- The count byte, on the owning struct. -/
+  count : CSubset.Ident
+  init  : CSubset.Ident
+  size  : CSubset.Ident
+  max   : CSubset.Ident
+  add   : CSubset.Ident
+  deriving Repr, Inhabited, DecidableEq
+
+def names (owner fld : CSubset.Ident) : Names where
+  count := "n_" ++ fld
+  init  := owner ++ "_" ++ fld ++ "_Init"
+  size  := owner ++ "_" ++ fld ++ "_N"
+  max   := owner ++ "_" ++ fld ++ "_Max"
+  add   := owner ++ "_" ++ fld ++ "_Add"
+
+def parRow : CSubset.Ident := "row"
+def parCh  : CSubset.Ident := "c"
+/-- The `u32` copy of the count. A subscript must be a `u32` local
+(`Wf.indexOk`), and the count is a `u8` field, so the cast is not decoration. -/
+def tmpI   : CSubset.Ident := "_i"
+
+/-- `row-><x>` -/
+def rowFld (x : CSubset.Ident) : LVal := .fld (.deref parRow) x
+
+/-- The count byte the template adds to the owning struct. -/
+def ownerFields (nm : Names) : List (CSubset.Ident × Ty) :=
+  [(nm.count, .scalar .u8)]
+
+/-- ```c
+void C_f_Init(C *row) { row->n_f = 0u; }
+``` -/
+def initDef (nm : Names) (owner : CSubset.Ident) : FunDef where
+  name   := nm.init
+  params := [(parRow, .ptr (.strct owner))]
+  ret    := none
+  locals := []
+  body   := .assign (rowFld nm.count) (.lit (.u8 0))
+
+/-- ```c
+uint8_t C_f_N(C *row) { return row->n_f; }
+``` -/
+def sizeDef (nm : Names) (owner : CSubset.Ident) : FunDef where
+  name   := nm.size
+  params := [(parRow, .ptr (.strct owner))]
+  ret    := some (.scalar .u8)
+  locals := []
+  body   := .ret (some (.rd (rowFld nm.count)))
+
+/-- ```c
+uint32_t C_f_Max(void) { return N; }
+```
+`amc` emits it as an `enum` constant inside the struct; a function is the
+subset's only way to expose a constant, and it is what the other templates'
+`_N` already looks like. -/
+def maxDef (nm : Names) (n : Nat) : FunDef where
+  name   := nm.max
+  params := []
+  ret    := some (.scalar .u32)
+  locals := []
+  body   := .ret (some (.lit (.u32 (UInt32.ofNat n))))
+
+/-- ```c
+void C_f_Add(C *row, uint8_t c) {
+  uint32_t _i = 0u;
+  _i = (uint32_t)row->n_f;
+  if ((_i < N)) {
+    row->f[_i] = c;
+    row->n_f = (uint8_t)(_i + 1u);
+  }
+}
+```
+`amc`'s `tfunc_Smallstr_Add`, with the count copied into a `u32` local because
+a subscript must be one, and with the post-increment split into an assignment
+because the subset's expressions are pure.
+
+The guard is `< N`, not `< N + 1`: the array is `N + 1` long and the last
+element is the dead byte `amc` also never writes. So the subscript is in range
+with a whole element to spare, which is what makes `noTrapAdd` hold without a
+precondition on the count. -/
+def addDef (nm : Names) (owner fld : CSubset.Ident) (n : Nat) : FunDef where
+  name   := nm.add
+  params := [(parRow, .ptr (.strct owner)), (parCh, .scalar .u8)]
+  ret    := none
+  locals := [LocalDef.zeroed tmpI .u32]
+  body   := .seq
+    (.assign (.var tmpI) (.cast .u32 (.rd (rowFld nm.count))))
+    (.cond (.bin .lt (.rd (.var tmpI)) (.lit (.u32 (UInt32.ofNat n))))
+      (.seq
+        (.assign (.idx (rowFld fld) (.var tmpI)) (.rd (.var parCh)))
+        (.assign (rowFld nm.count)
+          (.cast .u8 (.bin .add (.rd (.var tmpI)) (.lit (.u32 1))))))
+      .skip)
+
+/-- The four operations for one `rpascal` field. -/
+def defsFor (nm : Names) (owner fld : CSubset.Ident) (n : Nat) : List FunDef :=
+  [ initDef nm owner, sizeDef nm owner, maxDef nm n, addDef nm owner fld n ]
+
+/-! ## Assembling a program -/
+
+/-- Every `rpascal` `Smallstr` field in the schema, with its declared length.
+
+The padded shapes are deliberately absent: they lower to their array and get
+no operations. `hasReadBack` is the single place that decision is recorded,
+and this filter is the only place it is spent. -/
+def strFields (d : Dmmeta.Db) : List (Dmmeta.Ident × Dmmeta.Field × Nat) :=
+  d.ctypes.flatMap (fun c =>
+    c.fields.filterMap (fun f =>
+      if f.reftype == .Smallstr then
+        match d.withBuiltins.smallstr? c.name f.name with
+        | some (n, .rpascal, _, _) => some (c.name, f, n)
+        | _                        => none
+      else none))
+
+/-- **The generator.** The layout, each `rpascal` field's owning struct
+extended with its count byte, and four operations per field. -/
+def genSmallstr (d : Dmmeta.Db) : Program :=
+  { structs := (strFields d).foldl
+      (fun ss cf =>
+        Layout.addFields (Dmmeta.mangle cf.1)
+          (ownerFields (names (Dmmeta.mangle cf.1) (Dmmeta.mangle cf.2.1.name)))
+          ss)
+      (Dmmeta.genStructs d)
+  , globals := Dmmeta.genGlobals d
+  , funs    := (strFields d).flatMap (fun cf =>
+      defsFor (names (Dmmeta.mangle cf.1) (Dmmeta.mangle cf.2.1.name))
+        (Dmmeta.mangle cf.1) (Dmmeta.mangle cf.2.1.name) cf.2.2) }
+
+/-! ## Examples
+
+checked by: `lake build` -/
+
+namespace Examples
+
+open Dmmeta
+
+/-- A record with a sixteen-byte `rpascal` name. -/
+def strDb : Db where
+  ctypes :=
+    [ { name   := "name_row"
+      , fields := [ { name := "id", arg := "u64", reftype := .Pkey }
+                  , { name := "ch", arg := "char", reftype := .Smallstr } ] } ]
+  attrs := [{ ctype := "name_row", field := "ch"
+            , data := .smallstr 16 .rpascal "'0'" true }]
+
+/-- checked by: `lake build` -/
+example : Dmmeta.check strDb = [] := rfl
+
+/-- The array is `N + 1` and the count byte follows it.
+
+checked by: `lake build` -/
+example : (genSmallstr strDb).structs.map
+    (fun sd => (sd.name, sd.fields)) =
+    [("name_row", [ ("id", Ty.scalar .u64)
+                  , ("ch", Ty.arr (.scalar .u8) 17)
+                  , ("n_ch", Ty.scalar .u8) ])] := rfl
+
+/-- Four functions, `amc`'s names.
+
+checked by: `lake build` -/
+example : (genSmallstr strDb).funs.map FunDef.name =
+    ["name_row_ch_Init", "name_row_ch_N", "name_row_ch_Max",
+     "name_row_ch_Add"] := rfl
+
+/-- And the generated program is accepted by the C subset's checker.
+
+checked by: `lake build` -/
+example : CSubset.Wf.check (genSmallstr strDb) = [] := rfl
+
+/-- A padded field lowers to its array and gets no operations — the
+`hasReadBack` decision, spent.
+
+checked by: `lake build` -/
+def padDb : Db :=
+  { strDb with attrs := [{ ctype := "name_row", field := "ch"
+                         , data := .smallstr 16 .rightpad "' '" false }] }
+
+/-- checked by: `lake build` -/
+example : Dmmeta.check padDb = [] := rfl
+
+/-- checked by: `lake build` -/
+example : (genSmallstr padDb).funs = [] := rfl
+
+/-- checked by: `lake build` -/
+example : (genSmallstr padDb).structs.map (fun sd => (sd.name, sd.fields)) =
+    [("name_row", [("id", Ty.scalar .u64), ("ch", Ty.arr (.scalar .u8) 16)])] := rfl
+
+/-- checked by: `lake build` -/
+example : CSubset.Wf.check (genSmallstr padDb) = [] := rfl
+
+/-- A field named `n_ch` alongside `ch` is what `genPrefixes` catches: the
+count byte would collide with it.
+
+checked by: `lake build` -/
+example : Dmmeta.check { strDb with
+      ctypes := [{ name := "name_row"
+                 , fields := [ { name := "ch", arg := "char", reftype := .Smallstr }
+                             , { name := "n_ch", arg := "u8", reftype := .Val } ] }] }
+    = ["name_row.n_ch: collides with a field a template generates"] := rfl
+
+end Examples
 
 end Smallstr
 end Templates
