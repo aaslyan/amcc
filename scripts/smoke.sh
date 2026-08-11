@@ -73,6 +73,12 @@ check llist scripts/llist_driver.c scripts/llist_expected.txt \
 check thash scripts/thash_driver.c scripts/thash_expected.txt \
   "find, duplicate refusal and chain unlink behave as stated; header stands alone"
 
+# The dead byte `ch[N]` is checked too: `Add` guards on `< N` against an array
+# of `N + 1`, so the last element is out of its reach and stays whatever the
+# driver put there before `Init`.
+check smallstr scripts/smallstr_driver.c scripts/smallstr_expected.txt \
+  "rpascal Init/N/Max/Add behave as stated, and ch[N] stays dead; header stands alone"
+
 # --- the schemas that used to break the generator ---------------------------
 # An element ctype with a record-typed field, and a ctype indexing itself. Both
 # are accepted by Dmmeta.check and both used to emit a program CSubset.Wf.check

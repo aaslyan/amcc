@@ -115,14 +115,17 @@ def run (sink : Sink) : String → IO UInt32
   | "thash-self" =>
     emitOpt sink "thash-self" Templates.Thash.Examples.selfDb
       Templates.Thash.genThash "schema declares no usable Thash field"
+  | "smallstr" =>
+    emitProgram sink "smallstr" Templates.Smallstr.Examples.strDb
+      Templates.Smallstr.genSmallstr
   | other => do
     IO.eprintln s!"amcc: unknown schema {other}"
     return 2
 
-/-- The five schemas `--out all` writes, which is what the smoke test and the
+/-- The schemas `--out all` writes, which is what the smoke test and the
 checked-in goldens under `scripts/gen/` cover. -/
 def allSchemas : List String :=
-  ["orders", "pool", "upptr", "llist", "thash",
+  ["orders", "pool", "upptr", "llist", "thash", "smallstr",
    "llist-nested", "thash-nested", "thash-self"]
 
 /-- Read an ssimfile, check the schema it denotes, and print it back. Exit 0
@@ -149,6 +152,7 @@ def exampleDb? : String → Option Dmmeta.Db
   | "upptr" => some Templates.Upptr.Examples.upDb
   | "llist" => some Templates.Llist.Examples.listDb
   | "thash" => some Templates.Thash.Examples.hashDb
+  | "smallstr" => some Templates.Smallstr.Examples.strDb
   | _       => none
 
 /-- Print a built-in schema as ssim. Diffing this against

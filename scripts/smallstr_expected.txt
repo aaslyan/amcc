@@ -1,0 +1,9 @@
+init   n=0 abs=""
+max    16
+add a  n=1 abs="a"
+add b  n=2 abs="ab"
+add c  n=3 abs="abc"
+full   n=16 abs="abc0123456789012"
+add Z  n=16 abs="abc0123456789012"
+dead   238
+reinit n=0 abs=""
