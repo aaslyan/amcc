@@ -30,6 +30,7 @@ import Amcc.Templates.LlistWf
 import Amcc.Templates.Thash
 import Amcc.Templates.ThashWf
 import Amcc.Templates.ThashFind
+import Amcc.Templates.Smallstr
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Ssim.Tuple
 import Amcc.Ssim.Schema
@@ -145,7 +146,7 @@ that should fail does not.)
                           transcribed rather than approximated, and a printer
                           that is their inverse
 - `Ssim.Schema`         — tuples into `Dmmeta.Db` and back. Four record types
-                          and eight of the twenty reftypes: the reader rejects,
+                          and eight of the thirty-five reftypes: the reader rejects,
                           by name, everything no template can emit, so it
                           cannot run ahead of the generator
 - `Ssim.Conformance`    — the **census**: what AMCC would do with every ctype

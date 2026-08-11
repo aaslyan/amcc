@@ -164,7 +164,7 @@ friends), which unblocks five reftypes at once — see `docs/PLAN.md` §Next.
   — `txt/ssim.md`'s grammar, `algo::PickSsimQuoteChar`'s quoting rule and
   `algo::_PrintQuotedChar`'s escapes, transcribed — and prints it back;
   `Amcc/Ssim/Schema.lean` maps four record types onto `Dmmeta.Db` and rejects,
-  by name, the twelve reftypes no template emits. `Amcc/Ssim/Checks.lean` runs
+  by name, the reftypes no template emits. `Amcc/Ssim/Checks.lean` runs
   the round trip in both directions as `rfl`, plus the exact rejection
   messages. `lake exe amcc --ssim <file>` and `--ssim-of <name>`;
   `scripts/ssim/` holds one schema per ctype-model template, and

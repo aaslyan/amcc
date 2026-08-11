@@ -30,9 +30,12 @@ round trip is untouched. It is not injective, and `Dmmeta.check` rejects the
 collisions it reintroduces rather than the mapping dodging them.
 
 **Input** — schemas may be written as `amc` ssimfiles, not only as Lean terms.
-`Amcc/Ssim/` reads four record types (`dmmeta.ctype`, `dmmeta.field`,
-`dmmeta.inlary`, `amcc.root`) and eight of the twenty reftypes — everything no
-template can emit is rejected by name. Nothing about the reader is proved; the
+`Amcc/Ssim/` reads five record types (`dmmeta.ctype`, `dmmeta.field`,
+`dmmeta.inlary`, `dmmeta.smallstr`, `amcc.root`) and eight of the thirty-five
+reftypes — everything no template can emit is rejected by name. The two
+attribute tables go through **one** reader/printer registry keyed by
+`Dmmeta.AttrTag`, which is the join `bitfld`, `charset`, `lenfld`, `substr`
+and `fconst` all need. Nothing about the reader is proved; the
 kernel-checked round trip in both directions is what stands in
 (`docs/DIVERGENCE.md` §3.6). `scripts/ssim/` holds one schema per template, and
 `scripts/smoke.sh` checks both that they round-trip and that they *are* the
@@ -131,6 +134,24 @@ tested against a real compiler by `scripts/smoke.sh`.
   never reaches it (`accepted_bucket_fits`).
   **With this, the banner every generated header carries is true for all five
   templates**, for every schema a user may write, not only for the samples.
+- **The attribute join** (`Dmmeta.AttrTag`, `AttrData`, `Db.attr?`,
+  `checkAttr`, `Ssim.attrHeads`) — a field's shape lives in a table of its own
+  keyed by the field, and joining one on is now a mechanism rather than a
+  per-reftype chore. One checker clause gives **every** table the named error
+  "field claims a reftype whose attribute record is missing", and one registry
+  gives every table its reader, printer and round trip.
+  `inlary_facts_of_checkAttr` reads `Inlary`'s facts back out in the shape
+  `Layout` and the templates already consumed.
+- **The reftype vocabulary is complete** — 35 constructors, matching
+  `dmmeta/reftype.ssim` row for row. It was 20, and the 15 missing ones were
+  reported by the census as `unknown reftype`, which reads as a typo in the
+  corpus rather than as a gap in AMCC.
+- **`Templates.Smallstr`** — all three `strtype` abstractions stated;
+  `absRpascal_encode` (the read-back law, no side condition) and
+  `encodeRpascal_injective` proved; `rightpad_ambiguous` and
+  `leftpad_ambiguous` are **checked witnesses** that the padded forms are
+  lossy, so `docs/DIVERGENCE.md` §3.7's central claim is a fact in the build.
+  Nothing is emitted yet: §3.8 is why.
 - **`laws_apply`** in all three ctype-model templates — the resolution
   hypothesis every law assumes (`lookupFun p nm.x = .ok (xDef …)`) is now
   discharged **once, from `Dmmeta.check`**, instead of per schema by computing
@@ -170,8 +191,10 @@ patterns, retrieval derived. `Spec/Table.lean` — an instance, so the specs are
 known inhabitable.
 
 **Schema model** — `Dmmeta.lean`: `Ctype`, `Field` whose `arg` names another
-ctype, `Db` in declaration order, all 20 reftypes with their `dmmeta` flags.
-Six lower to C. Layout lowering emits multi-ctype structs and the database
+ctype, `Db` in declaration order, **all 35 reftypes** with their `dmmeta`
+flags, and the per-field attribute join (`AttrTag`, `AttrData`, `Db.attr?`,
+`checkAttr`) that carries `dmmeta.inlary` and `dmmeta.smallstr`. Six reftypes
+lower to C. Layout lowering emits multi-ctype structs and the database
 global.
 
 **Semantics** — heap with block-rooted paths, `NULL`, runtime-sized storage,
@@ -215,19 +238,26 @@ measurement demoted, are now the whole remaining gap.
 **Corpus order is not cost order**, and the previous version of this list
 conflated them. The two are separated below.
 
-1. **An attribute-join mechanism, then `Smallstr` `rpascal`.** The blocking
-   design question is **answered** in `docs/DIVERGENCE.md` §3.7: `strict` does
-   not forbid the ambiguous padded values — it enforces naming conventions —
-   so `rightpad`/`leftpad` are lossy in `amc` by design and their read-back law
-   needs a side condition AMCC must invent. `rpascal` is injective under
-   `count ≤ N` and goes first. `Smallstr` blocks 140
-   fields, less than `Lary`'s 390 — but its shape lives in a *separate*
-   `dmmeta.smallstr` record (length, `strtype`, `pad`, `strict`) rather than in
-   the field record, and AMCC's reader models one record per concept with no
-   way to join a second onto a field. That join is the actual work; `Smallstr`
-   is then a bounded char array. And the same mechanism is what `Bitfld` (75),
-   `Charset` (23), `lenfld`, `substr` and `fconst` (337 records) all need —
-   **one cheap mechanism unblocks five reftypes with no allocation anywhere.**
+1. **`u8` in the C subset, then `Smallstr` `rpascal`.** The attribute join is
+   **done** — `Dmmeta.AttrTag`/`AttrData`/`Db.attr?`/`checkAttr` and one
+   reader/printer registry — so `bitfld`, `charset`, `lenfld`, `substr` and
+   `fconst` each need a payload arm and nothing else. `Smallstr` is modelled,
+   checked and round-tripped, and `Templates/Smallstr.lean` states all three
+   `strtype` abstractions with `rpascal`'s read-back law **proved** and the
+   other two's ambiguity exhibited as checked witnesses
+   (`rightpad_ambiguous`, `leftpad_ambiguous`).
+
+   What is left is emission, and it is blocked on one thing: `amc` writes
+   `u8 ch[N+1]; u8 n_ch;` and `CSubset.ScalarTy` is `u32 | u64 | bool`.
+   `docs/DIVERGENCE.md` §3.8 is the entry and says what the change costs — a
+   constructor on `ScalarTy`, `Value` and `Lit`, rows in the eval tables, arms
+   in `Wf`, a name and a suffix in the printer, and a case in every proof that
+   matches a `Value` or a `Lit` exhaustively. Bulk, not a decision. It
+   unblocks five reftypes.
+
+   Not in scope with it: choosing between §3.7's two routes for
+   `leftpad`/`rightpad`. Those stay owed.
+
 2. **`Ptrary` (136 fields).** An array of pointers over a base pool. Needs the
    pool to exist but not to grow, so it lands inside the current allocator
    story.

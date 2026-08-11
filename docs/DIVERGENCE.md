@@ -347,8 +347,8 @@ what `amc` reads:
 - **Four record types**: `dmmeta.ctype`, `dmmeta.field`, `dmmeta.inlary` and
   `amcc.root`. `data/dmmeta` alone has over a hundred ssimfiles, and `amc`
   consumes most of them. Every other tuple head is **rejected**, not skipped.
-- **Eight of the twenty reftypes** — the ones a template or the storage
-  lowering can act on. The other twelve are rejected by name, with a message
+- **Eight of the thirty-five reftypes** — the ones a template or the storage
+  lowering can act on. The other twenty-seven are rejected by name, with a message
   that distinguishes "no such reftype" from "AMCC cannot emit that yet". This
   is `docs/GOALS.md`'s standing rule applied to the front end: the reader must
   never run ahead of the generator, because a schema that parses and cannot be
@@ -409,13 +409,19 @@ three — `rightpad` 83, `leftpad` 37, `rpascal` 20. AMCC will implement
 **The three abstractions.** For a field of declared length `N` over a byte
 array `ch`, the value the C sees is:
 
-- **`rpascal`** (`"String of length N+2, last byte is the count"`) —
-  `abs(ch) = ch[0 … ch[N]]`, the first `ch[N]` bytes. **Injective** on the
-  representation invariant `ch[N] ≤ N`: two arrays agreeing on the count and
-  on that many bytes are the same value, and every value of length ≤ N has
-  exactly one canonical representation. That invariant is a `RepInv` clause
-  every write must preserve, which is the same shape as `CSubset.Chain`'s
-  `Counted` and reuses the same machinery.
+- **`rpascal`** — the count is **out of band**. `cpp/amc/smallstr.cpp` emits
+  `u8 ch[N+1];` *and a separate* `u8 n_ch;`, and `ch_N` reads `n_ch`
+  directly. So `abs(ch, n) = ch[0 … n]`, and the representation invariant is
+  `n ≤ N`. (An earlier revision of this entry put the count in `ch[N]`, which
+  is the classic Pascal-string layout but not the one `amc` generates; the
+  correction is `Templates/Smallstr.lean`'s `RpascalInv`.) **Injective**: two
+  representations agreeing on the count and on that many bytes are the same
+  value, and every value of length ≤ N has exactly one canonical
+  representation. `Templates.Smallstr.absRpascal_encode` is the read-back law,
+  proved, with no side condition; `encodeRpascal_injective` is the same fact
+  the other way. That invariant is a `RepInv` clause every write must
+  preserve, which is the same shape as `CSubset.Chain`'s `Counted` and reuses
+  the same machinery.
 - **`rightpad`** — `abs(ch) = ch` with trailing `pad` bytes removed.
   `amc`'s generated `ch_N` is literally
   ```c
@@ -470,7 +476,42 @@ from `amc`'s silent clipping recorded here; or a proof that the values
 actually stored in the corpus never end in the pad, which would make the side
 condition vacuous in practice and is checkable with the conformance harness.
 The first is honest and diverges; the second is weaker and does not. The
-choice is the next round's.
+choice is a later round's; nothing here picks between them.
+
+**The witnesses are checked, not asserted.** `Templates/Smallstr.lean` states
+all three abstractions, and the two that are owed carry a concrete pair:
+`rightpad_ambiguous` exhibits `"a "` and `"a"` at capacity 2 with the same
+bytes, and `leftpad_ambiguous` exhibits `"01"` and `"1"` at capacity 2 with
+`amc`'s own `pad:"'0'"`. `absRightpad_encode_fails` and
+`absLeftpad_encode_fails` are the read-back law failing on them. So the claim
+"neither padded form is injective" is a proved fact in the build rather than a
+paragraph, and `hasReadBack` is the single Boolean a future arm has to answer.
+
+### 3.8 `Smallstr` is modelled but not emitted: the C subset has no `u8`
+
+`amc` emits `u8 ch[N];` (padded) or `u8 ch[N+1]; u8 n_ch;` (`rpascal`).
+`CSubset.ScalarTy` is `u32 | u64 | bool`. There is no eight-bit scalar, so
+`Dmmeta.fieldTy` has no lowering for a `Smallstr` field and `Ssim.supported`
+does not list the reftype: a schema that declares one is rejected by name,
+with the message the other unimplemented reftypes get.
+
+Everything *around* the field is in place — the `dmmeta.smallstr` record is
+read, joined onto the field by `Dmmeta.Db.attr?`, checked (including `amc`'s
+own 255 ceiling on an `rpascal` length), printed back byte-for-byte, and the
+three abstractions are stated with `rpascal`'s read-back law proved.
+
+This is **not** a design question. `docs/GOALS.md`'s standing rule is that the
+subset changes when it cannot express what `amc` generates, and `u8` is needed
+by five reftypes (`Smallstr`, `Bitfld`, `Charset`, and the two string-adjacent
+ones), so it changes. What it costs: a constructor on `ScalarTy`, `Value`,
+`Lit`; rows in `evalUn`/`evalBin`/the cast table; arms in `Wf.litTy`,
+`isWord`, `binTy`; a type name and a literal suffix in the printer; and a case
+in every proof that matches a `Value` or a `Lit` exhaustively. Nothing in it is
+hard and none of it is a decision — it is bulk, and it is owed.
+
+**Until it lands, `docs/CONFORMANCE.md`'s `Smallstr` row stays "rejected".**
+Counting it as modelled would be exactly the kind of overstatement the census
+exists to prevent.
 
 ---
 
@@ -488,6 +529,6 @@ implicit — which is the argument for doing this at all.
 Against that: AMCC currently emits a small fraction of what `amc` emits, and
 two of its own divergences (index links, fixed-capacity pools) are restrictions
 we have not yet lifted rather than positions we would defend. Its front end
-reads four of `amc`'s record types and eight of its twenty reftypes, and
+reads five of `amc`'s record types and eight of its thirty-five reftypes, and
 neither the front end nor the printer is proved — §3.1, §3.4 and §3.6 are the
 three unverified links in a chain whose middle is machine-checked.

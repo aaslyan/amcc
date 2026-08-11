@@ -207,6 +207,78 @@ deriving instance BEq for Except
      "dmmeta.ctype  ctype:a_b  comment:\"\"\n")).map Dmmeta.check
     == .ok ["two ctypes generate the same C name: a_b"]
 
+/-! ## The attribute join
+
+The two tables go through one registry, so what is checked here is the
+*mechanism*: a `dmmeta.smallstr` record reaches the model with its payload
+intact and prints back byte-for-byte, on a schema whose field claims the
+reftype that requires it. `Smallstr` is not in `supported` yet — the C subset
+has no eight-bit scalar — so this is a `Db` term rather than ssim text going
+in, and text is what comes back out. -/
+
+/-- A `Smallstr` field with its `dmmeta.smallstr` record. -/
+def strDb : Db where
+  ctypes :=
+    [ { name := "Name"
+      , fields := [{ name := "ch", arg := "u32", reftype := .Smallstr }] } ]
+  attrs := [{ ctype := "Name", field := "ch"
+            , data := .smallstr 16 .rpascal "'0'" true }]
+
+/-- The record prints in `amc`'s key order.
+
+checked by: `lake build` -/
+example : printDb strDb =
+    "dmmeta.ctype  ctype:Name  comment:\"\"\n"
+    ++ "dmmeta.field  field:Name.ch  arg:u32  reftype:Smallstr  comment:\"\"\n"
+    ++ "dmmeta.smallstr  field:Name.ch  length:16  strtype:rpascal"
+    ++ "  pad:\"'0'\"  strict:Y\n"
+  := rfl
+
+/-- And reading it back is the identity on the *attribute* half, which is the
+join's own round trip. The field half cannot be read yet, so this asks the
+question the reader can answer: the tuples parse, and the payload comes back.
+
+checked by: `lake build` -/
+example : (parseFile (printDb strDb)).map
+    (fun ts => ts.filterMap (fun lt =>
+      if lt.2.head == "dmmeta.smallstr" then
+        (readTuple {} lt.2).toOption.map Raw.attrs
+      else none))
+    = .ok [[{ ctype := "Name", field := "ch"
+            , data := .smallstr 16 .rpascal "'0'" true }]] := rfl
+
+/-- **The named error the join exists for.** A field claims a reftype whose
+attribute record is missing, and the message names the table rather than the
+reftype's own vocabulary — the same message `Bitfld`, `Charset` and the rest
+will get for free.
+
+checked by: `lake build` -/
+example : Dmmeta.check { strDb with attrs := [] }
+    = ["Name.ch: Smallstr needs a dmmeta.smallstr record"] := rfl
+
+/-- `amc` reports `smallstr.toobig` above 255, because the count is one byte.
+
+checked by: `lake build` -/
+example : Dmmeta.check { strDb with
+      attrs := [{ ctype := "Name", field := "ch"
+                , data := .smallstr 256 .rpascal "'0'" true }] }
+    = ["Name.ch: rpascal smallstr length 256 exceeds 255"] := rfl
+
+/-- The ceiling is `rpascal`'s alone: a padded string keeps no count, so its
+length is bounded only by the array size.
+
+checked by: `lake build` -/
+example : Dmmeta.check { strDb with
+      attrs := [{ ctype := "Name", field := "ch"
+                , data := .smallstr 256 .rightpad "' '" false }] } = [] := rfl
+
+/-- Every attribute table has a reader/printer entry, so `attrWrite` is total
+in practice as well as by construction.
+
+checked by: `lake build` -/
+example : ([AttrTag.inlary, AttrTag.smallstr]).all
+    (fun t => (attrHeads.find? (fun h => h.tag == t)).isSome) = true := rfl
+
 /-! ## Rejections, with the exact message
 
 Each of these is a way the front end could quietly run ahead of the back end. -/
