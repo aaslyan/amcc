@@ -94,11 +94,12 @@ Broken down, the name-only blockers are:
 
 ## What the numbers do not capture
 
-The census reads the three `dmmeta` record types AMCC models
-(`dmmeta.ctype`, `dmmeta.field`, `dmmeta.inlary`). `data/dmmeta` has
-**110 more that AMCC does not model at all**, carrying
-10302 records — 59.2% of the corpus, against
-40.8% for the four AMCC reads. The largest are:
+The census reads the `dmmeta` record types AMCC models — `dmmeta.ctype`,
+`dmmeta.field`, and the attribute tables the join carries (`dmmeta.inlary`,
+`dmmeta.smallstr`). `data/dmmeta` has
+**109 more that AMCC does not model at all**, carrying
+10162 records — 58.4% of the corpus, against
+41.6% for the ones AMCC reads. The largest are:
 
 | record type | records |
 |---|---|
@@ -128,6 +129,32 @@ field-level verdict this census could produce:
 - **The ssim layer itself** — `acr`, query mode, `ssimfile` loading,
   `Print`/`ReadStrptrMaybe`, `CopyIn`/`CopyOut`. AMCC reads ssim as a *front
   end* and generates none of the machinery `amc` generates for handling it.
+
+**Every rejection above is now a gap, not a name AMCC never heard of.**
+`Dmmeta.Reftype` used to have twenty constructors against `reftype.ssim`'s
+thirty-five, so fifteen of the reftypes in this table came back as *unknown* —
+which reads as a typo in the corpus rather than as something AMCC does not
+model. The vocabulary is complete; the verdicts are unchanged, but they now
+mean what they say.
+
+**`Smallstr` is modelled and still counted rejected**, and the distinction is
+worth keeping. Its `dmmeta.smallstr` record is read, joined onto the field,
+checked (including `amc`'s own 255 ceiling on an `rpascal` length) and printed
+back byte-for-byte; `Templates/Smallstr.lean` states all three `strtype`
+abstractions and proves `rpascal`'s read-back law. What is missing is
+emission: `amc` writes `u8` and the C subset has no eight-bit scalar, so
+`Dmmeta.fieldTy` cannot lower the field and `Ssim.supported` does not list the
+reftype. `docs/DIVERGENCE.md` §3.8. The census reports what AMCC would
+*generate*, so 140 fields stay in the rejected column until that changes —
+counting them any other way would be the overstatement this file exists to
+prevent.
+
+**The attribute join makes the next few tables cheap, not free.**
+`dmmeta.inlary` and `dmmeta.smallstr` go through one registry keyed by
+`Dmmeta.AttrTag`, so `bitfld` (75 fields), `charset` (23), `lenfld`, `substr`
+and `fconst` (337 records) each need a payload arm and nothing else. That is
+the *join*. Each still needs its own lowering and its own law before this
+table moves.
 
 **The census does not model the layout at all.** It answers "would AMCC name
 and represent this field", and says nothing about whether the *program* built

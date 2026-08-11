@@ -9,7 +9,7 @@ the tallying would have to be done by hand.
 
 The `--all-heads` form includes every ssimfile in the directory, so the report
 can also say how much of `data/dmmeta` AMCC does not model *at all* — that
-number is otherwise invisible, because the four heads we do read are a tiny
+number is otherwise invisible, because the heads we do read are a tiny
 fraction of the corpus.
 """
 import argparse
@@ -17,7 +17,7 @@ import pathlib
 import sys
 
 # The heads AMCC's reader models. Everything else is counted, not read.
-MODELLED = ["ctype.ssim", "field.ssim", "inlary.ssim"]
+MODELLED = ["ctype.ssim", "field.ssim", "inlary.ssim", "smallstr.ssim"]
 
 
 def main() -> int:

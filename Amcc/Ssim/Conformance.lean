@@ -133,9 +133,13 @@ def classify (t : Tuple) : List String :=
       [row "field" q final.tag final.detail rs rv.tag nv.tag]
     | _, _ => [row "field" (t.get? "field" |>.getD "?") "rejected"
                  "missing attribute" "" "" ""]
-  | "dmmeta.inlary" =>
-    [row "inlary" (t.get? "field" |>.getD "?") "lowered" "" "" "" ""]
-  | h => [row "other" h "rejected" "tuple head not modelled" "" "" ""]
+  | h =>
+    -- the attribute tables, through the same registry the reader uses, so a
+    -- table added there is counted here without a second list
+    match attrHeads.find? (fun a => a.head == h) with
+    | some ah =>
+      [row ah.tag.name (t.get? "field" |>.getD "?") "lowered" "" "" "" ""]
+    | none => [row "other" h "rejected" "tuple head not modelled" "" "" ""]
 
 /-- Classify a whole corpus. Lines the tally script consumes; a parse failure
 is one row rather than an abort, because a census that stops at the first bad
