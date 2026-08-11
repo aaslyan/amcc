@@ -430,6 +430,130 @@ theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     rw [hcnt]
     rfl
 
+/-- **The same five lookups when the ctype threads itself.**
+
+`Examples.selfDb` is that schema: `Dmmeta.check` accepts it and `genLlist`
+emits a `Wf.check`-clean program for it, so `field_lookups`'s `hne` is not a
+hypothesis the assembly can discharge. Both `addFields` calls then land on one
+struct, whose fields are `own ++ elemFields ++ dbFields`, and all five lookups
+go into that single list — with the `Pairwise` coming from **one** `hdist_db`
+call, at the singly-extended struct.
+
+checked by: `lake build` -/
+theorem field_lookups_self {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes)
+    (hfld : fld ∈ dbC.fields)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hself : mangle dbC.name = mangle elemC.name)
+    (globals : List GlobalDef) (funs : List FunDef)
+    (locals : List (CSubset.Ident × ValTy)) :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    let ctx : Wf.Ctx := ⟨tableOf d dbN elemN nm, globals, funs, locals⟩
+    ctx.field? elemN nm.next = some (.ptr (.strct elemN))
+    ∧ ctx.field? elemN nm.prev = some (.ptr (.strct elemN))
+    ∧ ctx.field? elemN nm.inlist = some (.scalar .bool)
+    ∧ ctx.field? dbN nm.head = some (.ptr (.strct elemN))
+    ∧ ctx.field? dbN nm.count = some (.scalar .u32) := by
+  intro nm elemN dbN ctx
+  have hen : (structOf d.withBuiltins elemC).name = elemN := Layout.structOf_name _ _
+  have hne' : dbN = elemN := hself
+  obtain ⟨⟨_, hmdup, _⟩, _, _⟩ := Layout.facts_of_check hchk
+  have hsd : ((genStructs d).map StructDef.name).Pairwise (· ≠ ·) :=
+    Layout.structs_distinct (nf := fun c => mangle c.name) (fun _ => rfl) hmdup
+  have hmemE : structOf d.withBuiltins elemC ∈ genStructs d :=
+    List.mem_filterMap.mpr ⟨elemC, helem, by simp [hes]⟩
+  have hbase : (genStructs d).find? (fun sd => sd.name == elemN)
+      = some (structOf d.withBuiltins elemC) := by
+    have h := CSubset.find?_of_mem_pairwise (f := StructDef.name) (genStructs d)
+      (structOf d.withBuiltins elemC) hmemE hsd
+    rwa [hen] at h
+  have hinnerE : (Layout.addFields elemN (elemFields nm elemN) (genStructs d)).find?
+      (fun sd => sd.name == elemN)
+      = some { structOf d.withBuiltins elemC with
+               fields := (structOf d.withBuiltins elemC).fields
+                         ++ elemFields nm elemN } := by
+    rw [Layout.find?_addFields _ hbase, if_pos (beq_iff_eq.mpr hen)]
+  -- the outer extension lands on the *same* struct; no type ascription here,
+  -- because the produced structure update is defeq to but does not display as
+  -- the written-out one
+  have hboth := Layout.find?_addFields (n := dbN) (extra := dbFields nm elemN)
+    _ hinnerE
+  rw [if_pos (beq_iff_eq.mpr (hen.trans hne'.symm))] at hboth
+  -- the two names are the same, so the two resolutions are literally one
+  have hbothD : (Layout.addFields dbN (dbFields nm elemN)
+      (Layout.addFields elemN (elemFields nm elemN) (genStructs d))).find?
+        (fun sd => sd.name == dbN)
+      = (Layout.addFields dbN (dbFields nm elemN)
+      (Layout.addFields elemN (elemFields nm elemN) (genStructs d))).find?
+        (fun sd => sd.name == elemN) := by rw [hne']
+  -- one `hdist_db` call gives the whole list's distinctness
+  have hpw : ((((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN)
+      ++ dbFields nm elemN).map Prod.fst).Pairwise (· ≠ ·) := by
+    simpa using hdist_db hchk hdb hfld elemN
+      ({ structOf d.withBuiltins elemC with
+         fields := (structOf d.withBuiltins elemC).fields ++ elemFields nm elemN })
+      (List.mem_map.mpr ⟨structOf d.withBuiltins elemC, hmemE,
+        by rw [if_pos (beq_iff_eq.mpr hen)]⟩)
+      (hen.trans hne'.symm)
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;>
+    simp only [Wf.Ctx.field?, Wf.Ctx.struct?, ctx, tableOf, hbothD, hboth]
+  · show (do
+      let fv ← (((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN) ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.next)
+      some fv.2) = _
+    rw [NameWf.find?_field (p := (nm.next, Ty.ptr (.strct elemN)))
+      (by simp [elemFields]) hpw]
+    rfl
+  · show (do
+      let fv ← (((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN) ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.prev)
+      some fv.2) = _
+    rw [NameWf.find?_field (p := (nm.prev, Ty.ptr (.strct elemN)))
+      (by simp [elemFields]) hpw]
+    rfl
+  · show (do
+      let fv ← (((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN) ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.inlist)
+      some fv.2) = _
+    rw [NameWf.find?_field (p := (nm.inlist, Ty.scalar .bool))
+      (by simp [elemFields]) hpw]
+    rfl
+  · show (do
+      let fv ← (((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN) ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.head)
+      some fv.2) = _
+    rw [NameWf.find?_field (p := (nm.head, Ty.ptr (.strct elemN)))
+      (by simp [dbFields]) hpw]
+    rfl
+  · show (do
+      let fv ← (((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN) ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.count)
+      some fv.2) = _
+    rw [NameWf.find?_field (p := (nm.count, Ty.scalar .u32))
+      (by simp [dbFields]) hpw]
+    rfl
+
+/-- **The five lookups, either way.** The dispatcher the assembly uses; neither
+branch is hypothetical, because `Examples.listDb` and `Examples.selfDb` are
+both checked-in schemas.
+
+checked by: `lake build` -/
+theorem field_lookups_any {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (globals : List GlobalDef) (funs : List FunDef)
+    (locals : List (CSubset.Ident × ValTy)) :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    let ctx : Wf.Ctx := ⟨tableOf d dbN elemN nm, globals, funs, locals⟩
+    ctx.field? elemN nm.next = some (.ptr (.strct elemN))
+    ∧ ctx.field? elemN nm.prev = some (.ptr (.strct elemN))
+    ∧ ctx.field? elemN nm.inlist = some (.scalar .bool)
+    ∧ ctx.field? dbN nm.head = some (.ptr (.strct elemN))
+    ∧ ctx.field? dbN nm.count = some (.scalar .u32) := by
+  by_cases hne : mangle dbC.name = mangle elemC.name
+  · exact field_lookups_self hchk hdb hfld helem hes hne globals funs locals
+  · exact field_lookups hchk hdb hdbs hfld helem hes hne globals funs locals
+
 /-- The database global resolves. `genLlist` names it `g_<db>`, which is what
 `Dmmeta.genGlobals` emits for the root. -/
 theorem global_lookup {d : Db} {dbC : Ctype} (hroot : d.root = some dbC.name)
