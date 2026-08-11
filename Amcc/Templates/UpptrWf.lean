@@ -138,7 +138,7 @@ theorem up_field_ty {d : Db} (hchk : check d = []) {c : Ctype} {f : Field}
     exact ⟨i, hi.1, hi.2⟩
   obtain ⟨_, _, hff⟩ := hcty i hi
   rw [hci] at hff
-  obtain ⟨_, _, _, hrec⟩ := hff f hf
+  obtain ⟨_, _, _, _, hrec⟩ := hff f hf
   -- the `arg` is a record: the `needsRecordArg` clause of `Dmmeta.check`
   obtain ⟨ac, hac, hacs⟩ := hrec (by rw [hr]; rfl)
   exact NameWf.ctx_field? hchk hc hs hf

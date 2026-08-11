@@ -766,7 +766,7 @@ theorem genWellFormed : GenWellFormed := by
       exact ⟨i, hi.1, hi.2⟩
     obtain ⟨_, _, hff⟩ := hcty i hi
     rw [hci] at hff
-    obtain ⟨_, _, _, hrec⟩ := hff fld hfld
+    obtain ⟨_, _, _, _, hrec⟩ := hff fld hfld
     obtain ⟨ac, hac, hacs⟩ := hrec (by rw [hfr]; rfl)
     have heq : ac = elemC := Option.some.inj (hac.symm.trans helemf)
     rw [← heq]; exact hacs

@@ -445,11 +445,15 @@ end Db
 
 /-! ## Builtins
 
-`u32`, `u64` and `bool` are ctypes, declared first so that every user ctype may
-name them. -/
+`u8`, `u32`, `u64` and `bool` are ctypes, declared first so that every user
+ctype may name them. `char` is `u8`'s alias, because `dmmeta.field` writes
+`arg:char` for every `Smallstr` and `amc` emits `u8` for it — the schema's
+spelling and the emitted type differ, and this is where they meet. -/
 
 def builtins : List Ctype :=
-  [ { name := "u32",  scalar := some .u32 }
+  [ { name := "u8",   scalar := some .u8 }
+  , { name := "char", scalar := some .u8 }
+  , { name := "u32",  scalar := some .u32 }
   , { name := "u64",  scalar := some .u64 }
   , { name := "bool", scalar := some .bool } ]
 
@@ -538,6 +542,15 @@ def fieldTy (d : Db) (owner : Ident) (f : Field) : Option CSubset.Ty := do
   -- is the fixed-capacity case, now one storage choice among many rather than
   -- the shape of the whole model.
   | .Inlary       => (d.inlaryMax? owner f.name).map (fun n => .arr base n)
+  -- The inline string. `amc` sizes the array `N` for the padded shapes and
+  -- `N + 1` for `rpascal` ("extra 1 byte is required by rpascal",
+  -- `cpp/amc/smallstr.cpp`). The element type is `u8` whatever the schema
+  -- writes for `arg` — `dmmeta` writes `char` — because that is what `amc`
+  -- emits. The `rpascal` count byte is not here: it is the template's state,
+  -- added to the lowered struct the way `Llist` adds its links.
+  | .Smallstr     =>
+    (d.smallstr? owner f.name).map (fun sh =>
+      .arr (.scalar .u8) (match sh.2.1 with | .rpascal => sh.1 + 1 | _ => sh.1))
   | _             => none
 
 /-- The struct a record ctype lowers to: its inline fields, in order. -/
@@ -681,6 +694,52 @@ theorem inlary_facts_of_checkAttr {d : Db} {owner : Ident} {f : Field}
     · simp only [Bool.and_eq_true, decide_eq_true_eq] at hb
       exact hb
     · simp [hb] at h
+
+/-- The `smallstr` companion of `inlaryMax?_of_attr?`. -/
+theorem smallstr?_of_attr? {d : Db} {owner f : Ident} {a : AttrData}
+    (h : d.attr? .smallstr owner f = some a) :
+    ∃ n st pad strict, a = .smallstr n st pad strict
+      ∧ d.smallstr? owner f = some (n, st, pad, strict) := by
+  have ht := Db.attr?_tag h
+  cases a with
+  | smallstr n st pad strict =>
+    exact ⟨n, st, pad, strict, rfl, by simp [Db.smallstr?, h]⟩
+  | inlary => exact absurd ht (by simp [AttrData.tag])
+
+/-- **The `Smallstr` facts, back out of the generic clause**, in the shape the
+layout obligation wants: the *array size* `fieldTy` builds is a legal C array
+size. It is `N` for a padded string and `N + 1` for `rpascal`, and the
+`rpascal` case needs `amc`'s own 255 ceiling and not merely the `u32` bound —
+without it `N + 1` could be `u32Bound` exactly.
+
+checked by: `lake build` -/
+theorem smallstr_facts_of_checkAttr {d : Db} {owner : Ident} {f : Field}
+    (hr : f.reftype = .Smallstr) (h : checkAttr d owner f = []) :
+    ∃ n st pad strict, d.smallstr? owner f.name = some (n, st, pad, strict)
+      ∧ 0 < (match st with | .rpascal => n + 1 | _ => n)
+      ∧ (match st with | .rpascal => n + 1 | _ => n) < CSubset.Wf.u32Bound := by
+  simp only [checkAttr, hr, Reftype.needsAttr] at h
+  cases ha : d.attr? .smallstr owner f.name with
+  | none => rw [ha] at h; simp at h
+  | some a =>
+    obtain ⟨n, st, pad, strict, rfl, hview⟩ := smallstr?_of_attr? ha
+    refine ⟨n, st, pad, strict, hview, ?_⟩
+    rw [ha] at h
+    simp only [checkAttrData, List.append_eq_nil_iff] at h
+    obtain ⟨hsz, hbig⟩ := h
+    have hn : 0 < n ∧ n < CSubset.Wf.u32Bound := by
+      by_cases hb : (0 < n && n < CSubset.Wf.u32Bound) = true
+      · simpa only [Bool.and_eq_true, decide_eq_true_eq] using hb
+      · simp [hb] at hsz
+    cases st with
+    | rpascal =>
+      have h255 : ¬ (255 < n) := by
+        by_cases hb : 255 < n
+        · simp [hb] at hbig
+        · exact hb
+      exact ⟨Nat.succ_pos n, by simp only [CSubset.Wf.u32Bound]; omega⟩
+    | leftpad  => exact hn
+    | rightpad => exact hn
 
 /-- Check one field against the ctypes declared **before** its owner. -/
 def checkField (d : Db) (earlier : List Ident) (owner : Ident) (f : Field) :

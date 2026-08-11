@@ -192,6 +192,12 @@ theorem facts_of_check {d : Db} (h : check d = []) :
             ∧ (f.reftype = .Inlary →
                 ∃ n, d.withBuiltins.inlaryMax? (d.withBuiltins.ctypes[i]'hi).name f.name = some n
                   ∧ 0 < n ∧ n < Wf.u32Bound)
+            ∧ (f.reftype = .Smallstr →
+                ∃ n st pad strict,
+                  d.withBuiltins.smallstr? (d.withBuiltins.ctypes[i]'hi).name f.name
+                    = some (n, st, pad, strict)
+                  ∧ 0 < (match st with | .rpascal => n + 1 | _ => n)
+                  ∧ (match st with | .rpascal => n + 1 | _ => n) < Wf.u32Bound)
             ∧ (f.reftype.needsRecordArg = true →
                 ∃ ac, d.withBuiltins.find? f.arg = some ac ∧ ac.scalar = none) := by
   simp only [check, List.append_eq_nil_iff, List.map_eq_nil_iff] at h
@@ -233,7 +239,7 @@ theorem facts_of_check {d : Db} (h : check d = []) :
     rw [ha] at harg
     simp only [List.append_eq_nil_iff] at harg
     obtain ⟨⟨⟨hdep, _⟩, hneed⟩, hinl⟩ := harg
-    refine ⟨⟨ac, rfl⟩, ?_, ?_, ?_⟩
+    refine ⟨⟨ac, rfl⟩, ?_, ?_, ?_, ?_⟩
     · intro hld
       cases hcon : ((d.withBuiltins.ctypes.take i).map Ctype.name).contains f.arg with
       | true  => rfl
@@ -241,7 +247,10 @@ theorem facts_of_check {d : Db} (h : check d = []) :
     · -- the attribute clause is generic now; `inlary_facts_of_checkAttr` reads
       -- the `Inlary` shape back out of it, in the shape this proof always had
       intro hinlary
-      exact inlary_facts_of_checkAttr hinlary hinl
+      exact Dmmeta.inlary_facts_of_checkAttr hinlary hinl
+    · -- and its `Smallstr` companion, out of the same clause
+      intro hstr
+      exact Dmmeta.smallstr_facts_of_checkAttr hstr hinl
     · -- a pointer or an index resolves to a record
       intro hnr
       refine ⟨ac, rfl, ?_⟩
@@ -329,8 +338,17 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
     (∀ n ∈ Wf.Ty.allStructs t,
         n = mangle f.arg ∧ ∃ ac, full.find? f.arg = some ac ∧ ac.scalar = none)
     ∧ (∀ n ∈ Wf.Ty.layoutDeps t, n = mangle f.arg ∧ f.reftype.layoutDep = true)
-    ∧ (f.reftype ≠ .Inlary → Wf.Ty.sizesOk t = true)
-    ∧ (∀ k, full.inlaryMax? owner f.name = some k → 0 < k → k < Wf.u32Bound →
+    ∧ (f.reftype ≠ .Inlary → f.reftype ≠ .Smallstr → Wf.Ty.sizesOk t = true)
+    -- the two reftypes whose array size comes from an attribute record are
+    -- the two whose `sizesOk` cannot be settled from the type alone, and each
+    -- is guarded by its own reftype so a stray record on the other cannot
+    -- reach it: `attr?` keys on the field, not on what the field claims to be
+    ∧ (f.reftype = .Inlary → ∀ k, full.inlaryMax? owner f.name = some k →
+        0 < k → k < Wf.u32Bound → Wf.Ty.sizesOk t = true)
+    ∧ (f.reftype = .Smallstr → ∀ n st pad strict,
+        full.smallstr? owner f.name = some (n, st, pad, strict) →
+        0 < (match st with | .rpascal => n + 1 | _ => n) →
+        (match st with | .rpascal => n + 1 | _ => n) < Wf.u32Bound →
         Wf.Ty.sizesOk t = true) := by
   simp only [fieldTy] at ht
   obtain ⟨ac, hac, ht⟩ := Option.bind_eq_some_iff.mp ht
@@ -357,22 +375,22 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
     rw [hr] at ht; simp only [Option.some.injEq] at ht
     obtain ⟨h1, h2, h3⟩ := hbase t ht
     exact ⟨fun n hn => ⟨(h1 n hn).1, ac, hac, (h1 n hn).2⟩,
-      fun n hn => ⟨(h1 n (h2 ▸ hn)).1, rfl⟩, fun _ => h3,
-      fun _ _ _ _ => h3⟩
+      fun n hn => ⟨(h1 n (h2 ▸ hn)).1, rfl⟩, fun _ _ => h3,
+      fun _ _ _ _ _ => h3, fun _ _ _ _ _ _ _ _ => h3⟩
   | Base =>
     rw [hr] at ht; simp only [Option.some.injEq] at ht
     obtain ⟨h1, h2, h3⟩ := hbase t ht
     exact ⟨fun n hn => ⟨(h1 n hn).1, ac, hac, (h1 n hn).2⟩,
-      fun n hn => ⟨(h1 n (h2 ▸ hn)).1, rfl⟩, fun _ => h3,
-      fun _ _ _ _ => h3⟩
+      fun n hn => ⟨(h1 n (h2 ▸ hn)).1, rfl⟩, fun _ _ => h3,
+      fun _ _ _ _ _ => h3, fun _ _ _ _ _ _ _ _ => h3⟩
   | Pkey =>
     rw [hr] at ht
     cases hs : ac.scalar with
     | some st =>
       rw [hs] at ht; simp only [Option.isSome_some, if_true, Option.some.injEq] at ht
       subst ht
-      exact ⟨by simp [Wf.Ty.allStructs], by simp [Wf.Ty.layoutDeps], fun _ => rfl,
-        fun _ _ _ _ => rfl⟩
+      exact ⟨by simp [Wf.Ty.allStructs], by simp [Wf.Ty.layoutDeps],
+        fun _ _ => rfl, fun _ _ _ _ _ => rfl, fun _ _ _ _ _ _ _ _ => rfl⟩
     | none =>
       rw [hs] at ht
       simp only [Option.isSome_none, Bool.false_eq_true, if_false,
@@ -380,7 +398,8 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
       subst ht
       have hname : mangle ac.name = mangle f.arg :=
       congrArg mangle (Db.find?_name hac)
-      refine ⟨?_, by simp [Wf.Ty.layoutDeps], fun _ => rfl, fun _ _ _ _ => rfl⟩
+      refine ⟨?_, by simp [Wf.Ty.layoutDeps], fun _ _ => rfl,
+        fun _ _ _ _ _ => rfl, fun _ _ _ _ _ _ _ _ => rfl⟩
       intro n hn
       simp only [Wf.Ty.allStructs, List.mem_singleton] at hn
       exact ⟨hn.trans hname, ac, hac, hs⟩
@@ -389,10 +408,12 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
       rw [hr] at ht; simp only [Option.some.injEq] at ht
       subst ht
       obtain ⟨h1, _, h3⟩ := hbase _ rfl
-      refine ⟨?_, by simp [Wf.Ty.layoutDeps], fun _ => ?_, fun _ _ _ _ => ?_⟩
+      refine ⟨?_, by simp [Wf.Ty.layoutDeps], fun _ _ => ?_,
+        fun _ _ _ _ _ => ?_, fun _ _ _ _ _ _ _ _ => ?_⟩
       · intro n hn
         simp only [Wf.Ty.allStructs] at hn
         exact ⟨(h1 n hn).1, ac, hac, (h1 n hn).2⟩
+      · simpa [Wf.Ty.sizesOk] using h3
       · simpa [Wf.Ty.sizesOk] using h3
       · simpa [Wf.Ty.sizesOk] using h3)
   | Inlary =>
@@ -401,7 +422,7 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
     obtain ⟨k, hk, ht⟩ := ht
     subst ht
     obtain ⟨h1, h2, h3⟩ := hbase _ rfl
-    refine ⟨?_, ?_, ?_, ?_⟩
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩
     · intro n hn
       simp only [Wf.Ty.allStructs] at hn
       exact ⟨(h1 n hn).1, ac, hac, (h1 n hn).2⟩
@@ -409,19 +430,36 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
       simp only [Wf.Ty.layoutDeps] at hn
       rw [← h2] at h1
       exact ⟨(h1 n hn).1, rfl⟩
-    · intro hne; exact absurd rfl hne
-    · intro k' hk' hpos hlt
+    · intro hne _; exact absurd rfl hne
+    · intro _ k' hk' hpos hlt
       rw [hk] at hk'
       cases hk'
       simp only [Wf.Ty.sizesOk, Bool.and_eq_true, decide_eq_true_eq]
       exact ⟨⟨hpos, hlt⟩, h3⟩
+    · intro hsm; exact Reftype.noConfusion hsm
   -- everything with no storage lowering: `fieldTy` returns `none`, so the
   -- hypothesis that it returned `some t` is already false
   | Lary | Tary | Tpool | Lpool | Blkpool | Malloc | Sbrk | Delptr | Thash
   | Llist | Bheap | Atree | Ptrary | Count
   | Alias | Bitfld | Charset | Cppstack | Ctype | Exec | Fbuf | Global | Hook
-  | Opt | Regx | RegxSql | Smallstr | Varlen | ZSListMT =>
+  | Opt | Regx | RegxSql | Varlen | ZSListMT =>
     all_goals (rw [hr] at ht; simp at ht)
+  -- the inline string: a `u8` array, so it mentions no struct and depends on
+  -- no layout, and its only obligation is that the size is legal — which,
+  -- exactly as for `Inlary`, comes from the attribute record and not the type
+  | Smallstr =>
+    rw [hr] at ht
+    simp only [Option.map_eq_some_iff] at ht
+    obtain ⟨sh, hsh, ht⟩ := ht
+    subst ht
+    refine ⟨by simp [Wf.Ty.allStructs], by simp [Wf.Ty.layoutDeps],
+      fun _ hne => absurd rfl hne,
+      fun hI => Reftype.noConfusion hI, ?_⟩
+    · intro _ n st pad strict hsm hpos hlt
+      rw [hsh] at hsm
+      cases hsm
+      simp only [Wf.Ty.sizesOk, Bool.and_eq_true, decide_eq_true_eq]
+      exact ⟨⟨hpos, hlt⟩, trivial⟩
 
 /-- A layout dependency is a mentioned struct — the inclusion the nesting
 obligation needs in order to reuse `allStructs`'s resolution fact. -/
@@ -509,15 +547,20 @@ theorem checkStructs_gen {d : Db} (hchk : check d = []) :
   obtain ⟨t, hty, hpair⟩ := Option.map_eq_some_iff.mp hfeq
   injection hpair with hfn hft
   subst hft
-  obtain ⟨hall, hdep, hsz, hszI⟩ := fieldTy_shape hty
-  obtain ⟨hargres, hargearly, hinl, _⟩ := hff f hfmem
+  obtain ⟨hall, hdep, hsz, hszI, hszS⟩ := fieldTy_shape hty
+  obtain ⟨hargres, hargearly, hinl, hstr, _⟩ := hff f hfmem
   simp only [List.append_eq_nil_iff]
   refine ⟨⟨?_, ?_⟩, ?_⟩
-  · -- obligation 3: the size is legal
+  · -- obligation 3: the size is legal. The two reftypes whose array size
+    -- comes from an attribute record get it from there; every other type
+    -- settles it from the type alone.
     by_cases hI : f.reftype = .Inlary
     · obtain ⟨k, hk, hpos, hlt⟩ := hinl hI
-      rw [if_pos (hszI k hk hpos hlt)]
-    · rw [if_pos (hsz hI)]
+      rw [if_pos (hszI hI k hk hpos hlt)]
+    · by_cases hS : f.reftype = .Smallstr
+      · obtain ⟨n, st, pad, strict, hsh, hpos, hlt⟩ := hstr hS
+        rw [if_pos (hszS hS n st pad strict hsh hpos hlt)]
+      · rw [if_pos (hsz hI hS)]
   · -- obligation 2a: every struct the type mentions is emitted
     rw [List.flatMap_eq_nil_iff]
     intro n hn
