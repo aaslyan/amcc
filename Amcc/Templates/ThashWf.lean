@@ -529,5 +529,113 @@ theorem checkFun_thash {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       Wf.inferExpr, Wf.inferLVal, ValTy.toTy]
     simp [hg, hfC, Wf.isValTy, Wf.distinct, Wf.dups, Wf.Stmt.alwaysReturns]
 
+/-- **`Find` and `Remove`.** Both walk the chain with a `forN` bounded by the
+capacity and read `_p-><key>`, so beyond the four field equations they need
+the *key* field to resolve on the element struct — which is a lowered field,
+not an added one, so `NameWf.struct_field?` supplies it rather than
+`find?_field`.
+
+checked by: `lake build` -/
+theorem checkFun_walk {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld key : Field} {nb cap mask : Nat}
+    (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    (hkey : key ∈ elemC.fields)
+    (hkty : fieldTy d.withBuiltins elemC.name key = some (.scalar .u32))
+    (hcap : cap < Wf.u32Bound) {earlier : List FunDef} :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    ∀ fd ∈ [findDef nm elemN (mangle key.name) mask cap,
+            removeDef nm elemN (mangle key.name) mask cap],
+      Wf.checkFun (tableOf d dbN elemN nm nb) (genGlobals d) earlier fd = [] := by
+  intro nm elemN dbN fd hfd
+  obtain ⟨hnext, hinh, hbuck, hcnt⟩ :=
+    field_lookups_any (nb := nb) hchk hdb hdbs hfld helem hes
+      (genGlobals d) earlier []
+  obtain ⟨⟨_, _, hqdup⟩, _, _⟩ := Layout.facts_of_check hchk
+  -- the key is a *lowered* field of the element struct
+  have hkf : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).field?
+        elemN (mangle key.name) = some (.scalar .u32) := by
+    intro locals
+    have hbase : (genStructs d).find? (fun sd => sd.name == elemN)
+        = some (structOf d.withBuiltins elemC) := by
+      have h := CSubset.find?_of_mem_pairwise (f := StructDef.name) (genStructs d)
+        (structOf d.withBuiltins elemC)
+        (List.mem_filterMap.mpr ⟨elemC, helem, by simp [hes]⟩)
+        (Layout.structs_distinct (nf := fun c => mangle c.name) (fun _ => rfl)
+          (Layout.facts_of_check hchk).1.2.1)
+      rwa [Layout.structOf_name] at h
+    have hlow : (structOf d.withBuiltins elemC).fields.find?
+        (fun fv => fv.1 == mangle key.name)
+        = some (mangle key.name, Ty.scalar .u32) :=
+      NameWf.struct_field? (Layout.mangled_fields_pairwise_mem hqdup helem)
+        hkey hkty
+    -- whichever branch the table is in, the element struct's own fields are a
+    -- *prefix* of its final field list, and the key is among them — so
+    -- `List.find?_append` settles it without splitting on the two topologies
+    obtain ⟨rest, hres⟩ : ∃ rest,
+        (tableOf d dbN elemN nm nb).find? (fun sd => sd.name == elemN)
+          = some { structOf d.withBuiltins elemC with
+                   fields := (structOf d.withBuiltins elemC).fields ++ rest } := by
+      have hen : (structOf d.withBuiltins elemC).name = elemN :=
+        Layout.structOf_name _ _
+      have hinner : (Layout.addFields elemN (elemFields nm elemN)
+          (genStructs d)).find? (fun sd => sd.name == elemN)
+          = some { structOf d.withBuiltins elemC with
+                   fields := (structOf d.withBuiltins elemC).fields
+                             ++ elemFields nm elemN } := by
+        rw [Layout.find?_addFields _ hbase, if_pos (beq_iff_eq.mpr hen)]
+      by_cases hne : dbN = elemN
+      · refine ⟨elemFields nm elemN ++ dbFields nm elemN nb, ?_⟩
+        simp only [tableOf, ← List.append_assoc]
+        rw [Layout.find?_addFields _ hinner,
+          if_pos (beq_iff_eq.mpr (hen.trans hne.symm))]
+      · refine ⟨elemFields nm elemN, ?_⟩
+        simp only [tableOf]
+        rw [Layout.find?_addFields _ hinner,
+          if_neg (fun e => hne (hen ▸ (eq_of_beq e).symm))]
+    simp only [Wf.Ctx.field?, Wf.Ctx.struct?, tableOf] at hres ⊢
+    rw [hres]
+    show (do
+      let fv ← ((structOf d.withBuiltins elemC).fields ++ rest).find? (fun fv : CSubset.Ident × Ty => fv.1 == mangle key.name)
+      some fv.2) = _
+    rw [List.find?_append, hlow]
+    rfl
+  have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).global?
+          nm.dbGlobal = some { name := nm.dbGlobal, ty := .strct dbN } :=
+    fun locals => global_lookup hroot _ _ locals
+  have hfN : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).field?
+        elemN nm.next = some (.ptr (.strct elemN)) := fun _ => hnext
+  have hfI : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).field?
+        elemN nm.inhash = some (.scalar .bool) := fun _ => hinh
+  have hfB : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).field?
+        dbN nm.buckets = some (.arr (.ptr (.strct elemN)) nb) := fun _ => hbuck
+  have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm nb) (genGlobals d) earlier locals).field?
+        dbN nm.count = some (.scalar .u32) := fun _ => hcnt
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hfd
+  rcases hfd with rfl | rfl
+  · simp only [Wf.checkFun, findDef, findLoopBody, dbFld, ptrFld, bucket,
+      ptrLocal, Wf.checkStmt, Wf.addrChecks, Wf.inferExpr, Wf.inferLVal,
+      ValTy.toTy, Stmt.block, Stmt.when, LocalDef.zeroed]
+    simp [hg, hfN, hfI, hfB, hfC, hkf, Wf.isValTy, Wf.distinct, Wf.dups,
+      parKey, tmpB, tmpP, tmpHit, tmpI, Wf.indexOk, Wf.Ctx.local?, Wf.litTy,
+      Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.Stmt.assigns, Wf.Stmt.alwaysReturns,
+      hcap, Wf.inferExpr, Wf.addrChecks, ValTy.toTy]
+  · simp only [Wf.checkFun, removeDef, dbFld, ptrFld, bucket, ptrLocal,
+      Wf.checkStmt, Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, ValTy.toTy,
+      Stmt.block, Stmt.when, LocalDef.zeroed]
+    simp [hg, hfN, hfI, hfB, hfC, hkf, Wf.isValTy, Wf.distinct, Wf.dups,
+      parRow, tmpB, tmpP, tmpPrev, tmpI, Wf.indexOk, Wf.Ctx.local?, Wf.litTy,
+      Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.Stmt.assigns, hcap, Wf.inferExpr,
+      Wf.addrChecks, ValTy.toTy]
+
 end Thash
 end Templates
