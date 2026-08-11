@@ -122,6 +122,20 @@ tested against a real compiler by `scripts/smoke.sh`.
   program `Wf.check` accepts, **including a ctype that threads itself**. All
   nine `checkFun` obligations, both struct halves, and a field-lookup bundle
   with a branch for each of the two struct topologies.
+- **`Thash.genWellFormed`** — the same for the hash index, the self-indexing
+  case included. Two things are new there: `InsertMaybe` **calls** `Find`, so
+  `Wf.Ctx.fun?` has to resolve a callee out of `funs.take i` — the first
+  generated body to exercise that — and the bucket count's legality comes from
+  the *generator's* `pow2Exp?` guard rather than from `Dmmeta.check`, since a
+  `Thash` field is not an `Inlary` and the schema checker's array-bound clause
+  never reaches it (`accepted_bucket_fits`).
+  **With this, the banner every generated header carries is true for all five
+  templates**, for every schema a user may write, not only for the samples.
+- **`laws_apply`** in all three ctype-model templates — the resolution
+  hypothesis every law assumes (`lookupFun p nm.x = .ok (xDef …)`) is now
+  discharged **once, from `Dmmeta.check`**, instead of per schema by computing
+  `Wf.check` on the generated program. `CSubset.lookupFun_of_wf` is the shared
+  bridge: obligation 3 of `Wf.check` *is* `lookupFun_of_mem`'s side condition.
 - **`Llist`'s struct and global obligations** — `checkStructs_gen_llist` and
   `checkGlobals_gen_llist`, over the *extended* table, with
   `Layout.field_ne_generated` spending the `clashesGenerated` clause to make
@@ -214,28 +228,22 @@ conflated them. The two are separated below.
    is then a bounded char array. And the same mechanism is what `Bitfld` (75),
    `Charset` (23), `lenfld`, `substr` and `fconst` (337 records) all need —
    **one cheap mechanism unblocks five reftypes with no allocation anywhere.**
-2. **`Thash.GenWellFormed`.** `Llist`'s is **done** — including the
-   self-threading case, which needed its own branch of the field-lookup
-   bundle. `Thash` is the same shape with five functions; `PROGRESS.md` names
-   the two things that are new there. Ahead of the big reftypes because it is about
-   whether the guarantee the *existing* templates ship is the one their
-   generated headers claim.
-3. **`Ptrary` (136 fields).** An array of pointers over a base pool. Needs the
+2. **`Ptrary` (136 fields).** An array of pointers over a base pool. Needs the
    pool to exist but not to grow, so it lands inside the current allocator
    story.
-4. **`Lary` (390 fields) and the growable pools** — `Tary` (69), `Tpool` (40),
+3. **`Lary` (390 fields) and the growable pools** — `Tary` (69), `Tpool` (40),
    `Lpool` (10). Largest by corpus count and **largest by cost**: `Lary` is a
    growable array, so it needs `Stmt.alloc`, the allocator contract and the L0
    heap rework, which is the biggest deferred item in the repo
    (`docs/DIVERGENCE.md` §2.2). Doing it first would spend the whole budget on
-   one reftype; doing it after 1–3 means the pool machinery arrives with three
+   one reftype; doing it after 1–2 means the pool machinery arrives with three
    consumers already waiting.
-5. **Xref maintenance**, using the prepare/commit design from
+4. **Xref maintenance**, using the prepare/commit design from
    `Spec/Algebra.lean`. 789 `dmmeta.xref` records, and `docs/CONFORMANCE.md`
    is explicit that a field counted "generated" today gets its accessors and
    *not* its participation in the indexes — so the 69.1% overstates what a
    user gets until this exists.
-6. **The tail**: `Global` (60), `RegxSql` (52), `Varlen` (39), `Bheap` (23),
+5. **The tail**: `Global` (60), `RegxSql` (52), `Varlen` (39), `Bheap` (23),
    `Hook` (22), `Cppstack` (21), `Fbuf` (11), then the singletons. `Bheap` and
    `Atree` (3) headed this list two revisions ago and are near the bottom of
    the real distribution.

@@ -163,6 +163,18 @@ that should fail does not.)
                           `Wf.check` accepts, the self-threading case
                           included. Second of the three ctype-model templates
                           to match what the generated headers claim
+- `Templates.ThashWf`   — **proved**: `Thash.genWellFormed` — the same for the
+                          hash index, self-indexing included. `InsertMaybe`
+                          calls `Find`, the first generated body to make
+                          `Wf.Ctx.fun?` resolve a callee out of `funs.take i`;
+                          and `accepted_bucket_fits` cashes the generator's
+                          own `pow2Exp?` guard, because a `Thash` field is not
+                          an `Inlary` and `Dmmeta.check`'s array-bound clause
+                          never reaches its bucket count. **Third of three —
+                          the header banner is now true for all five
+                          templates.** `laws_apply` here and in `LlistWf` /
+                          `UpptrWf` discharges every law's resolution
+                          hypothesis once from `Dmmeta.check`
 - `Templates.LayoutWf`  — **proved**: `layoutWellFormed` — every schema the
                           lowering accepts produces structs and globals
                           `Wf.check` accepts, including that struct nesting is

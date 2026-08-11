@@ -2,13 +2,62 @@
 
 ## Now
 
-**The self-list branch of `Llist.field_lookups`, then the assembly.** All nine
-`checkFun`s are proved; the only gap is that `field_lookups` assumes the
-database and element ctypes differ, which `Examples.selfDb` refutes. See
-"Where the every-schema gap stands" for the branch, written out, and the two
-things that went wrong when it was attempted.
+**The attribute-join mechanism, then `Smallstr` `rpascal`.** The every-schema
+gap is **closed**: `Upptr`, `Llist` and `Thash` `genWellFormed` are all proved,
+so the banner in `scripts/gen/*.h` is true for all five templates, for every
+schema `Dmmeta.check` accepts rather than only for the samples. What is next is
+the join that lets a field carry a second record (`dmmeta.smallstr` and
+friends), which unblocks five reftypes at once — see `docs/PLAN.md` §Next.
 
 ## Done
+
+- **T — the every-schema gap, closed.** `Llist.genWellFormed` and
+  `Thash.genWellFormed` are both proved, joining `Upptr`'s. Three things came
+  out of it:
+
+  - **Self-reference is a first-class case, not an edge case.** `field_lookups`
+    in both templates assumed the database and element ctypes differ, and both
+    `Llist.Examples.selfDb` and `Thash.Examples.selfDb` refute it —
+    `Dmmeta.check` accepts them and the generators emit clean programs for
+    them. The *proof* assumed too much; the generated code was right. Closed
+    with `field_lookups_self` and a `field_lookups_any` dispatcher in each. For
+    `Thash` this was found by inspection before the assembly, not by a failed
+    assembly.
+  - **`Thash.InsertMaybe` is the first generated body that calls another
+    generated function.** Obligation 4 of `checkFun` asks the callee be
+    resolvable from `funs.take i`, and `Find` is emitted second, so only at
+    `InsertMaybe`'s own index is the prefix `[Init, Find]`. The five bodies are
+    therefore taken by *position* in the assembly, not by membership.
+  - **The bucket count's legality is the generator's, not the checker's.** A
+    `Thash` field is not an `Inlary`, so `Dmmeta.check`'s array-bound clause
+    never reaches it. `genThash` guards it with `pow2Exp?`, and
+    `accepted_bucket_fits` is where that guard is cashed for `0 < nb` and
+    `nb < 2 ^ 32`. Not a hole — a bound that lives on the other side of the
+    boundary, and it needed saying.
+
+  Two proof-shape notes worth keeping: the `do` in a generator is `Monad
+  Option`'s `bind`, so `bind` must be in the simp set before
+  `Option.bind_eq_some_iff` can see it (without it the rewrite silently does
+  nothing and the unwinding looks impossible); and in `checkFun_insert`,
+  `findDef` has to stay *folded* while the lookups fire, because unfolding it
+  rewrites the context inside the goal and every hypothesis pinned to the
+  folded function list stops matching. The lookups are stated over an arbitrary
+  `funs` for that reason — `field?`/`global?` ignore it anyway.
+
+- **S — every law's resolution hypothesis, discharged once from
+  `Dmmeta.check`.** `CSubset.funNames_pairwise_of_wf` / `lookupFun_of_wf` /
+  `funs_length_pos` are the shared bridge — obligation 3 of `Wf.check` *is*
+  `lookupFun_of_mem`'s side condition — and each template gained `laws_apply`,
+  which takes schema acceptance and the generator's output and produces all of
+  its resolutions together. `Thash.laws_apply` also carries the bucket facts,
+  since `pow2Exp?` is the generator's guard and that is the one place both are
+  in scope. Before this, a consumer computed `Wf.check` on its own generated
+  program per schema, which made the per-schema computation the real entry
+  point even after `genWellFormed` existed.
+
+  Unification note: `hres _ ?_` cannot infer the definition from the
+  conclusion. The unifier tries `FunDef.name ?fd =?= nm.x` before looking at
+  the right-hand side, and does not backtrack — each definition is named.
 
 - **R — all nine `checkFun` obligations for `Llist`, and the field bundle.**
   `field_lookups` (the five field equations against a symbolic `Wf.Ctx` over
@@ -205,108 +254,71 @@ things that went wrong when it was attempted.
 
 ## Next
 
-- `Llist.genWellFormed`, then `Thash.genWellFormed`
 - The attribute-join mechanism, then `Smallstr` `rpascal`
-- The `Dmmeta.check` ⟹ `Wf.check` link for the non-array templates. `Upptr`,
-  `Llist`, `Thash` each have `Wf.check … = []` only as a computational example
-  on their sample schema; the array table has it for *every* accepted schema
-  (`genWellFormed`). Until that exists for the others, `lookups_of_wf`'s
-  hypothesis is discharged per-schema rather than once.
+- Re-measure `docs/CONFORMANCE.md` after the join lands
+- `Ptrary`, then the growable pools — see `docs/PLAN.md` §Next for the order
+  and the reason it is cost order rather than corpus order
 
 ## Where the every-schema gap stands
 
-*Updated: the generator defect is **fixed** and five holes are closed. `Upptr`
-is proved. `Llist` and `Thash` `genWellFormed` are the remaining work, and the
-handoff below is the shape they follow.*
+*Updated: **closed.** All three ctype-model templates are proved, and the two
+array-shaped ones (`ArrayTable`, `Pool`) were already covered. Kept as the
+record of what the proof is made of, because the next template to be added
+follows the same shape.*
 
-### Proved and committed
+### The shared machinery
 
 - `Layout.checkStructs_gen`, `Layout.checkGlobals_gen`,
   `Layout.layoutWellFormed` — the lowered table.
 - **`Layout.addFields`** + `addFields_names`, `addFields_take`,
   **`Layout.checkStructs_addFields`**, **`Layout.checkGlobals_addFields`** —
-  the *extended* table, which is what `Llist`/`Thash`/`Pool` now emit.
+  the *extended* table, which is what `Llist`/`Thash`/`Pool` emit.
   `checkStructs_addFields` takes facts only about the fields a template adds:
   names not clashing with the struct's own, legal sizes, mentioned structs
   emitted, and `layoutDeps = []`. That last is true of every field any
   template adds (pointer, `bool`, `u32`, array of pointers) and is what keeps
   the declared-earlier obligation from needing re-establishment.
-- `Templates/NameWf.lean` in full, `Upptr.genWellFormed`, and
-  **`Llist.names_pairwise`** — the nine names, all thirty-six pairs.
+- `Layout.field_ne_generated` — turns `Dmmeta.check`'s `clashesGenerated`
+  clause into the `Pairwise` the struct obligation wants.
+- `Templates/NameWf.lean` in full: sublist-descent of the schema's
+  qualified-name distinctness, `pairwise_flatMap` for the block structure, and
+  `append_ne_rev`, which reverses both strings so a suffix comparison becomes a
+  *decidable prefix* comparison.
+- `CSubset.lookupFun_of_wf` and `funs_length_pos` — the bridge from acceptance
+  to every law's hypotheses.
 
-### What `Llist.genWellFormed` still needs
+### The shape each template's proof takes
 
-**One branch of one lemma, and the final assembly.** Everything else is
-proved, in `Templates/LlistWf.lean`:
+1. `names_pairwise` — the generated function names, all pairs.
+2. `elemFields_ok` / `dbFields_ok` — sizes, layout deps, mentioned structs, for
+   the fields the template *adds*.
+3. `hdist_elem` / `hdist_db` — the distinctness `checkStructs_addFields` wants.
+   The `_db` one must already handle the self case, since both `addFields`
+   calls can land on one struct.
+4. `checkStructs_gen_*` / `checkGlobals_gen_*` — the struct and global halves.
+5. `field_lookups` (ctypes differ) + `field_lookups_self` (ctype indexes or
+   threads itself) + `field_lookups_any` (the dispatcher), and `global_lookup`.
+6. One `checkFun_*` lemma per shape of body.
+7. The assembly: unwind the generator's `do`, derive `hdb`/`helem`/`hfld`/
+   `hroot`/`hdbs`/`hes` from `Layout.facts_of_check`, then
+   `checkStructs ++ checkGlobals ++ distinct ++ flatMap checkFun`.
+8. `laws_apply`, so consumers never recompute `Wf.check` per schema.
 
-- `names_pairwise` — the nine names;
-- `elemFields_ok` / `dbFields_ok` — sizes, layout deps, mentioned structs;
-- `hdist_elem` / `hdist_db` — the distinctness `checkStructs_addFields` wants,
-  where `Layout.field_ne_generated` spends `Dmmeta.check`'s `clashesGenerated`
-  clause. `hdist_db` **already** handles the self-list case;
-- `checkStructs_gen_llist`, `checkGlobals_gen_llist` — the struct and global
-  halves;
-- `field_lookups` — the five field equations, and `global_lookup`;
-- **`checkFun_simple`** (the seven one-statement bodies), **`checkFun_insert`**
-  and **`checkFun_remove`** — all nine `checkFun` obligations.
+### Three traps, all still live for the next template
 
-### The one obstacle: `field_lookups` assumes the two ctypes differ
-
-It carries `hne : mangle dbC.name ≠ mangle elemC.name`, and that hypothesis is
-**not** discharge-able in general: `Templates.Llist.Examples.selfDb` is a ctype
-that threads *itself*, `Dmmeta.check` accepts it, and `genLlist` emits a
-`Wf.check`-clean program for it. So `genWellFormed` cannot be assembled from
-`field_lookups` as it stands, and adding `hne` to `genWellFormed` would be
-weakening the statement — the schema is legitimate and the generator handles
-it.
-
-**What the self branch looks like.** Both `addFields` calls land on one struct,
-whose fields are `own ++ elemFields ++ dbFields`, and all five lookups go into
-that one list:
-
-```lean
-by_cases hne : dbN = elemN
-· -- self-list
-  have hboth := Layout.find?_addFields (n := dbN) (extra := dbFields nm elemN) _ hinnerE
-  rw [if_pos (beq_iff_eq.mpr (hen.trans hne.symm))] at hboth
-  -- the Pairwise comes from ONE `hdist_db` call, at the singly-extended struct
-  have hpw := hdist_db hchk hdb hfld elemN
-    ({ structOf d.withBuiltins elemC with
-       fields := (structOf d.withBuiltins elemC).fields ++ elemFields nm elemN })
-    (List.mem_map.mpr ⟨structOf d.withBuiltins elemC, …,
-       by rw [if_pos (beq_iff_eq.mpr hen)]⟩)
-    (hen.trans hne.symm)
-```
-then the same five `show`/`rw [NameWf.find?_field …]`/`rfl` triples, over
-`((own ++ elemFields) ++ dbFields)` instead of `own ++ elemFields`.
-
-**Two things that went wrong when this was attempted and reverted:**
-
-1. **Do not give `hboth` a type ascription.** Written out, the expected type
-   is `{ structOf … with fields := own ++ elemFields ++ dbFields }` and what
-   `find?_addFields` produces is `{ inner with fields := inner.fields ++ dbF }`
-   where `inner` is itself a structure update. They are defeq and Lean reports
-   a mismatch on the `let __src :=` form. Let the type be inferred and `rw` the
-   `if` inside it.
+1. **Do not give the extended-struct hypothesis a type ascription.** Written
+   out, the expected type is `{ structOf … with fields := own ++ e₁ ++ e₂ }`
+   and what `find?_addFields` produces is `{ inner with fields := inner.fields
+   ++ e₂ }` where `inner` is itself a structure update. They are defeq and Lean
+   reports a mismatch on the `let __src :=` form. Let the type be inferred and
+   `rw` the `if` inside it.
 2. **The `show` layout is load-bearing.** `show (do let fv ← … )` on one line
-   changes the `do` block's layout column and the parse fails at the next
-   `(`. Match the committed style exactly: `show (do` alone, then `let fv ← …`
-   on the following line — the whole `find?` application on that one line,
-   however long — then `some fv.2) = _` at the `let`'s column.
-
-**Then the assembly.** `genLlist d = some p` unwinds the `do` to give `dbName`,
-`dbC`, `fld`, `elemC`; `hdb`/`helem` from `Db.find?` membership, `hfld` from
-`List.find?` membership, `hroot` from `d.root = some dbName` with
-`Db.find?_name`, `hdbs` from `Dmmeta.check`'s root clause via
-`Layout.facts_of_check`, and `hes` from `Reftype.needsRecordArg .Llist`.
-`Wf.check p` is then `checkStructs_gen_llist ++ checkGlobals_gen_llist ++
-distinct(names_pairwise) ++ flatMap(checkFun_simple / _insert / _remove)`.
-
-`Thash` is the same shape with five functions. Two things are new there:
-`findDef` has a `forN` body, and `insertDef` has a `call` to `Find`, which
-needs `Wf.Ctx.fun?` to resolve it from `earlier` — `checkFun`'s `earlier` is
-`p.funs.take i` and `Find` is emitted first, so it is in the prefix, but no
-template has exercised that path.
+   changes the `do` block's layout column and the parse fails at the next `(`.
+   Write `show (do` alone, then `let fv ← …` on the following line — the whole
+   `find?` application on that one line, however long — then `some fv.2) = _`
+   at the `let`'s column.
+3. **`bind` must be in the simp set** before `Option.bind_eq_some_iff` can
+   unwind a generator's `do`. Without it the rewrite silently does nothing.
 
 ### Five findings, all one shape
 
