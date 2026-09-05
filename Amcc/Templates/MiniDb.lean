@@ -22,7 +22,7 @@ def poolNm : Pool.Names := Pool.names dbName poolFld
 def queueNm : Llist.Names := Llist.names dbName queueFld
 
 /-- Minimal schema declaring an inline array pool and intrusive list queue. -/
-def miniDb : Dmmeta.Db where
+def miniDb (cap : Nat) : Dmmeta.Db where
   ctypes :=
     [ { name   := elemName
       , fields := [ { name := "id",  arg := "u64", reftype := .Pkey }
@@ -30,7 +30,8 @@ def miniDb : Dmmeta.Db where
     , { name   := dbName
       , fields := [ { name := poolFld,  arg := elemName, reftype := .Inlary }
                   , { name := queueFld, arg := elemName, reftype := .Llist } ] } ]
-  root := some dbName
+  attrs  := [ { ctype := dbName, field := poolFld, data := .inlary cap } ]
+  root   := some dbName
 
 def insertOrderDef : FunDef where
   name   := "MiniDb_Insert"
@@ -43,6 +44,66 @@ def insertOrderDef : FunDef where
         (.block [ .assign (Llist.ptrFld "row" "id") (.rd (.var "id"))
                 , .assign (Llist.ptrFld "row" "qty") (.rd (.var "qty"))
                 , .call none queueNm.insertTail [.rd (.var "row")] ]) ]
+
+/-- Multi-template C AST generator synthesizing code directly from a `Db` schema. -/
+def genC (d : Dmmeta.Db) : Option Program := do
+  let dbName ← d.root
+  let full := d.withBuiltins
+  let dbC ← full.find? dbName
+  let poolFld ← dbC.fields.find? (fun f => f.reftype == .Inlary)
+  let queueFld ← dbC.fields.find? (fun f => f.reftype == .Llist)
+  let elemC ← full.find? poolFld.arg
+  let cap ← d.inlaryMax? dbC.name poolFld.name
+  let dbN := Dmmeta.mangle dbC.name
+  let elemN := Dmmeta.mangle elemC.name
+  let pNm := Pool.names dbN (Dmmeta.mangle poolFld.name)
+  let qNm := Llist.names dbN (Dmmeta.mangle queueFld.name)
+  let poolFldN := Dmmeta.mangle poolFld.name
+  let poolDefs :=
+    [ Pool.initDef pNm poolFldN cap elemN
+    , Pool.allocDef pNm elemN
+    , Pool.freeDef pNm elemN
+    , Pool.sizeDef pNm
+    , Pool.maxDef pNm cap ]
+  let queueDefs :=
+    [ Llist.initDef qNm elemN
+    , Llist.insertDef qNm elemN
+    , Llist.insertTailDef qNm elemN
+    , Llist.removeDef qNm elemN
+    , Llist.firstDef qNm elemN
+    , Llist.nextDef qNm elemN
+    , Llist.prevDef qNm elemN
+    , Llist.inQDef qNm elemN
+    , Llist.emptyQDef qNm elemN
+    , Llist.sizeDef qNm ]
+  let insDef : FunDef :=
+    { name   := dbN ++ "_Insert"
+    , params := [("id", .scalar .u64), ("qty", .scalar .u64)]
+    , ret    := none
+    , locals := [Llist.ptrLocal "row" elemN]
+    , body   := .block
+        [ .call (some "row") pNm.alloc []
+        , .when (.bin .ne (.rd (.var "row")) (.null (.strct elemN)))
+            (.block [ .assign (Llist.ptrFld "row" "id") (.rd (.var "id"))
+                    , .assign (Llist.ptrFld "row" "qty") (.rd (.var "qty"))
+                    , .call none qNm.insertTail [.rd (.var "row")] ]) ] }
+  let elemExt :=
+    [ (Pool.freeNextName, .ptr (.strct elemN))
+    , (qNm.next, .ptr (.strct elemN))
+    , (qNm.prev, .ptr (.strct elemN))
+    , (qNm.inlist, .scalar .bool) ]
+  let dbExt :=
+    [ (pNm.freeHead, .ptr (.strct elemN))
+    , (pNm.count, .scalar .u32)
+    , (qNm.head, .ptr (.strct elemN))
+    , (qNm.tail, .ptr (.strct elemN))
+    , (qNm.count, .scalar .u32) ]
+  some
+    { structs := Layout.addFields dbN dbExt
+                   (Layout.addFields elemN elemExt
+                     (Dmmeta.genStructs d))
+    , globals := Dmmeta.genGlobals d
+    , funs    := poolDefs ++ queueDefs ++ [insDef] }
 
 def elemStructDef : StructDef where
   name   := elemName
@@ -86,6 +147,9 @@ def genMiniDb (cap : Nat) : Program where
              , Llist.emptyQDef queueNm elemName
              , Llist.sizeDef queueNm
              , insertOrderDef ]
+
+theorem genC_miniDb (cap : Nat) :
+    genC (miniDb cap) = some (genMiniDb cap) := rfl
 
 /-- Insertion statement calling MiniDb_Insert(v.1, v.2). -/
 def insertStmt (v : UInt64 × UInt64) : Stmt :=
@@ -1271,6 +1335,43 @@ theorem mini_insert_forward_sim
       rw [h_abs_m'_val, h_abs_m_eq]
       simp
     exact ⟨m', free_rest', q :: live_qs, queue_es ++ [q], h_exec_full, I_rep_final, h_abs_refine⟩
+
+/-- Master forward simulation theorem for MiniDb derived from schema `miniDb cap`:
+    Executing the generated C program synthesized from `genC (miniDb cap)` on a well-formed
+    memory state `m` produces a state `m'` that preserves representation invariant `DbRepInv`
+    and refines the abstract state `absDb` with `v`. -/
+theorem mini_insert_forward_sim_schema
+    (cap fuel : Nat) (m : Mem) (v : UInt64 × UInt64)
+    {free_rest live_qs queue_es : List Path}
+    (I : DbRepInv m cap free_rest live_qs queue_es)
+    (hfree : free_rest ≠ [])
+    (hfuel : fuel ≥ queue_es.length + 2) :
+    ∃ (p : Program),
+      genC (miniDb cap) = some p ∧
+      ∃ m' free' live' es',
+        execStmt p fuel (insertStmt v) (m.toStore ∅) = .ok (m'.toStore ∅, .normal)
+        ∧ DbRepInv m' cap free' live' es'
+        ∧ absDb m' fuel = some ((absDb m fuel).getD [] ++ [v]) := by
+  have hp : genC (miniDb cap) = some (genMiniDb cap) := rfl
+  obtain ⟨m', free', live', es', hexec, I', habs⟩ :=
+    mini_insert_forward_sim cap fuel m v I hfree hfuel
+  exact ⟨genMiniDb cap, hp, m', free', live', es', hexec, I', habs⟩
+
+/-- Forward simulation theorem parameterized by any AST `p` matching `genC (miniDb cap)`. -/
+theorem mini_insert_forward_sim_of_gen
+    (cap fuel : Nat) (m : Mem) (v : UInt64 × UInt64)
+    {free_rest live_qs queue_es : List Path}
+    {p : Program} (hp : genC (miniDb cap) = some p)
+    (I : DbRepInv m cap free_rest live_qs queue_es)
+    (hfree : free_rest ≠ [])
+    (hfuel : fuel ≥ queue_es.length + 2) :
+    ∃ m' free' live' es',
+      execStmt p fuel (insertStmt v) (m.toStore ∅) = .ok (m'.toStore ∅, .normal)
+      ∧ DbRepInv m' cap free' live' es'
+      ∧ absDb m' fuel = some ((absDb m fuel).getD [] ++ [v]) := by
+  have h_eq : p = genMiniDb cap := Option.some.inj (hp.symm.trans (genC_miniDb cap))
+  subst h_eq
+  exact mini_insert_forward_sim cap fuel m v I hfree hfuel
 
 end MiniDb
 end Templates
