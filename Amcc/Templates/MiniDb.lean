@@ -1622,7 +1622,1491 @@ theorem mini_insert_forward_sim3
       execStmt (genMiniDb3 cap nb) fuel (insertStmt3 v) (m.toStore ∅) = .ok (m'.toStore ∅, .normal)
       ∧ DbRepInv3 m' cap nb (nb - 1) free' live' es' chains'
       ∧ absDb3 m' fuel = some ((absDb3 m fuel).getD [] ++ [v]) := by
-  sorry
+  let p := genMiniDb3 cap nb
+  cases hfr : free_rest with
+  | nil => contradiction
+  | cons q free_rest' =>
+    have hq_in_rows : q ∈ Pool.poolRows poolNm poolFld cap :=
+      I.pool.sub_free q (hfr ▸ by simp)
+    have hq_not_live : q ∉ live_qs :=
+      I.pool.disj q (hfr ▸ by simp)
+    have hq_not_in_queue : q ∉ queue_es :=
+      fun hq_q => hq_not_live (I.queue.sub q hq_q)
+    have hq_not_in_chains : q ∉ chains.flatten :=
+      fun hq_ch => hq_not_in_queue ((I.hash_queue_match q).mp hq_ch)
+    obtain ⟨d, hd⟩ : ∃ d, fuel = d + 1 := ⟨fuel - 1, by omega⟩
+    obtain ⟨d', hd'⟩ : ∃ d', d = d' + 1 := ⟨d - 1, by omega⟩
+    obtain ⟨d'', hd''⟩ : ∃ d'', d' = d'' + 1 := ⟨d' - 1, by omega⟩
+    obtain ⟨d''', hd'''⟩ : ∃ d''', d'' = d''' + 1 := ⟨d'' - 1, by omega⟩
+    obtain ⟨d'''', hd''''⟩ : ∃ d'''', d''' = d'''' + 1 := ⟨d''' - 1, by omega⟩
+
+    let callee' : Stmt → Store → Except Err (Store × Outcome) :=
+      match d''' with
+      | 0 => fun _ _ => .error .depth
+      | d5 + 1 => execStmt p d5
+
+    have hlook_ins : lookupFun p "MiniDb_Insert" = .ok (insertOrderDef3) := rfl
+    have hlook_alloc : lookupFun p poolNm.alloc = .ok (Pool.allocDef poolNm elemName) := rfl
+    have hlook_tail : lookupFun p queueNm.insertTail = .ok (Llist.insertTailDef queueNm elemName) := rfl
+    have hlook_hash_ins : lookupFun p hashNm.insert = .ok (Thash.insertDef hashNm elemName "id" (nb - 1)) := rfl
+    have hlook_hash_find : lookupFun p hashNm.find = .ok (Thash.findDef hashNm elemName "id" (nb - 1) cap) := rfl
+
+    have hno_pool : Pool.NamesOk poolNm := pool_names_ok3
+    have hno_queue : Llist.NamesOk queueNm := queue_names_ok3
+    have hno_hash : Thash.NamesOk hashNm := hash_names_ok3
+    have hkey_next : "id" ≠ hashNm.next := by decide
+    have hkey_inhash : "id" ≠ hashNm.inhash := by decide
+
+    have I_pool_init : Pool.PoolInv m poolNm poolFld cap (q :: free_rest') live_qs :=
+      hfr ▸ I.pool
+    obtain ⟨σ_alloc, h_exec_alloc, I_pool_alloc, hframe_alloc⟩ :=
+      exec_allocBody p (execStmt p d'') m poolNm elemName poolFld cap q free_rest' live_qs hno_pool I_pool_init
+    let m₁ := σ_alloc.toMem
+    let σ₀ := m.toStore [("id", .u32 v.1), ("qty", .u64 v.2), ("row", .null)]
+    let σ₁ := m₁.toStore [("id", .u32 v.1), ("qty", .u64 v.2), ("row", .ptr q)]
+
+    have hq_disj_freeHead : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q "id") = false := by
+      have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows "id" poolNm.freeHead (by decide)
+      rw [overlaps_symm]; exact h
+    have hq_disj_count : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q "id") = false := by
+      have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows "id" poolNm.count (by decide)
+      rw [overlaps_symm]; exact h
+    have hq_id_m1 : readMem m₁ (fldPath q "id") = readMem m (fldPath q "id") :=
+      hframe_alloc (fldPath q "id") hq_disj_freeHead hq_disj_count
+    obtain ⟨id_orig, hid_orig⟩ : ∃ w, readMem m (fldPath q "id") = some w :=
+      Option.isSome_iff_exists.mp (I.payload q hq_in_rows).1
+    have hread_id1 : σ₁.readPath (fldPath q "id") = some id_orig := by
+      rw [readMem_toStore, hq_id_m1, hid_orig]
+    obtain ⟨σ₂, h_exec_id, hw2⟩ :=
+      step_assign_ptrFld (p := p) (callee := execStmt p d') (σ := σ₁) (ptr := "row") (x := "id") (q := q)
+        (e := .rd (.var "id")) (v := id_orig) (w := .u32 v.1)
+        rfl hread_id1 rfl
+    let m₂ := σ₂.toMem
+    have hq_disj_freeHead_qty : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q "qty") = false := by
+      have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows "qty" poolNm.freeHead (by decide)
+      rw [overlaps_symm]; exact h
+    have hq_disj_count_qty : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q "qty") = false := by
+      have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows "qty" poolNm.count (by decide)
+      rw [overlaps_symm]; exact h
+    have hq_qty_m1 : readMem m₁ (fldPath q "qty") = readMem m (fldPath q "qty") :=
+      hframe_alloc (fldPath q "qty") hq_disj_freeHead_qty hq_disj_count_qty
+    obtain ⟨qty_orig, hqty_orig⟩ : ∃ w, readMem m (fldPath q "qty") = some w :=
+      Option.isSome_iff_exists.mp (I.payload q hq_in_rows).2
+    have hq_id_ne_qty : (fldPath q "id").overlaps (fldPath q "qty") = false :=
+      fldPath_ne_disjoint (by decide)
+    have hread_qty2 : σ₂.readPath (fldPath q "qty") = some qty_orig := by
+      rw [Store.readPath_writePath_disjoint hw2 hq_id_ne_qty, readMem_toStore, hq_qty_m1, hqty_orig]
+    have hloc_row2 : σ₂.getLocal "row" = some (.ptr q) := by
+      rw [Store.getLocal, Store.writePath_loc hw2]
+      rfl
+    have hloc_qty2 : σ₂.getLocal "qty" = some (.u64 v.2) := by
+      rw [Store.getLocal, Store.writePath_loc hw2]
+      rfl
+    have heval_qty2 : evalExpr σ₂ (.rd (.var "qty")) = .ok (.u64 v.2) := by
+      simp only [evalExpr, resolve, readLoc, hloc_qty2, bind, Except.bind]
+    obtain ⟨σ₃, h_exec_qty, hw3⟩ :=
+      step_assign_ptrFld (p := p) (callee := execStmt p d') (σ := σ₂) (ptr := "row") (x := "qty") (q := q)
+        (e := .rd (.var "qty")) (v := qty_orig) (w := .u64 v.2)
+        hloc_row2 hread_qty2 heval_qty2
+    let m₃ := σ₃.toMem
+    have hframe_m3_m1 : ∀ r,
+        (fldPath q "id").overlaps r = false →
+        (fldPath q "qty").overlaps r = false →
+        readMem m₃ r = readMem m₁ r := by
+      intro r hid hqty
+      have hrw3 : σ₃.readPath r = σ₂.readPath r :=
+        Store.readPath_writePath_disjoint hw3 hqty
+      have hrw2 : σ₂.readPath r = σ₁.readPath r :=
+        Store.readPath_writePath_disjoint hw2 hid
+      rw [readMem_toMem, hrw3, hrw2, readMem_toStore]
+
+    have hframe_m3 : ∀ r,
+        (fldPath q "id").overlaps r = false →
+        (fldPath q "qty").overlaps r = false →
+        (Pool.dbPath poolNm poolNm.freeHead).overlaps r = false →
+        (Pool.dbPath poolNm poolNm.count).overlaps r = false →
+        readMem m₃ r = readMem m r := by
+      intro r hid hqty hfree_hd hcnt
+      rw [hframe_m3_m1 r hid hqty, hframe_alloc r hfree_hd hcnt]
+
+    have I_queue3 : Llist.TailListInv m₃ queueNm (q :: live_qs) queue_es := by
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · intro r hr; exact List.mem_cons_of_mem q (I.queue.sub r hr)
+      · refine rowsDisjoint_sub I.pool.disj_rows ?_
+        intro r hr
+        cases List.mem_cons.mp hr with
+        | inl heq => rw [heq]; exact hq_in_rows
+        | inr hmem => exact I.pool.sub_live r hmem
+      · have hdb_hd : (fldPath q "id").overlaps (Llist.dbPath queueNm queueNm.head) = false :=
+          poolRows_mem_fld_disjoint_queueDb cap hq_in_rows "id" queueNm.head (by decide)
+        have hdb_qty : (fldPath q "qty").overlaps (Llist.dbPath queueNm queueNm.head) = false :=
+          poolRows_mem_fld_disjoint_queueDb cap hq_in_rows "qty" queueNm.head (by decide)
+        have hdb_fh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (Llist.dbPath queueNm queueNm.head) = false :=
+          I.disj_db poolNm.freeHead (by simp) queueNm.head (by simp)
+        have hdb_cnt : (Pool.dbPath poolNm poolNm.count).overlaps (Llist.dbPath queueNm queueNm.head) = false :=
+          I.disj_db poolNm.count (by simp) queueNm.head (by simp)
+        rw [hframe_m3 (Llist.dbPath queueNm queueNm.head) hdb_hd hdb_qty hdb_fh hdb_cnt]
+        exact I.queue.head
+      · have hdb_hd : (fldPath q "id").overlaps (Llist.dbPath queueNm queueNm.tail) = false :=
+          poolRows_mem_fld_disjoint_queueDb cap hq_in_rows "id" queueNm.tail (by decide)
+        have hdb_qty : (fldPath q "qty").overlaps (Llist.dbPath queueNm queueNm.tail) = false :=
+          poolRows_mem_fld_disjoint_queueDb cap hq_in_rows "qty" queueNm.tail (by decide)
+        have hdb_fh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (Llist.dbPath queueNm queueNm.tail) = false :=
+          I.disj_db poolNm.freeHead (by simp) queueNm.tail (by simp)
+        have hdb_cnt : (Pool.dbPath poolNm poolNm.count).overlaps (Llist.dbPath queueNm queueNm.tail) = false :=
+          I.disj_db poolNm.count (by simp) queueNm.tail (by simp)
+        rw [hframe_m3 (Llist.dbPath queueNm queueNm.tail) hdb_hd hdb_qty hdb_fh hdb_cnt]
+        exact I.queue.tail
+      · have hframe_next : ∀ r ∈ queue_es, readMem m₃ (fldPath r queueNm.next) = readMem m (fldPath r queueNm.next) := by
+          intro r hr
+          have hr_live := I.queue.sub r hr
+          have hr_row := I.pool.sub_live r hr_live
+          have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+          have hid : (fldPath q "id").overlaps (fldPath r queueNm.next) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hqty : (fldPath q "qty").overlaps (fldPath r queueNm.next) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.next) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.next poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.next) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.next poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          exact hframe_m3 (fldPath r queueNm.next) hid hqty hfh hcnt
+        exact Reaches.frame I.queue.chain hframe_next
+      · have hframe_prev : ∀ r ∈ queue_es, readMem m₃ (fldPath r queueNm.prev) = readMem m (fldPath r queueNm.prev) := by
+          intro r hr
+          have hr_live := I.queue.sub r hr
+          have hr_row := I.pool.sub_live r hr_live
+          have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+          have hid : (fldPath q "id").overlaps (fldPath r queueNm.prev) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hqty : (fldPath q "qty").overlaps (fldPath r queueNm.prev) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.prev) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.prev poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.prev) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.prev poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          exact hframe_m3 (fldPath r queueNm.prev) hid hqty hfh hcnt
+        exact Backlinked.frame queue_es .null I.queue.back hframe_prev
+      · intro r hr
+        cases List.mem_cons.mp hr with
+        | inl heq =>
+          have hq_eq : r = q := heq
+          have hq_inlist_disj := (payload_disjoint_queue q).2.2.1
+          have hq_qty_disj := (payload_disjoint_queue q).2.2.2.2.2
+          have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q queueNm.inlist) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.inlist poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q queueNm.inlist) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.inlist poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have hrd : readMem m₃ (fldPath q queueNm.inlist) = readMem m (fldPath q queueNm.inlist) :=
+            hframe_m3 (fldPath q queueNm.inlist) hq_inlist_disj hq_qty_disj hfh hcnt
+          rw [hq_eq, hrd]
+          have hfresh := I.fresh_queue q (hfr ▸ by simp)
+          simp [hfresh.inlist, hq_not_in_queue]
+        | inr hmem =>
+          have hr_row := I.pool.sub_live r hmem
+          have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hmem)
+          have hid : (fldPath q "id").overlaps (fldPath r queueNm.inlist) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hqty : (fldPath q "qty").overlaps (fldPath r queueNm.inlist) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.inlist) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.inlist poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.inlist) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.inlist poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          rw [hframe_m3 (fldPath r queueNm.inlist) hid hqty hfh hcnt]
+          exact I.queue.flags r hmem
+      · have hdb_hd : (fldPath q "id").overlaps (Llist.dbPath queueNm queueNm.count) = false :=
+          poolRows_mem_fld_disjoint_queueDb cap hq_in_rows "id" queueNm.count (by decide)
+        have hdb_qty : (fldPath q "qty").overlaps (Llist.dbPath queueNm queueNm.count) = false :=
+          poolRows_mem_fld_disjoint_queueDb cap hq_in_rows "qty" queueNm.count (by decide)
+        have hdb_fh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (Llist.dbPath queueNm queueNm.count) = false :=
+          I.disj_db poolNm.freeHead (by simp) queueNm.count (by simp)
+        have hdb_cnt : (Pool.dbPath poolNm poolNm.count).overlaps (Llist.dbPath queueNm queueNm.count) = false :=
+          I.disj_db poolNm.count (by simp) queueNm.count (by simp)
+        have h_cnt_eq : readMem m₃ (Llist.dbPath queueNm queueNm.count) = readMem m (Llist.dbPath queueNm queueNm.count) :=
+          hframe_m3 (Llist.dbPath queueNm queueNm.count) hdb_hd hdb_qty hdb_fh hdb_cnt
+        show readMem m₃ (Llist.dbPath queueNm queueNm.count) = some (.u32 (UInt32.ofNat queue_es.length))
+        rw [h_cnt_eq]
+        exact I.queue.count
+      · intro r hr
+        cases List.mem_cons.mp hr with
+        | inl heq =>
+          have hq_eq : r = q := heq
+          have hfresh := I.fresh_queue q (hfr ▸ by simp)
+          have hq_next_disj := (payload_disjoint_queue q).1
+          have hq_prev_disj := (payload_disjoint_queue q).2.1
+          have hq_inlist_disj := (payload_disjoint_queue q).2.2.1
+          have hq_qty_next_disj := (payload_disjoint_queue q).2.2.2.1
+          have hq_qty_prev_disj := (payload_disjoint_queue q).2.2.2.2.1
+          have hq_qty_inlist_disj := (payload_disjoint_queue q).2.2.2.2.2
+          have hfh_next : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q queueNm.next) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.next poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt_next : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q queueNm.next) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.next poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have hfh_prev : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q queueNm.prev) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.prev poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt_prev : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q queueNm.prev) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.prev poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have hfh_inlist : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q queueNm.inlist) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.inlist poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt_inlist : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q queueNm.inlist) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.inlist poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          rw [hq_eq]
+          rw [hframe_m3 (fldPath q queueNm.next) hq_next_disj hq_qty_next_disj hfh_next hcnt_next,
+              hframe_m3 (fldPath q queueNm.prev) hq_prev_disj hq_qty_prev_disj hfh_prev hcnt_prev,
+              hframe_m3 (fldPath q queueNm.inlist) hq_inlist_disj hq_qty_inlist_disj hfh_inlist hcnt_inlist]
+          exact ⟨by simp [hfresh.next], by simp [hfresh.prev], by simp [hfresh.inlist]⟩
+        | inr hmem =>
+          have hr_row := I.pool.sub_live r hmem
+          have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hmem)
+          have hid_next : (fldPath q "id").overlaps (fldPath r queueNm.next) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hid_prev : (fldPath q "id").overlaps (fldPath r queueNm.prev) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hid_inlist : (fldPath q "id").overlaps (fldPath r queueNm.inlist) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hqty_next : (fldPath q "qty").overlaps (fldPath r queueNm.next) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hqty_prev : (fldPath q "qty").overlaps (fldPath r queueNm.prev) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hqty_inlist : (fldPath q "qty").overlaps (fldPath r queueNm.inlist) = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have hfh_next : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.next) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.next poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt_next : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.next) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.next poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have hfh_prev : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.prev) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.prev poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt_prev : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.prev) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.prev poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have hfh_inlist : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.inlist) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.inlist poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt_inlist : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.inlist) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.inlist poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          rw [hframe_m3 (fldPath r queueNm.next) hid_next hqty_next hfh_next hcnt_next,
+              hframe_m3 (fldPath r queueNm.prev) hid_prev hqty_prev hfh_prev hcnt_prev,
+              hframe_m3 (fldPath r queueNm.inlist) hid_inlist hqty_inlist hfh_inlist hcnt_inlist]
+          exact I.queue.fields r hmem
+      · intro r hr
+        cases List.mem_cons.mp hr with
+        | inl heq => rw [heq]; exact poolRow_disjoint_queue_parent cap hq_in_rows
+        | inr hmem => exact poolRow_disjoint_queue_parent cap (I.pool.sub_live r hmem)
+
+    have hflag_q_m3 : σ₃.readPath (fldPath q queueNm.inlist) = some (.bool false) := by
+      have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q queueNm.inlist) = false := by
+        have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.inlist poolNm.freeHead (by decide)
+        rw [overlaps_symm]; exact h
+      have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q queueNm.inlist) = false := by
+        have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows queueNm.inlist poolNm.count (by decide)
+        rw [overlaps_symm]; exact h
+      have hid : (fldPath q "id").overlaps (fldPath q queueNm.inlist) = false := (payload_disjoint_queue q).2.2.1
+      have hqty : (fldPath q "qty").overlaps (fldPath q queueNm.inlist) = false := (payload_disjoint_queue q).2.2.2.2.2
+      have hfresh := I.fresh_queue q (hfr ▸ by simp)
+      change readMem m₃ (fldPath q queueNm.inlist) = some (.bool false)
+      rw [hframe_m3 (fldPath q queueNm.inlist) hid hqty hfh hcnt, hfresh.inlist]
+
+    let σ_tail_in := m₃.toStore [(Llist.parRow, .ptr q), (Llist.tmpOld, .null)]
+    have hI_tail_in : Llist.TailListInv σ_tail_in.toMem queueNm (q :: live_qs) queue_es := by
+      rw [Mem.toStore_toMem]; exact I_queue3
+    have hflag_tail_in : σ_tail_in.readPath (fldPath q queueNm.inlist) = some (.bool false) := by
+      rw [readMem_toStore, readMem_toMem]; exact hflag_q_m3
+
+    obtain ⟨σ_tail_out, h_exec_tail, I_queue_final, _, _, _, _, hframe_tail⟩ :=
+      Llist.exec_insertTailBody (p := p) (callee := callee') (elem := elemName) (σ := σ_tail_in)
+        hno_queue hI_tail_in (by simp) hflag_tail_in rfl rfl
+    let m₄ := σ_tail_out.toMem
+
+    have hframe_tail_m : ∀ r,
+        (∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps r = false) →
+        (∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps r = false) →
+        (∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps r = false) →
+        readMem m₄ r = readMem m₃ r := by
+      intro r hdb hqf htn
+      rw [readMem_toMem, hframe_tail r hdb hqf htn, readMem_toStore]
+
+    have hq_id_m4 : readMem m₄ (fldPath q "id") = some (.u32 v.1) := by
+      have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath q "id") = false := by
+        intro x hx
+        have h := poolRows_mem_fld_disjoint_queueDb cap hq_in_rows "id" x (queue_fields_ne_poolFld hx)
+        rw [overlaps_symm]; exact h
+      have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath q "id") = false := by
+        intro y hy
+        rcases List.mem_cons.mp hy with rfl | hy'
+        · rw [overlaps_symm]; exact (payload_disjoint_queue q).1
+        · rcases List.mem_cons.mp hy' with rfl | hy''
+          · rw [overlaps_symm]; exact (payload_disjoint_queue q).2.1
+          · rcases List.mem_cons.mp hy'' with rfl | hnil
+            · rw [overlaps_symm]; exact (payload_disjoint_queue q).2.2.1
+            · nomatch hnil
+      have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath q "id") = false := by
+        intro tail_node htl
+        have htn_mem := getLast?_mem htl
+        have htn_live := I.queue.sub tail_node htn_mem
+        have htn_row := I.pool.sub_live tail_node htn_live
+        have htn_ne_q : tail_node ≠ q := fun heq => hq_not_live (heq ▸ htn_live)
+        exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row q hq_in_rows htn_ne_q)
+      rw [hframe_tail_m (fldPath q "id") hdb hqf htn, readMem_toMem]
+      rw [Store.readPath_writePath_disjoint hw3 (fldPath_ne_disjoint (by decide)),
+          Store.readPath_writePath_self hw2]
+
+    have hq_qty_m4 : readMem m₄ (fldPath q "qty") = some (.u64 v.2) := by
+      have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath q "qty") = false := by
+        intro x hx
+        have h := poolRows_mem_fld_disjoint_queueDb cap hq_in_rows "qty" x (queue_fields_ne_poolFld hx)
+        rw [overlaps_symm]; exact h
+      have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath q "qty") = false := by
+        intro y hy
+        rcases List.mem_cons.mp hy with rfl | hy'
+        · rw [overlaps_symm]; exact (payload_disjoint_queue q).2.2.2.1
+        · rcases List.mem_cons.mp hy' with rfl | hy''
+          · rw [overlaps_symm]; exact (payload_disjoint_queue q).2.2.2.2.1
+          · rcases List.mem_cons.mp hy'' with rfl | hnil
+            · rw [overlaps_symm]; exact (payload_disjoint_queue q).2.2.2.2.2
+            · nomatch hnil
+      have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath q "qty") = false := by
+        intro tail_node htl
+        have htn_mem := getLast?_mem htl
+        have htn_live := I.queue.sub tail_node htn_mem
+        have htn_row := I.pool.sub_live tail_node htn_live
+        have htn_ne_q : tail_node ≠ q := fun heq => hq_not_live (heq ▸ htn_live)
+        exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row q hq_in_rows htn_ne_q)
+      rw [hframe_tail_m (fldPath q "qty") hdb hqf htn, readMem_toMem,
+          Store.readPath_writePath_self hw3]
+
+    have hq_hash_inhash_m4 : readMem m₄ (fldPath q hashNm.inhash) = some (.bool false) := by
+      have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath q hashNm.inhash) = false := by
+        intro x hx
+        have h := poolRows_mem_fld_disjoint_queueDb cap hq_in_rows hashNm.inhash x (queue_fields_ne_poolFld hx)
+        rw [overlaps_symm]; exact h
+      have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath q hashNm.inhash) = false := by
+        intro y hy
+        rcases List.mem_cons.mp hy with rfl | hy'
+        · exact (queue_disjoint_hash q).2.1
+        · rcases List.mem_cons.mp hy' with rfl | hy''
+          · exact (queue_disjoint_hash q).2.2.2.1
+          · rcases List.mem_cons.mp hy'' with rfl | hnil
+            · exact (queue_disjoint_hash q).2.2.2.2.2
+            · nomatch hnil
+      have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath q hashNm.inhash) = false := by
+        intro tail_node htl
+        have htn_mem := getLast?_mem htl
+        have htn_live := I.queue.sub tail_node htn_mem
+        have htn_row := I.pool.sub_live tail_node htn_live
+        have htn_ne_q : tail_node ≠ q := fun heq => hq_not_live (heq ▸ htn_live)
+        exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row q hq_in_rows htn_ne_q)
+      have hid : (fldPath q "id").overlaps (fldPath q hashNm.inhash) = false := (payload_disjoint_hash q).2.1
+      have hqty : (fldPath q "qty").overlaps (fldPath q hashNm.inhash) = false := (payload_disjoint_hash q).2.2.2
+      have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q hashNm.inhash) = false := by
+        have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows hashNm.inhash poolNm.freeHead (by decide)
+        rw [overlaps_symm]; exact h
+      have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q hashNm.inhash) = false := by
+        have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows hashNm.inhash poolNm.count (by decide)
+        rw [overlaps_symm]; exact h
+      rw [hframe_tail_m (fldPath q hashNm.inhash) hdb hqf htn,
+          hframe_m3 (fldPath q hashNm.inhash) hid hqty hfh hcnt]
+      exact I.fresh_hash q (hfr ▸ by simp)
+
+    have h_frame_m4_m : ∀ r ∈ Pool.poolRows poolNm poolFld cap, r ≠ q →
+        (∀ fld ∈ ["id", "qty", hashNm.next, hashNm.inhash], readMem m₄ (fldPath r fld) = readMem m (fldPath r fld)) := by
+      intro r hr hr_ne_q fld hfld
+      have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath r fld) = false := by
+        intro x hx
+        have h := poolRows_mem_fld_disjoint_queueDb cap hr fld x (queue_fields_ne_poolFld hx)
+        rw [overlaps_symm]; exact h
+      have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath r fld) = false := by
+        intro y _
+        exact fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+      have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath r fld) = false := by
+        intro tail_node htl
+        have htn_mem := getLast?_mem htl
+        have htn_live := I.queue.sub tail_node htn_mem
+        have htn_row := I.pool.sub_live tail_node htn_live
+        by_cases heq : tail_node = r
+        · rw [heq]
+          rcases List.mem_cons.mp hfld with rfl | hfld'
+          · exact fldPath_ne_disjoint (by decide)
+          · rcases List.mem_cons.mp hfld' with rfl | hfld''
+            · exact fldPath_ne_disjoint (by decide)
+            · rcases List.mem_cons.mp hfld'' with rfl | hfld'''
+              · exact (queue_disjoint_hash r).1
+              · rcases List.mem_cons.mp hfld''' with rfl | hnil
+                · exact (queue_disjoint_hash r).2.1
+                · nomatch hnil
+        · exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row r hr heq)
+      have hid : (fldPath q "id").overlaps (fldPath r fld) = false :=
+        fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+      have hqty : (fldPath q "qty").overlaps (fldPath r fld) = false :=
+        fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+      have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r fld) = false := by
+        have h := poolRows_mem_fld_disjoint_poolDb cap hr fld poolNm.freeHead (by
+          rcases List.mem_cons.mp hfld with rfl | hfld'
+          · decide
+          · rcases List.mem_cons.mp hfld' with rfl | hfld''
+            · decide
+            · rcases List.mem_cons.mp hfld'' with rfl | hfld'''
+              · decide
+              · rcases List.mem_cons.mp hfld''' with rfl | hnil
+                · decide
+                · nomatch hnil)
+        rw [overlaps_symm]; exact h
+      have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r fld) = false := by
+        have h := poolRows_mem_fld_disjoint_poolDb cap hr fld poolNm.count (by
+          rcases List.mem_cons.mp hfld with rfl | hfld'
+          · decide
+          · rcases List.mem_cons.mp hfld' with rfl | hfld''
+            · decide
+            · rcases List.mem_cons.mp hfld'' with rfl | hfld'''
+              · decide
+              · rcases List.mem_cons.mp hfld''' with rfl | hnil
+                · decide
+                · nomatch hnil)
+        rw [overlaps_symm]; exact h
+      rw [hframe_tail_m (fldPath r fld) hdb hqf htn,
+          hframe_m3 (fldPath r fld) hid hqty hfh hcnt]
+
+    have h_frame_m4_buckets : ∀ b < nb, readMem m₄ (Thash.bucketPath hashNm b) = readMem m (Thash.bucketPath hashNm b) := by
+      intro b hb_lt
+      have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (Thash.bucketPath hashNm b) = false := by
+        intro x hx; exact I.disj_queue_hash x hx b
+      have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (Thash.bucketPath hashNm b) = false := by
+        intro y _
+        exact poolRows_mem_fld_disjoint_hashBucket cap hq_in_rows y b
+      have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (Thash.bucketPath hashNm b) = false := by
+        intro tail_node htl
+        have htn_mem := getLast?_mem htl
+        have htn_live := I.queue.sub tail_node htn_mem
+        have htn_row := I.pool.sub_live tail_node htn_live
+        exact poolRows_mem_fld_disjoint_hashBucket cap htn_row queueNm.next b
+      have hid : (fldPath q "id").overlaps (Thash.bucketPath hashNm b) = false :=
+        poolRows_mem_fld_disjoint_hashBucket cap hq_in_rows "id" b
+      have hqty : (fldPath q "qty").overlaps (Thash.bucketPath hashNm b) = false :=
+        poolRows_mem_fld_disjoint_hashBucket cap hq_in_rows "qty" b
+      have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (Thash.bucketPath hashNm b) = false :=
+        I.disj_pool_hash poolNm.freeHead (by simp) b
+      have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (Thash.bucketPath hashNm b) = false :=
+        I.disj_pool_hash poolNm.count (by simp) b
+      rw [hframe_tail_m (Thash.bucketPath hashNm b) hdb hqf htn,
+          hframe_m3 (Thash.bucketPath hashNm b) hid hqty hfh hcnt]
+
+    have h_frame_m4_hash_cnt : readMem m₄ (Thash.dbPath hashNm hashNm.count) = readMem m (Thash.dbPath hashNm hashNm.count) := by
+      have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (Thash.dbPath hashNm hashNm.count) = false := by
+        intro x hx; exact I.disj_queue_hash_cnt x hx
+      have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (Thash.dbPath hashNm hashNm.count) = false := by
+        intro y _
+        exact poolRows_mem_fld_disjoint_hashDb cap hq_in_rows y hashNm.count (by decide)
+      have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (Thash.dbPath hashNm hashNm.count) = false := by
+        intro tail_node htl
+        have htn_mem := getLast?_mem htl
+        have htn_live := I.queue.sub tail_node htn_mem
+        have htn_row := I.pool.sub_live tail_node htn_live
+        exact poolRows_mem_fld_disjoint_hashDb cap htn_row queueNm.next hashNm.count (by decide)
+      have hid : (fldPath q "id").overlaps (Thash.dbPath hashNm hashNm.count) = false :=
+        poolRows_mem_fld_disjoint_hashDb cap hq_in_rows "id" hashNm.count (by decide)
+      have hqty : (fldPath q "qty").overlaps (Thash.dbPath hashNm hashNm.count) = false :=
+        poolRows_mem_fld_disjoint_hashDb cap hq_in_rows "qty" hashNm.count (by decide)
+      have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (Thash.dbPath hashNm hashNm.count) = false :=
+        I.disj_pool_hash_cnt poolNm.freeHead (by simp)
+      have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (Thash.dbPath hashNm hashNm.count) = false :=
+        I.disj_pool_hash_cnt poolNm.count (by simp)
+      rw [hframe_tail_m (Thash.dbPath hashNm hashNm.count) hdb hqf htn,
+          hframe_m3 (Thash.dbPath hashNm hashNm.count) hid hqty hfh hcnt]
+
+    have I_thash4 : Thash.RepInv m₄ hashNm elemName "id" (nb - 1) cap nb (Pool.poolRows poolNm poolFld cap) chains := by
+      refine ⟨I.thash.nb_len, I.thash.sub, I.thash.disj, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · intro b hb_lt
+        have hb_inv := I.thash.buckets b hb_lt
+        refine ⟨?_, ?_, ?_, hb_inv.fits⟩
+        · rw [h_frame_m4_buckets b hb_lt]; exact hb_inv.head
+        · have hchain_frame : ∀ r ∈ chains[b]' (by rw [I.thash.nb_len]; exact hb_lt), readMem m₄ (fldPath r hashNm.next) = readMem m (fldPath r hashNm.next) := by
+            intro r hr
+            have hr_flat : r ∈ chains.flatten := mem_flatten_of_mem_bucket (by rw [I.thash.nb_len]; exact hb_lt) hr
+            have hr_queue : r ∈ queue_es := (I.hash_queue_match r).mp hr_flat
+            have hr_live := I.queue.sub r hr_queue
+            have hr_row := I.pool.sub_live r hr_live
+            have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+            exact h_frame_m4_m r hr_row hr_ne_q hashNm.next (by simp)
+          exact Reaches.frame hb_inv.chain hchain_frame
+        · intro r hr
+          have hr_flat : r ∈ chains.flatten := mem_flatten_of_mem_bucket (by rw [I.thash.nb_len]; exact hb_lt) hr
+          have hr_queue : r ∈ queue_es := (I.hash_queue_match r).mp hr_flat
+          have hr_live := I.queue.sub r hr_queue
+          have hr_row := I.pool.sub_live r hr_live
+          have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+          have h_id := h_frame_m4_m r hr_row hr_ne_q "id" (by simp)
+          rw [h_id]
+          exact hb_inv.keys r hr
+      · intro b hb_lt r hr
+        have hr_flat : r ∈ chains.flatten := mem_flatten_of_mem_bucket (by rw [I.thash.nb_len]; exact hb_lt) hr
+        have hr_queue : r ∈ queue_es := (I.hash_queue_match r).mp hr_flat
+        have hr_live := I.queue.sub r hr_queue
+        have hr_row := I.pool.sub_live r hr_live
+        have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+        have h_id := h_frame_m4_m r hr_row hr_ne_q "id" (by simp)
+        rw [h_id]
+        exact I.thash.hash_mod b hb_lt r hr
+      · intro b1 hb1 b2 hb2 q1 hq1 q2 hq2 k' hk1 hk2
+        have hq1_flat : q1 ∈ chains.flatten := mem_flatten_of_mem_bucket (by rw [I.thash.nb_len]; exact hb1) hq1
+        have hq2_flat : q2 ∈ chains.flatten := mem_flatten_of_mem_bucket (by rw [I.thash.nb_len]; exact hb2) hq2
+        have hq1_queue : q1 ∈ queue_es := (I.hash_queue_match q1).mp hq1_flat
+        have hq1_live := I.queue.sub q1 hq1_queue
+        have hq1_row := I.pool.sub_live q1 hq1_live
+        have hq1_ne_q : q1 ≠ q := fun heq_q => hq_not_live (heq_q ▸ hq1_live)
+        have hq2_queue : q2 ∈ queue_es := (I.hash_queue_match q2).mp hq2_flat
+        have hq2_live := I.queue.sub q2 hq2_queue
+        have hq2_row := I.pool.sub_live q2 hq2_live
+        have hq2_ne_q : q2 ≠ q := fun heq_q => hq_not_live (heq_q ▸ hq2_live)
+        have h_id1 := h_frame_m4_m q1 hq1_row hq1_ne_q "id" (by simp)
+        have h_id2 := h_frame_m4_m q2 hq2_row hq2_ne_q "id" (by simp)
+        rw [h_id1] at hk1
+        rw [h_id2] at hk2
+        exact I.thash.keys_unique b1 hb1 b2 hb2 q1 hq1 q2 hq2 k' hk1 hk2
+      · intro r hr
+        by_cases heq_r : r = q
+        · rcases heq_r.symm with rfl
+          rw [hq_hash_inhash_m4]
+          constructor
+          · intro h_abs; cases h_abs
+          · intro h_in_chains
+            have hq_in_q := (I.hash_queue_match q).mp h_in_chains
+            exact absurd hq_in_q hq_not_in_queue
+        · have h_inhash := h_frame_m4_m r hr heq_r hashNm.inhash (by simp)
+          rw [h_inhash]
+          exact I.thash.flags r hr
+      · rw [h_frame_m4_hash_cnt]; exact I.thash.count
+      · intro r hr
+        by_cases heq_r : r = q
+        · rcases heq_r.symm with rfl
+          have hdb_next : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath q hashNm.next) = false := by
+            intro x hx
+            have h := poolRows_mem_fld_disjoint_queueDb cap hq_in_rows hashNm.next x (queue_fields_ne_poolFld hx)
+            rw [overlaps_symm]; exact h
+          have hqf_next : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath q hashNm.next) = false := by
+            intro y hy
+            rcases List.mem_cons.mp hy with rfl | hy'
+            · exact (queue_disjoint_hash q).1
+            · rcases List.mem_cons.mp hy' with rfl | hy''
+              · exact (queue_disjoint_hash q).2.2.1
+              · rcases List.mem_cons.mp hy'' with rfl | hnil
+                · exact (queue_disjoint_hash q).2.2.2.2.1
+                · nomatch hnil
+          have htn_next : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath q hashNm.next) = false := by
+            intro tail_node htl
+            have htn_mem := getLast?_mem htl
+            have htn_live := I.queue.sub tail_node htn_mem
+            have htn_row := I.pool.sub_live tail_node htn_live
+            have htn_ne_q : tail_node ≠ q := fun heq => hq_not_live (heq ▸ htn_live)
+            exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row q hq_in_rows htn_ne_q)
+          have hid_next : (fldPath q "id").overlaps (fldPath q hashNm.next) = false := (payload_disjoint_hash q).1
+          have hqty_next : (fldPath q "qty").overlaps (fldPath q hashNm.next) = false := (payload_disjoint_hash q).2.2.1
+          have hfh_next : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath q hashNm.next) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows hashNm.next poolNm.freeHead (by decide)
+            rw [overlaps_symm]; exact h
+          have hcnt_next : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath q hashNm.next) = false := by
+            have h := poolRows_mem_fld_disjoint_poolDb cap hq_in_rows hashNm.next poolNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_next : readMem m₄ (fldPath q hashNm.next) = readMem m (fldPath q hashNm.next) := by
+            rw [hframe_tail_m (fldPath q hashNm.next) hdb_next hqf_next htn_next,
+                hframe_m3 (fldPath q hashNm.next) hid_next hqty_next hfh_next hcnt_next]
+          refine ⟨by rw [h_next]; exact (I.thash.fields q hq_in_rows).1, by rw [hq_hash_inhash_m4]; rfl, by rw [hq_id_m4]; rfl⟩
+        · have h_next := h_frame_m4_m r hr heq_r hashNm.next (by simp)
+          have h_inhash := h_frame_m4_m r hr heq_r hashNm.inhash (by simp)
+          have h_id := h_frame_m4_m r hr heq_r "id" (by simp)
+          rw [h_next, h_inhash, h_id]
+          exact I.thash.fields r hr
+      · intro r hr
+        exact I.thash.parent r hr
+
+    have h_fresh4 : ∀ q', (v.1, q') ∉ Thash.elems m₄ "id" chains := by
+      intro q' h_in
+      rw [Thash.mem_elems_iff] at h_in
+      obtain ⟨hq'_flat, hq'_id⟩ := h_in
+      have hq'_queue : q' ∈ queue_es := (I.hash_queue_match q').mp hq'_flat
+      have hq'_live := I.queue.sub q' hq'_queue
+      have hq'_row := I.pool.sub_live q' hq'_live
+      have hq'_ne_q : q' ≠ q := fun heq => hq_not_live (heq ▸ hq'_live)
+      have h_id := h_frame_m4_m q' hq'_row hq'_ne_q "id" (by simp)
+      rw [h_id] at hq'_id
+      have h_in_m : (v.1, q') ∈ Thash.elems m "id" chains := Thash.mem_elems_iff.mpr ⟨hq'_flat, hq'_id⟩
+      exact h_fresh q' h_in_m
+
+    obtain ⟨σ5, h_exec_hash, I_thash_final, hq_inhash_m5, hq_next_m5, hq_bkt_m5, h_cnt_m5, hframe_hash⟩ :=
+      Thash.exec_insertBody (d := d'''')
+        hlook_hash_find hno_hash hkey_next hkey_inhash I_thash4
+        hq_in_rows hq_not_in_chains hq_hash_inhash_m4 hq_id_m4 hb hfits h_fresh4
+    let m' := σ5.toMem
+
+    have h_exec_full : execStmt p fuel (insertStmt3 v) (m.toStore ∅) = .ok (m'.toStore ∅, .normal) := by
+      rw [hd]
+      show execAt p (execStmt p d) (.call none "MiniDb_Insert" [.lit (.u32 v.1), .lit (.u64 v.2)]) (m.toStore ∅) = _
+      have h_frame_ins : buildFrame (m.toStore ∅).toMem (insertOrderDef3) [Value.u32 v.1, Value.u64 v.2]
+          = .ok [("id", .u32 v.1), ("qty", .u64 v.2), ("row", .null)] := rfl
+      simp only [execAt, hlook_ins, evalExpr, bind, Except.bind, pure, Except.pure, List.mapM_cons, List.mapM_nil, h_frame_ins]
+      rw [hd']
+      show (do let (σ₁, out) ← execAt p (execStmt p d') (insertOrderDef3).body σ₀; .ok (σ₁.toMem.toStore ∅, Outcome.normal)) = _
+      have h_body : (insertOrderDef3).body =
+        .seq (.call (some "row") poolNm.alloc [])
+          (.cond (.bin .ne (.rd (.var "row")) (.null (.strct elemName)))
+            (.seq (.assign (Llist.ptrFld "row" "id") (.rd (.var "id")))
+              (.seq (.assign (Llist.ptrFld "row" "qty") (.rd (.var "qty")))
+                (.seq (.call none queueNm.insertTail [.rd (.var "row")])
+                  (.call none hashNm.insert [.rd (.var "row")]))))
+            .skip) := rfl
+      rw [h_body]
+      rw [execAt_seq']
+      have h_alloc_step : execAt p (execStmt p d') (.call (some "row") poolNm.alloc []) σ₀
+          = .ok (σ₁, Outcome.normal) := by
+        simp only [execAt, hlook_alloc]
+        have h_frame_alloc : buildFrame σ₀.toMem (Pool.allocDef poolNm elemName) []
+            = .ok [(Pool.tmpH, Value.null)] := rfl
+        simp only [List.mapM_nil, h_frame_alloc, pure, Except.pure, bind, Except.bind]
+        dsimp [σ₀]
+        have h_alloc_step_call : execStmt p d' (Pool.allocDef poolNm elemName).body (m.toStore [(Pool.tmpH, Value.null)])
+            = .ok (σ_alloc, .ret (some (.ptr q))) := by
+          rw [hd'', execStmt_eq_execAt]
+          exact h_exec_alloc
+        rw [h_alloc_step_call]
+        rfl
+      rw [h_alloc_step]
+      simp only [bind, Except.bind]
+      rw [execAt_cond']
+      have hcond_true : evalExpr σ₁ (.bin .ne (.rd (.var "row")) (.null (.strct elemName)))
+          = .ok (.bool true) := rfl
+      rw [hcond_true]
+      simp only [bind, Except.bind]
+      rw [execAt_seq', h_exec_id]
+      simp only [bind, Except.bind]
+      rw [execAt_seq', h_exec_qty]
+      simp only [bind, Except.bind]
+      rw [execAt_seq']
+      have h_tail_step : execAt p (execStmt p d') (.call none queueNm.insertTail [.rd (.var "row")]) σ₃
+          = .ok (m₄.toStore σ₃.loc, Outcome.normal) := by
+        simp only [execAt, hlook_tail]
+        have hloc_row3 : σ₃.getLocal "row" = some (.ptr q) := by
+          rw [Store.getLocal, Store.writePath_loc hw3, Store.writePath_loc hw2]
+          rfl
+        simp only [evalExpr, resolve, readLoc, hloc_row3,
+                   bind, Except.bind, List.mapM_cons, List.mapM_nil, pure, Except.pure]
+        have h_frame_tail : buildFrame σ₃.toMem (Llist.insertTailDef queueNm elemName) [.ptr q]
+            = .ok [(Llist.parRow, .ptr q), (Llist.tmpOld, .null)] := rfl
+        rw [h_frame_tail]
+        dsimp [bind, Except.bind]
+        have h_tail_step_call : execStmt p d' (Llist.insertTailDef queueNm elemName).body (σ₃.toMem.toStore [(Llist.parRow, Value.ptr q), (Llist.tmpOld, Value.null)])
+            = .ok (σ_tail_out, Outcome.normal) := by
+          rw [hd'', hd''', execStmt_eq_execAt]
+          exact h_exec_tail
+        rw [h_tail_step_call]
+      rw [h_tail_step]
+      simp only [bind, Except.bind]
+      have h_hash_step : execAt p (execStmt p d') (.call none hashNm.insert [.rd (.var "row")]) (m₄.toStore σ₃.loc)
+          = .ok (m'.toStore σ₃.loc, Outcome.normal) := by
+        simp only [execAt, hlook_hash_ins]
+        have hloc_row4 : (m₄.toStore σ₃.loc).getLocal "row" = some (.ptr q) := by
+          rw [Store.getLocal, Store.writePath_loc hw3, Store.writePath_loc hw2]
+          rfl
+        simp only [evalExpr, resolve, readLoc, hloc_row4,
+                   bind, Except.bind, List.mapM_cons, List.mapM_nil, pure, Except.pure]
+        have h_frame_hash_call : buildFrame (m₄.toStore σ₃.loc).toMem (Thash.insertDef hashNm elemName "id" (nb - 1)) [.ptr q]
+            = .ok [(Thash.parRow, .ptr q), (Thash.tmpB, .u32 0), (Thash.tmpP, .null)] := rfl
+        rw [h_frame_hash_call]
+        dsimp [bind, Except.bind]
+        have h_hash_step_call : execStmt p d' (Thash.insertDef hashNm elemName "id" (nb - 1)).body
+            (m₄.toStore [(Thash.parRow, .ptr q), (Thash.tmpB, .u32 0), (Thash.tmpP, .null)])
+            = .ok (σ5, .ret (some (.bool true))) := by
+          rw [hd'', hd''', hd'''', execStmt_eq_execAt]
+          exact h_exec_hash
+        rw [h_hash_step_call]
+        rfl
+      rw [h_hash_step]
+      rfl
+
+    have hb_len : (v.1 &&& UInt32.ofNat (nb - 1)).toNat < chains.length := by
+      rw [I.thash.nb_len]; exact hb
+    have I_rep_final : DbRepInv3 m' cap nb (nb - 1) free_rest' (q :: live_qs) (queue_es ++ [q])
+        (chains.set (v.1 &&& UInt32.ofNat (nb - 1)).toNat (q :: chains[(v.1 &&& UInt32.ofNat (nb - 1)).toNat]'hb_len)) := by
+      refine ⟨?_, ?_, I_thash_final, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · refine ⟨I_pool_alloc.disj_rows, I_pool_alloc.sub_free, I_pool_alloc.sub_live, I_pool_alloc.nodup_free, I_pool_alloc.nodup_live, I_pool_alloc.disj, ?_, ?_, ?_, ?_, I_pool_alloc.parent⟩
+        · have h_disj_hash_next : (fldPath q hashNm.next).overlaps (Pool.dbPath poolNm poolNm.freeHead) = false :=
+            poolRows_mem_fld_disjoint_poolDb cap hq_in_rows hashNm.next poolNm.freeHead (by decide)
+          have h_disj_hash_inhash : (fldPath q hashNm.inhash).overlaps (Pool.dbPath poolNm poolNm.freeHead) = false :=
+            poolRows_mem_fld_disjoint_poolDb cap hq_in_rows hashNm.inhash poolNm.freeHead (by decide)
+          have h_disj_bucket : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (Pool.dbPath poolNm poolNm.freeHead) = false := by
+            have h := I.disj_pool_hash poolNm.freeHead (by simp) (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_hash_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (Pool.dbPath poolNm poolNm.freeHead) = false := by
+            have h := I.disj_pool_hash_cnt poolNm.freeHead (by simp)
+            rw [overlaps_symm]; exact h
+          rw [hframe_hash (Pool.dbPath poolNm poolNm.freeHead) h_disj_hash_next h_disj_hash_inhash h_disj_bucket h_disj_hash_cnt]
+          have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (Pool.dbPath poolNm poolNm.freeHead) = false := by
+            intro x hx; have h := I.disj_db poolNm.freeHead (by simp) x hx; rw [overlaps_symm]; exact h
+          have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (Pool.dbPath poolNm poolNm.freeHead) = false := by
+            intro y _; exact poolRows_mem_fld_disjoint_poolDb cap hq_in_rows y poolNm.freeHead (by decide)
+          have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (Pool.dbPath poolNm poolNm.freeHead) = false := by
+            intro tail_node htl
+            have htn_mem := getLast?_mem htl
+            have htn_live := I.queue.sub tail_node htn_mem
+            have htn_row := I.pool.sub_live tail_node htn_live
+            exact poolRows_mem_fld_disjoint_poolDb cap htn_row queueNm.next poolNm.freeHead (by decide)
+          rw [hframe_tail_m (Pool.dbPath poolNm poolNm.freeHead) hdb hqf htn]
+          have hid : (fldPath q "id").overlaps (Pool.dbPath poolNm poolNm.freeHead) = false :=
+            poolRows_mem_fld_disjoint_poolDb cap hq_in_rows "id" poolNm.freeHead (by decide)
+          have hqty : (fldPath q "qty").overlaps (Pool.dbPath poolNm poolNm.freeHead) = false :=
+            poolRows_mem_fld_disjoint_poolDb cap hq_in_rows "qty" poolNm.freeHead (by decide)
+          rw [hframe_m3_m1 (Pool.dbPath poolNm poolNm.freeHead) hid hqty]
+          exact I_pool_alloc.head
+        · have hframe_free : ∀ r ∈ free_rest', readMem m' (fldPath r Pool.freeNextName) = readMem m₁ (fldPath r Pool.freeNextName) := by
+            intro r hr
+            have hr_in_free : r ∈ free_rest := hfr ▸ List.mem_cons_of_mem q hr
+            have hr_row := I.pool.sub_free r (hfr ▸ hr_in_free)
+            have hr_ne_q : r ≠ q := by intro heq; subst heq; exact (List.nodup_cons.mp (hfr ▸ I.pool.nodup_free)).1 hr
+            have h_disj_hash_next : (fldPath q hashNm.next).overlaps (fldPath r Pool.freeNextName) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have h_disj_hash_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r Pool.freeNextName) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have h_disj_bucket : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r Pool.freeNextName) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row Pool.freeNextName (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_hash_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r Pool.freeNextName) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap hr_row Pool.freeNextName hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            rw [hframe_hash (fldPath r Pool.freeNextName) h_disj_hash_next h_disj_hash_inhash h_disj_bucket h_disj_hash_cnt]
+            have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro x hx
+              have h := poolRows_mem_fld_disjoint_queueDb cap hr_row Pool.freeNextName x (queue_fields_ne_poolFld hx)
+              rw [overlaps_symm]; exact h
+            have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro y _
+              exact fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro tail_node htl
+              have htn_mem := getLast?_mem htl
+              have htn_live := I.queue.sub tail_node htn_mem
+              have htn_row := I.pool.sub_live tail_node htn_live
+              by_cases heq_t : tail_node = r
+              · rw [heq_t, overlaps_symm]; exact (freeNext_disjoint_queue r).1
+              · exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row r hr_row heq_t)
+            rw [hframe_tail_m (fldPath r Pool.freeNextName) hdb hqf htn]
+            have hid : (fldPath q "id").overlaps (fldPath r Pool.freeNextName) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have hqty : (fldPath q "qty").overlaps (fldPath r Pool.freeNextName) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            rw [hframe_m3_m1 (fldPath r Pool.freeNextName) hid hqty]
+          exact Reaches.frame I_pool_alloc.chain hframe_free
+        · have h_disj_hash_next : (fldPath q hashNm.next).overlaps (Pool.dbPath poolNm poolNm.count) = false :=
+            poolRows_mem_fld_disjoint_poolDb cap hq_in_rows hashNm.next poolNm.count (by decide)
+          have h_disj_hash_inhash : (fldPath q hashNm.inhash).overlaps (Pool.dbPath poolNm poolNm.count) = false :=
+            poolRows_mem_fld_disjoint_poolDb cap hq_in_rows hashNm.inhash poolNm.count (by decide)
+          have h_disj_bucket : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (Pool.dbPath poolNm poolNm.count) = false := by
+            have h := I.disj_pool_hash poolNm.count (by simp) (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_hash_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (Pool.dbPath poolNm poolNm.count) = false := by
+            have h := I.disj_pool_hash_cnt poolNm.count (by simp)
+            rw [overlaps_symm]; exact h
+          rw [hframe_hash (Pool.dbPath poolNm poolNm.count) h_disj_hash_next h_disj_hash_inhash h_disj_bucket h_disj_hash_cnt]
+          have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (Pool.dbPath poolNm poolNm.count) = false := by
+            intro x hx; have h := I.disj_db poolNm.count (by simp) x hx; rw [overlaps_symm]; exact h
+          have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (Pool.dbPath poolNm poolNm.count) = false := by
+            intro y _; exact poolRows_mem_fld_disjoint_poolDb cap hq_in_rows y poolNm.count (by decide)
+          have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (Pool.dbPath poolNm poolNm.count) = false := by
+            intro tail_node htl
+            have htn_mem := getLast?_mem htl
+            have htn_live := I.queue.sub tail_node htn_mem
+            have htn_row := I.pool.sub_live tail_node htn_live
+            exact poolRows_mem_fld_disjoint_poolDb cap htn_row queueNm.next poolNm.count (by decide)
+          rw [hframe_tail_m (Pool.dbPath poolNm poolNm.count) hdb hqf htn]
+          have hid : (fldPath q "id").overlaps (Pool.dbPath poolNm poolNm.count) = false :=
+            poolRows_mem_fld_disjoint_poolDb cap hq_in_rows "id" poolNm.count (by decide)
+          have hqty : (fldPath q "qty").overlaps (Pool.dbPath poolNm poolNm.count) = false :=
+            poolRows_mem_fld_disjoint_poolDb cap hq_in_rows "qty" poolNm.count (by decide)
+          rw [hframe_m3_m1 (Pool.dbPath poolNm poolNm.count) hid hqty]
+          exact I_pool_alloc.count
+        · intro r hr
+          by_cases heq : r = q
+          · have h_disj_hash_next : (fldPath q hashNm.next).overlaps (fldPath r Pool.freeNextName) = false := by
+              rw [heq, overlaps_symm]; exact (freeNext_disjoint_hash q).1
+            have h_disj_hash_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r Pool.freeNextName) = false := by
+              rw [heq, overlaps_symm]; exact (freeNext_disjoint_hash q).2
+            have h_disj_bucket : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r Pool.freeNextName) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) Pool.freeNextName (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_hash_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r Pool.freeNextName) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) Pool.freeNextName hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            rw [hframe_hash (fldPath r Pool.freeNextName) h_disj_hash_next h_disj_hash_inhash h_disj_bucket h_disj_hash_cnt]
+            have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro x hx
+              have h := poolRows_mem_fld_disjoint_queueDb cap (heq ▸ hq_in_rows) Pool.freeNextName x (queue_fields_ne_poolFld hx)
+              rw [overlaps_symm]; exact h
+            have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro y hy
+              rcases List.mem_cons.mp hy with rfl | hy'
+              · rw [heq, overlaps_symm]; exact (freeNext_disjoint_queue q).1
+              · rcases List.mem_cons.mp hy' with rfl | hy''
+                · rw [heq, overlaps_symm]; exact (freeNext_disjoint_queue q).2.1
+                · rcases List.mem_cons.mp hy'' with rfl | hnil
+                  · rw [heq, overlaps_symm]; exact (freeNext_disjoint_queue q).2.2
+                  · nomatch hnil
+            have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro tail_node htl
+              have htn_mem := getLast?_mem htl
+              have htn_live := I.queue.sub tail_node htn_mem
+              have htn_row := I.pool.sub_live tail_node htn_live
+              have htn_ne_q : tail_node ≠ q := fun heq_t => hq_not_live (heq_t ▸ htn_live)
+              have htn_ne_r : tail_node ≠ r := by rw [heq]; exact htn_ne_q
+              exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row r hr htn_ne_r)
+            rw [hframe_tail_m (fldPath r Pool.freeNextName) hdb hqf htn]
+            have hid : (fldPath q "id").overlaps (fldPath r Pool.freeNextName) = false := by
+              rw [heq]; exact (payload_disjoint_freeNext q).1
+            have hqty : (fldPath q "qty").overlaps (fldPath r Pool.freeNextName) = false := by
+              rw [heq]; exact (payload_disjoint_freeNext q).2
+            rw [hframe_m3_m1 (fldPath r Pool.freeNextName) hid hqty]
+            exact I_pool_alloc.fields r hr
+          · have hr_ne_q : r ≠ q := heq
+            have h_disj_hash_next : (fldPath q hashNm.next).overlaps (fldPath r Pool.freeNextName) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+            have h_disj_hash_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r Pool.freeNextName) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+            have h_disj_bucket : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r Pool.freeNextName) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap hr Pool.freeNextName (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_hash_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r Pool.freeNextName) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap hr Pool.freeNextName hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            rw [hframe_hash (fldPath r Pool.freeNextName) h_disj_hash_next h_disj_hash_inhash h_disj_bucket h_disj_hash_cnt]
+            have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro x hx
+              have h := poolRows_mem_fld_disjoint_queueDb cap hr Pool.freeNextName x (queue_fields_ne_poolFld hx)
+              rw [overlaps_symm]; exact h
+            have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro y _
+              exact fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+            have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath r Pool.freeNextName) = false := by
+              intro tail_node htl
+              have htn_mem := getLast?_mem htl
+              have htn_live := I.queue.sub tail_node htn_mem
+              have htn_row := I.pool.sub_live tail_node htn_live
+              by_cases heq_t : tail_node = r
+              · rw [heq_t, overlaps_symm]; exact (freeNext_disjoint_queue r).1
+              · exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row r hr heq_t)
+            rw [hframe_tail_m (fldPath r Pool.freeNextName) hdb hqf htn]
+            have hid : (fldPath q "id").overlaps (fldPath r Pool.freeNextName) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+            have hqty : (fldPath q "qty").overlaps (fldPath r Pool.freeNextName) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+            rw [hframe_m3_m1 (fldPath r Pool.freeNextName) hid hqty]
+            exact I_pool_alloc.fields r hr
+      · refine ⟨I_queue_final.sub, I_queue_final.disj, ?_, ?_, ?_, ?_, ?_, ?_, ?_, I_queue_final.parent⟩
+        · have h_disj_next : (fldPath q hashNm.next).overlaps (Llist.dbPath queueNm queueNm.head) = false :=
+            poolRows_mem_fld_disjoint_hashDb cap hq_in_rows hashNm.next queueNm.head (by decide)
+          have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (Llist.dbPath queueNm queueNm.head) = false :=
+            poolRows_mem_fld_disjoint_hashDb cap hq_in_rows hashNm.inhash queueNm.head (by decide)
+          have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (Llist.dbPath queueNm queueNm.head) = false := by
+            have h := I.disj_queue_hash queueNm.head (by simp) (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (Llist.dbPath queueNm queueNm.head) = false := by
+            have h := I.disj_queue_hash_cnt queueNm.head (by simp)
+            rw [overlaps_symm]; exact h
+          rw [hframe_hash (Llist.dbPath queueNm queueNm.head) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt]
+          exact I_queue_final.head
+        · have h_disj_next : (fldPath q hashNm.next).overlaps (Llist.dbPath queueNm queueNm.tail) = false :=
+            poolRows_mem_fld_disjoint_hashDb cap hq_in_rows hashNm.next queueNm.tail (by decide)
+          have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (Llist.dbPath queueNm queueNm.tail) = false :=
+            poolRows_mem_fld_disjoint_hashDb cap hq_in_rows hashNm.inhash queueNm.tail (by decide)
+          have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (Llist.dbPath queueNm queueNm.tail) = false := by
+            have h := I.disj_queue_hash queueNm.tail (by simp) (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (Llist.dbPath queueNm queueNm.tail) = false := by
+            have h := I.disj_queue_hash_cnt queueNm.tail (by simp)
+            rw [overlaps_symm]; exact h
+          rw [hframe_hash (Llist.dbPath queueNm queueNm.tail) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt]
+          exact I_queue_final.tail
+        · have hframe_next : ∀ r ∈ (queue_es ++ [q]), readMem m' (fldPath r queueNm.next) = readMem m₄ (fldPath r queueNm.next) := by
+            intro r hr
+            simp only [List.mem_append, List.mem_singleton] at hr
+            cases hr with
+            | inl hr_es =>
+              have hr_live := I.queue.sub r hr_es
+              have hr_row := I.pool.sub_live r hr_live
+              have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+              have h_disj_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.next) = false :=
+                fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+              have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.next) = false :=
+                fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+              have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.next) = false := by
+                have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.next (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+                rw [overlaps_symm]; exact h
+              have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.next) = false := by
+                have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.next hashNm.count (by decide)
+                rw [overlaps_symm]; exact h
+              exact hframe_hash (fldPath r queueNm.next) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt
+            | inr heq =>
+              have h_disj_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.next) = false := by
+                rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).1
+              have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.next) = false := by
+                rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.1
+              have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.next) = false := by
+                have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) queueNm.next (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+                rw [overlaps_symm]; exact h
+              have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.next) = false := by
+                have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) queueNm.next hashNm.count (by decide)
+                rw [overlaps_symm]; exact h
+              exact hframe_hash (fldPath r queueNm.next) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt
+          exact Reaches.frame I_queue_final.chain hframe_next
+        · have hframe_prev : ∀ r ∈ (queue_es ++ [q]), readMem m' (fldPath r queueNm.prev) = readMem m₄ (fldPath r queueNm.prev) := by
+            intro r hr
+            simp only [List.mem_append, List.mem_singleton] at hr
+            cases hr with
+            | inl hr_es =>
+              have hr_live := I.queue.sub r hr_es
+              have hr_row := I.pool.sub_live r hr_live
+              have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+              have h_disj_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.prev) = false :=
+                fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+              have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.prev) = false :=
+                fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+              have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.prev) = false := by
+                have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.prev (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+                rw [overlaps_symm]; exact h
+              have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.prev) = false := by
+                have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.prev hashNm.count (by decide)
+                rw [overlaps_symm]; exact h
+              exact hframe_hash (fldPath r queueNm.prev) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt
+            | inr heq =>
+              have h_disj_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.prev) = false := by
+                rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.2.1
+              have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.prev) = false := by
+                rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.2.2.1
+              have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.prev) = false := by
+                have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) queueNm.prev (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+                rw [overlaps_symm]; exact h
+              have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.prev) = false := by
+                have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) queueNm.prev hashNm.count (by decide)
+                rw [overlaps_symm]; exact h
+              exact hframe_hash (fldPath r queueNm.prev) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt
+          exact Backlinked.frame (queue_es ++ [q]) Value.null I_queue_final.back hframe_prev
+        · have hframe_inlist : ∀ r ∈ (q :: live_qs), readMem m' (fldPath r queueNm.inlist) = readMem m₄ (fldPath r queueNm.inlist) := by
+            intro r hr
+            cases List.mem_cons.mp hr with
+            | inl heq =>
+              have h_disj_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.inlist) = false := by
+                rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.2.2.2.1
+              have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.inlist) = false := by
+                rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.2.2.2.2
+              have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.inlist) = false := by
+                have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) queueNm.inlist (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+                rw [overlaps_symm]; exact h
+              have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.inlist) = false := by
+                have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) queueNm.inlist hashNm.count (by decide)
+                rw [overlaps_symm]; exact h
+              exact hframe_hash (fldPath r queueNm.inlist) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt
+            | inr hr_live =>
+              have hr_row := I.pool.sub_live r hr_live
+              have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+              have h_disj_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.inlist) = false :=
+                fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+              have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.inlist) = false :=
+                fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+              have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.inlist) = false := by
+                have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.inlist (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+                rw [overlaps_symm]; exact h
+              have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.inlist) = false := by
+                have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.inlist hashNm.count (by decide)
+                rw [overlaps_symm]; exact h
+              exact hframe_hash (fldPath r queueNm.inlist) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt
+          exact Flagged.frame I_queue_final.flags hframe_inlist
+        · have h_disj_next : (fldPath q hashNm.next).overlaps (Llist.dbPath queueNm queueNm.count) = false :=
+            poolRows_mem_fld_disjoint_hashDb cap hq_in_rows hashNm.next queueNm.count (by decide)
+          have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (Llist.dbPath queueNm queueNm.count) = false :=
+            poolRows_mem_fld_disjoint_hashDb cap hq_in_rows hashNm.inhash queueNm.count (by decide)
+          have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (Llist.dbPath queueNm queueNm.count) = false := by
+            have h := I.disj_queue_hash queueNm.count (by simp) (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (Llist.dbPath queueNm queueNm.count) = false := by
+            have h := I.disj_queue_hash_cnt queueNm.count (by simp)
+            rw [overlaps_symm]; exact h
+          simp only [Counted] at *
+          rw [hframe_hash (Llist.dbPath queueNm queueNm.count) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt]
+          exact I_queue_final.count
+        · intro r hr
+          have hr_row : r ∈ Pool.poolRows poolNm poolFld cap := by
+            cases List.mem_cons.mp hr with
+            | inl heq => exact heq ▸ hq_in_rows
+            | inr hr_live => exact I.pool.sub_live r hr_live
+          by_cases heq : r = q
+          · have h_disj_next_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.next) = false := by
+              rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).1
+            have h_disj_inhash_next : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.next) = false := by
+              rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.1
+            have h_disj_bkt_next : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.next) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) queueNm.next (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_cnt_next : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.next) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) queueNm.next hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            have h_next : (readMem m' (fldPath r queueNm.next)).isSome = true := by
+              rw [hframe_hash (fldPath r queueNm.next) h_disj_next_next h_disj_inhash_next h_disj_bkt_next h_disj_cnt_next, heq]
+              exact (I_queue_final.fields q (List.mem_cons_self)).1
+            have h_disj_next_prev : (fldPath q hashNm.next).overlaps (fldPath r queueNm.prev) = false := by
+              rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.2.1
+            have h_disj_inhash_prev : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.prev) = false := by
+              rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.2.2.1
+            have h_disj_bkt_prev : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.prev) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) queueNm.prev (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_cnt_prev : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.prev) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) queueNm.prev hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            have h_prev : (readMem m' (fldPath r queueNm.prev)).isSome = true := by
+              rw [hframe_hash (fldPath r queueNm.prev) h_disj_next_prev h_disj_inhash_prev h_disj_bkt_prev h_disj_cnt_prev, heq]
+              exact (I_queue_final.fields q (List.mem_cons_self)).2.1
+            have h_disj_next_inlist : (fldPath q hashNm.next).overlaps (fldPath r queueNm.inlist) = false := by
+              rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.2.2.2.1
+            have h_disj_inhash_inlist : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.inlist) = false := by
+              rw [heq, overlaps_symm]; exact (queue_disjoint_hash q).2.2.2.2.2
+            have h_disj_bkt_inlist : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.inlist) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) queueNm.inlist (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_cnt_inlist : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.inlist) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) queueNm.inlist hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            have h_inlist : (readMem m' (fldPath r queueNm.inlist)).isSome = true := by
+              rw [hframe_hash (fldPath r queueNm.inlist) h_disj_next_inlist h_disj_inhash_inlist h_disj_bkt_inlist h_disj_cnt_inlist, heq]
+              exact (I_queue_final.fields q (List.mem_cons_self)).2.2
+            exact ⟨h_next, h_prev, h_inlist⟩
+          · have hr_ne_q : r ≠ q := heq
+            have h_disj_next_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.next) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have h_disj_inhash_next : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.next) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have h_disj_bkt_next : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.next) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.next (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_cnt_next : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.next) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.next hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            have h_next : (readMem m' (fldPath r queueNm.next)).isSome = true := by
+              rw [hframe_hash (fldPath r queueNm.next) h_disj_next_next h_disj_inhash_next h_disj_bkt_next h_disj_cnt_next]
+              exact (I_queue_final.fields r hr).1
+            have h_disj_next_prev : (fldPath q hashNm.next).overlaps (fldPath r queueNm.prev) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have h_disj_inhash_prev : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.prev) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have h_disj_bkt_prev : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.prev) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.prev (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_cnt_prev : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.prev) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.prev hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            have h_prev : (readMem m' (fldPath r queueNm.prev)).isSome = true := by
+              rw [hframe_hash (fldPath r queueNm.prev) h_disj_next_prev h_disj_inhash_prev h_disj_bkt_prev h_disj_cnt_prev]
+              exact (I_queue_final.fields r hr).2.1
+            have h_disj_next_inlist : (fldPath q hashNm.next).overlaps (fldPath r queueNm.inlist) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have h_disj_inhash_inlist : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.inlist) = false :=
+              fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+            have h_disj_bkt_inlist : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.inlist) = false := by
+              have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.inlist (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+              rw [overlaps_symm]; exact h
+            have h_disj_cnt_inlist : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.inlist) = false := by
+              have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.inlist hashNm.count (by decide)
+              rw [overlaps_symm]; exact h
+            have h_inlist : (readMem m' (fldPath r queueNm.inlist)).isSome = true := by
+              rw [hframe_hash (fldPath r queueNm.inlist) h_disj_next_inlist h_disj_inhash_inlist h_disj_bkt_inlist h_disj_cnt_inlist]
+              exact (I_queue_final.fields r hr).2.2
+            exact ⟨h_next, h_prev, h_inlist⟩
+      · intro r hr
+        have hr_in_free : r ∈ free_rest := hfr ▸ List.mem_cons_of_mem q hr
+        have hr_row := I.pool.sub_free r hr_in_free
+        have hr_ne_q : r ≠ q := by intro heq; subst heq; exact (List.nodup_cons.mp (hfr ▸ I.pool.nodup_free)).1 hr
+        have hfresh := I.fresh_queue r hr_in_free
+        have h_disj_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.inlist) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.inlist) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.inlist) = false := by
+          have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.inlist (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+          rw [overlaps_symm]; exact h
+        have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.inlist) = false := by
+          have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.inlist hashNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have hdb : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath r queueNm.inlist) = false := by
+          intro x hx
+          have h := poolRows_mem_fld_disjoint_queueDb cap hr_row queueNm.inlist x (queue_fields_ne_poolFld hx)
+          rw [overlaps_symm]; exact h
+        have hqf : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath r queueNm.inlist) = false := by
+          intro y _
+          exact fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have htn : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath r queueNm.inlist) = false := by
+          intro tail_node htl
+          have htn_mem := getLast?_mem htl
+          have htn_live := I.queue.sub tail_node htn_mem
+          have htn_row := I.pool.sub_live tail_node htn_live
+          have htn_ne_r : tail_node ≠ r := fun heq => I.pool.disj r hr_in_free (heq ▸ htn_live)
+          exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row r hr_row htn_ne_r)
+        have hr_disj_qty : (fldPath q "qty").overlaps (fldPath r queueNm.inlist) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have hr_disj_id : (fldPath q "id").overlaps (fldPath r queueNm.inlist) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have hfh : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.inlist) = false := by
+          have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.inlist poolNm.freeHead (by decide)
+          rw [overlaps_symm]; exact h
+        have hcnt : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.inlist) = false := by
+          have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.inlist poolNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_inlist : readMem m' (fldPath r queueNm.inlist) = some (.bool false) := by
+          rw [hframe_hash (fldPath r queueNm.inlist) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt,
+              hframe_tail_m (fldPath r queueNm.inlist) hdb hqf htn,
+              hframe_m3 (fldPath r queueNm.inlist) hr_disj_id hr_disj_qty hfh hcnt,
+              hfresh.inlist]
+        have hdb_next : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath r queueNm.next) = false := by
+          intro x hx
+          have h := poolRows_mem_fld_disjoint_queueDb cap hr_row queueNm.next x (queue_fields_ne_poolFld hx)
+          rw [overlaps_symm]; exact h
+        have hqf_next : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath r queueNm.next) = false := by
+          intro y _
+          exact fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have htn_next : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath r queueNm.next) = false := by
+          intro tail_node htl
+          have htn_mem := getLast?_mem htl
+          have htn_live := I.queue.sub tail_node htn_mem
+          have htn_row := I.pool.sub_live tail_node htn_live
+          have htn_ne_r : tail_node ≠ r := fun heq => I.pool.disj r hr_in_free (heq ▸ htn_live)
+          exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row r hr_row htn_ne_r)
+        have hr_disj_qty_next : (fldPath q "qty").overlaps (fldPath r queueNm.next) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have hr_disj_id_next : (fldPath q "id").overlaps (fldPath r queueNm.next) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have hfh_next : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.next) = false := by
+          have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.next poolNm.freeHead (by decide)
+          rw [overlaps_symm]; exact h
+        have hcnt_next : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.next) = false := by
+          have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.next poolNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_disj_hash_next_next : (fldPath q hashNm.next).overlaps (fldPath r queueNm.next) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_hash_inhash_next : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.next) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_bkt_next : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.next) = false := by
+          have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.next (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+          rw [overlaps_symm]; exact h
+        have h_disj_cnt_next : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.next) = false := by
+          have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.next hashNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_next : readMem m' (fldPath r queueNm.next) = some .null := by
+          rw [hframe_hash (fldPath r queueNm.next) h_disj_hash_next_next h_disj_hash_inhash_next h_disj_bkt_next h_disj_cnt_next,
+              hframe_tail_m (fldPath r queueNm.next) hdb_next hqf_next htn_next,
+              hframe_m3 (fldPath r queueNm.next) hr_disj_id_next hr_disj_qty_next hfh_next hcnt_next,
+              hfresh.next]
+        have hdb_prev : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count], (Llist.dbPath queueNm x).overlaps (fldPath r queueNm.prev) = false := by
+          intro x hx
+          have h := poolRows_mem_fld_disjoint_queueDb cap hr_row queueNm.prev x (queue_fields_ne_poolFld hx)
+          rw [overlaps_symm]; exact h
+        have hqf_prev : ∀ y ∈ [queueNm.next, queueNm.prev, queueNm.inlist], (fldPath q y).overlaps (fldPath r queueNm.prev) = false := by
+          intro y _
+          exact fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have htn_prev : ∀ tail_node, queue_es.getLast? = some tail_node → (fldPath tail_node queueNm.next).overlaps (fldPath r queueNm.prev) = false := by
+          intro tail_node htl
+          have htn_mem := getLast?_mem htl
+          have htn_live := I.queue.sub tail_node htn_mem
+          have htn_row := I.pool.sub_live tail_node htn_live
+          have htn_ne_r : tail_node ≠ r := fun heq => I.pool.disj r hr_in_free (heq ▸ htn_live)
+          exact fldPath_disjoint (I.pool.disj_rows tail_node htn_row r hr_row htn_ne_r)
+        have hr_disj_qty_prev : (fldPath q "qty").overlaps (fldPath r queueNm.prev) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have hr_disj_id_prev : (fldPath q "id").overlaps (fldPath r queueNm.prev) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have hfh_prev : (Pool.dbPath poolNm poolNm.freeHead).overlaps (fldPath r queueNm.prev) = false := by
+          have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.prev poolNm.freeHead (by decide)
+          rw [overlaps_symm]; exact h
+        have hcnt_prev : (Pool.dbPath poolNm poolNm.count).overlaps (fldPath r queueNm.prev) = false := by
+          have h := poolRows_mem_fld_disjoint_poolDb cap hr_row queueNm.prev poolNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_disj_hash_next_prev : (fldPath q hashNm.next).overlaps (fldPath r queueNm.prev) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_hash_inhash_prev : (fldPath q hashNm.inhash).overlaps (fldPath r queueNm.prev) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_bkt_prev : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r queueNm.prev) = false := by
+          have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row queueNm.prev (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+          rw [overlaps_symm]; exact h
+        have h_disj_cnt_prev : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r queueNm.prev) = false := by
+          have h := poolRows_mem_fld_disjoint_hashDb cap hr_row queueNm.prev hashNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_prev : readMem m' (fldPath r queueNm.prev) = some .null := by
+          rw [hframe_hash (fldPath r queueNm.prev) h_disj_hash_next_prev h_disj_hash_inhash_prev h_disj_bkt_prev h_disj_cnt_prev,
+              hframe_tail_m (fldPath r queueNm.prev) hdb_prev hqf_prev htn_prev,
+              hframe_m3 (fldPath r queueNm.prev) hr_disj_id_prev hr_disj_qty_prev hfh_prev hcnt_prev,
+              hfresh.prev]
+        exact ⟨h_inlist, h_next, h_prev⟩
+      · intro r hr
+        have hr_in_free : r ∈ free_rest := hfr ▸ List.mem_cons_of_mem q hr
+        have hr_row := I.pool.sub_free r hr_in_free
+        have hr_ne_q : r ≠ q := by intro heq; subst heq; exact (List.nodup_cons.mp (hfr ▸ I.pool.nodup_free)).1 hr
+        have h_disj_next : (fldPath q hashNm.next).overlaps (fldPath r hashNm.inhash) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_inhash : (fldPath q hashNm.inhash).overlaps (fldPath r hashNm.inhash) = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_bkt : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r hashNm.inhash) = false := by
+          have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row hashNm.inhash (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+          rw [overlaps_symm]; exact h
+        have h_disj_cnt : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r hashNm.inhash) = false := by
+          have h := poolRows_mem_fld_disjoint_hashDb cap hr_row hashNm.inhash hashNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_inhash_m := I.fresh_hash r hr_in_free
+        have h_m4 := h_frame_m4_m r hr_row hr_ne_q hashNm.inhash (by simp)
+        rw [hframe_hash (fldPath r hashNm.inhash) h_disj_next h_disj_inhash h_disj_bkt h_disj_cnt,
+            h_m4, h_inhash_m]
+      · intro r hr
+        simp only [List.mem_append, List.mem_singleton] at hr
+        cases hr with
+        | inl hr_es =>
+          have hr_live := I.queue.sub r hr_es
+          have hr_row := I.pool.sub_live r hr_live
+          have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+          have h_disj_next_id : (fldPath q hashNm.next).overlaps (fldPath r "id") = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have h_disj_inhash_id : (fldPath q hashNm.inhash).overlaps (fldPath r "id") = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have h_disj_bkt_id : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "id") = false := by
+            have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row "id" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt_id : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "id") = false := by
+            have h := poolRows_mem_fld_disjoint_hashDb cap hr_row "id" hashNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_id_m' : readMem m' (fldPath r "id") = readMem m₄ (fldPath r "id") :=
+            hframe_hash (fldPath r "id") h_disj_next_id h_disj_inhash_id h_disj_bkt_id h_disj_cnt_id
+          have h_id_m4 : readMem m₄ (fldPath r "id") = readMem m (fldPath r "id") :=
+            h_frame_m4_m r hr_row hr_ne_q "id" (by simp)
+          have h_disj_next_qty : (fldPath q hashNm.next).overlaps (fldPath r "qty") = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have h_disj_inhash_qty : (fldPath q hashNm.inhash).overlaps (fldPath r "qty") = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+          have h_disj_bkt_qty : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "qty") = false := by
+            have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row "qty" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt_qty : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "qty") = false := by
+            have h := poolRows_mem_fld_disjoint_hashDb cap hr_row "qty" hashNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_qty_m' : readMem m' (fldPath r "qty") = readMem m₄ (fldPath r "qty") :=
+            hframe_hash (fldPath r "qty") h_disj_next_qty h_disj_inhash_qty h_disj_bkt_qty h_disj_cnt_qty
+          have h_qty_m4 : readMem m₄ (fldPath r "qty") = readMem m (fldPath r "qty") :=
+            h_frame_m4_m r hr_row hr_ne_q "qty" (by simp)
+          have h_ro : readOrder3 m' r = readOrder3 m r := by
+            simp [readOrder3, h_id_m', h_id_m4, h_qty_m', h_qty_m4]
+          rw [h_ro]
+          exact I.orders r hr_es
+        | inr heq =>
+          have h_disj_next_id : (fldPath q hashNm.next).overlaps (fldPath r "id") = false := by
+            rw [heq, overlaps_symm]; exact (payload_disjoint_hash q).1
+          have h_disj_inhash_id : (fldPath q hashNm.inhash).overlaps (fldPath r "id") = false := by
+            rw [heq, overlaps_symm]; exact (payload_disjoint_hash q).2.1
+          have h_disj_bkt_id : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "id") = false := by
+            have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) "id" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt_id : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "id") = false := by
+            have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) "id" hashNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_id_m' : readMem m' (fldPath r "id") = some (.u32 v.1) := by
+            rw [hframe_hash (fldPath r "id") h_disj_next_id h_disj_inhash_id h_disj_bkt_id h_disj_cnt_id, heq, hq_id_m4]
+          have h_disj_next_qty : (fldPath q hashNm.next).overlaps (fldPath r "qty") = false := by
+            rw [heq, overlaps_symm]; exact (payload_disjoint_hash q).2.2.1
+          have h_disj_inhash_qty : (fldPath q hashNm.inhash).overlaps (fldPath r "qty") = false := by
+            rw [heq, overlaps_symm]; exact (payload_disjoint_hash q).2.2.2
+          have h_disj_bkt_qty : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "qty") = false := by
+            have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) "qty" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt_qty : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "qty") = false := by
+            have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) "qty" hashNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_qty_m' : readMem m' (fldPath r "qty") = some (.u64 v.2) := by
+            rw [hframe_hash (fldPath r "qty") h_disj_next_qty h_disj_inhash_qty h_disj_bkt_qty h_disj_cnt_qty, heq, hq_qty_m4]
+          simp [readOrder3, h_id_m', h_qty_m']
+      · intro r hr
+        by_cases heq : r = q
+        · have h_disj_next_id : (fldPath q hashNm.next).overlaps (fldPath r "id") = false := by
+            rw [heq, overlaps_symm]; exact (payload_disjoint_hash q).1
+          have h_disj_inhash_id : (fldPath q hashNm.inhash).overlaps (fldPath r "id") = false := by
+            rw [heq, overlaps_symm]; exact (payload_disjoint_hash q).2.1
+          have h_disj_bkt_id : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "id") = false := by
+            have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) "id" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt_id : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "id") = false := by
+            have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) "id" hashNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_id_m' : readMem m' (fldPath r "id") = some (.u32 v.1) := by
+            rw [hframe_hash (fldPath r "id") h_disj_next_id h_disj_inhash_id h_disj_bkt_id h_disj_cnt_id, heq, hq_id_m4]
+          have h_disj_next_qty : (fldPath q hashNm.next).overlaps (fldPath r "qty") = false := by
+            rw [heq, overlaps_symm]; exact (payload_disjoint_hash q).2.2.1
+          have h_disj_inhash_qty : (fldPath q hashNm.inhash).overlaps (fldPath r "qty") = false := by
+            rw [heq, overlaps_symm]; exact (payload_disjoint_hash q).2.2.2
+          have h_disj_bkt_qty : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "qty") = false := by
+            have h := poolRows_mem_fld_disjoint_hashBucket cap (heq ▸ hq_in_rows) "qty" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt_qty : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "qty") = false := by
+            have h := poolRows_mem_fld_disjoint_hashDb cap (heq ▸ hq_in_rows) "qty" hashNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_qty_m' : readMem m' (fldPath r "qty") = some (.u64 v.2) := by
+            rw [hframe_hash (fldPath r "qty") h_disj_next_qty h_disj_inhash_qty h_disj_bkt_qty h_disj_cnt_qty, heq, hq_qty_m4]
+          simp [h_id_m', h_qty_m']
+        · have hr_ne_q : r ≠ q := heq
+          have h_disj_next_id : (fldPath q hashNm.next).overlaps (fldPath r "id") = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+          have h_disj_inhash_id : (fldPath q hashNm.inhash).overlaps (fldPath r "id") = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+          have h_disj_bkt_id : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "id") = false := by
+            have h := poolRows_mem_fld_disjoint_hashBucket cap hr "id" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt_id : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "id") = false := by
+            have h := poolRows_mem_fld_disjoint_hashDb cap hr "id" hashNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_id_m' : readMem m' (fldPath r "id") = readMem m (fldPath r "id") := by
+            rw [hframe_hash (fldPath r "id") h_disj_next_id h_disj_inhash_id h_disj_bkt_id h_disj_cnt_id,
+                h_frame_m4_m r hr hr_ne_q "id" (by simp)]
+          have h_disj_next_qty : (fldPath q hashNm.next).overlaps (fldPath r "qty") = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+          have h_disj_inhash_qty : (fldPath q hashNm.inhash).overlaps (fldPath r "qty") = false :=
+            fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr (Ne.symm hr_ne_q))
+          have h_disj_bkt_qty : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "qty") = false := by
+            have h := poolRows_mem_fld_disjoint_hashBucket cap hr "qty" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+            rw [overlaps_symm]; exact h
+          have h_disj_cnt_qty : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "qty") = false := by
+            have h := poolRows_mem_fld_disjoint_hashDb cap hr "qty" hashNm.count (by decide)
+            rw [overlaps_symm]; exact h
+          have h_qty_m' : readMem m' (fldPath r "qty") = readMem m (fldPath r "qty") := by
+            rw [hframe_hash (fldPath r "qty") h_disj_next_qty h_disj_inhash_qty h_disj_bkt_qty h_disj_cnt_qty,
+                h_frame_m4_m r hr hr_ne_q "qty" (by simp)]
+          rw [h_id_m', h_qty_m']
+          exact I.payload r hr
+      · exact I.disj_db
+      · exact I.disj_pool_hash
+      · exact I.disj_pool_hash_cnt
+      · exact I.disj_queue_hash
+      · exact I.disj_queue_hash_cnt
+      · intro r
+        have h_flat := Thash.mem_flatten_set_cons (q := q) (r := r) (hb := (by rw [I.thash.nb_len]; exact hb))
+        rw [h_flat]
+        simp only [List.mem_append, List.mem_singleton]
+        constructor
+        · intro h
+          rcases h with rfl | h_ch
+          · exact Or.inr rfl
+          · exact Or.inl ((I.hash_queue_match r).mp h_ch)
+        · intro h
+          rcases h with h_q | rfl
+          · exact Or.inr ((I.hash_queue_match r).mpr h_q)
+          · exact Or.inl rfl
+
+    have h_abs_m : absDb3 m fuel = queue_es.mapM (readOrder3 m) := by
+      simp only [absDb3]
+      have hlen_le : queue_es.length ≤ fuel - 1 := by omega
+      have hreach := Llist.reaches_headOf_implies_elems m queueNm queue_es I.queue.chain (fuel - 1) hlen_le
+      have hfuel_sub : fuel - 1 + 1 = fuel := by omega
+      rw [hfuel_sub] at hreach
+      have hhd_eq := Llist.head_eq_headOf m queueNm queue_es I.queue.head
+      rw [← hhd_eq] at hreach
+      rw [hreach]
+      rfl
+    obtain ⟨ords, hords⟩ : ∃ ords, queue_es.mapM (readOrder3 m) = some ords :=
+      mapM_isSome_iff_exists (readOrder3 m) queue_es I.orders
+    have h_abs_m_eq : absDb3 m fuel = some ords := by rw [h_abs_m, hords]
+    have h_abs_m'_val : absDb3 m' fuel = some (ords ++ [v]) := by
+      simp only [absDb3]
+      have hlen_le' : (queue_es ++ [q]).length ≤ fuel - 1 := by
+        simp only [List.length_append, List.length_singleton]; omega
+      have hreach' := Llist.reaches_headOf_implies_elems m' queueNm (queue_es ++ [q]) I_rep_final.queue.chain (fuel - 1) hlen_le'
+      have hfuel_sub : fuel - 1 + 1 = fuel := by omega
+      rw [hfuel_sub] at hreach'
+      have hhd_eq' := Llist.head_eq_headOf m' queueNm (queue_es ++ [q]) I_rep_final.queue.head
+      rw [← hhd_eq'] at hreach'
+      rw [hreach']
+      simp only [bind]
+      have hframe_order : ∀ r ∈ queue_es, readOrder3 m' r = readOrder3 m r := by
+        intro r hr
+        have hr_live := I.queue.sub r hr
+        have hr_row := I.pool.sub_live r hr_live
+        have hr_ne_q : r ≠ q := fun heq => hq_not_live (heq ▸ hr_live)
+        have h_disj_next_id : (fldPath q hashNm.next).overlaps (fldPath r "id") = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_inhash_id : (fldPath q hashNm.inhash).overlaps (fldPath r "id") = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_bkt_id : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "id") = false := by
+          have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row "id" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+          rw [overlaps_symm]; exact h
+        have h_disj_cnt_id : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "id") = false := by
+          have h := poolRows_mem_fld_disjoint_hashDb cap hr_row "id" hashNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_id_m' : readMem m' (fldPath r "id") = readMem m (fldPath r "id") := by
+          rw [hframe_hash (fldPath r "id") h_disj_next_id h_disj_inhash_id h_disj_bkt_id h_disj_cnt_id,
+              h_frame_m4_m r hr_row hr_ne_q "id" (by simp)]
+        have h_disj_next_qty : (fldPath q hashNm.next).overlaps (fldPath r "qty") = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_inhash_qty : (fldPath q hashNm.inhash).overlaps (fldPath r "qty") = false :=
+          fldPath_disjoint (I.pool.disj_rows q hq_in_rows r hr_row (Ne.symm hr_ne_q))
+        have h_disj_bkt_qty : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath r "qty") = false := by
+          have h := poolRows_mem_fld_disjoint_hashBucket cap hr_row "qty" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+          rw [overlaps_symm]; exact h
+        have h_disj_cnt_qty : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath r "qty") = false := by
+          have h := poolRows_mem_fld_disjoint_hashDb cap hr_row "qty" hashNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_qty_m' : readMem m' (fldPath r "qty") = readMem m (fldPath r "qty") := by
+          rw [hframe_hash (fldPath r "qty") h_disj_next_qty h_disj_inhash_qty h_disj_bkt_qty h_disj_cnt_qty,
+              h_frame_m4_m r hr_row hr_ne_q "qty" (by simp)]
+        simp [readOrder3, h_id_m', h_qty_m']
+      have hmap_es : queue_es.mapM (readOrder3 m') = some ords := by
+        rw [mapM_congr (readOrder3 m') (readOrder3 m) queue_es hframe_order]; exact hords
+      have h_order_q : readOrder3 m' q = some v := by
+        have h_disj_next_id : (fldPath q hashNm.next).overlaps (fldPath q "id") = false := by
+          rw [overlaps_symm]; exact (payload_disjoint_hash q).1
+        have h_disj_inhash_id : (fldPath q hashNm.inhash).overlaps (fldPath q "id") = false := by
+          rw [overlaps_symm]; exact (payload_disjoint_hash q).2.1
+        have h_disj_bkt_id : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath q "id") = false := by
+          have h := poolRows_mem_fld_disjoint_hashBucket cap hq_in_rows "id" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+          rw [overlaps_symm]; exact h
+        have h_disj_cnt_id : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath q "id") = false := by
+          have h := poolRows_mem_fld_disjoint_hashDb cap hq_in_rows "id" hashNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_id_m' : readMem m' (fldPath q "id") = some (.u32 v.1) := by
+          rw [hframe_hash (fldPath q "id") h_disj_next_id h_disj_inhash_id h_disj_bkt_id h_disj_cnt_id, hq_id_m4]
+        have h_disj_next_qty : (fldPath q hashNm.next).overlaps (fldPath q "qty") = false := by
+          rw [overlaps_symm]; exact (payload_disjoint_hash q).2.2.1
+        have h_disj_inhash_qty : (fldPath q hashNm.inhash).overlaps (fldPath q "qty") = false := by
+          rw [overlaps_symm]; exact (payload_disjoint_hash q).2.2.2
+        have h_disj_bkt_qty : (Thash.bucketPath hashNm (v.1 &&& UInt32.ofNat (nb - 1)).toNat).overlaps (fldPath q "qty") = false := by
+          have h := poolRows_mem_fld_disjoint_hashBucket cap hq_in_rows "qty" (v.1 &&& UInt32.ofNat (nb - 1)).toNat
+          rw [overlaps_symm]; exact h
+        have h_disj_cnt_qty : (Thash.dbPath hashNm hashNm.count).overlaps (fldPath q "qty") = false := by
+          have h := poolRows_mem_fld_disjoint_hashDb cap hq_in_rows "qty" hashNm.count (by decide)
+          rw [overlaps_symm]; exact h
+        have h_qty_m' : readMem m' (fldPath q "qty") = some (.u64 v.2) := by
+          rw [hframe_hash (fldPath q "qty") h_disj_next_qty h_disj_inhash_qty h_disj_bkt_qty h_disj_cnt_qty, hq_qty_m4]
+        simp [readOrder3, h_id_m', h_qty_m']
+      exact mapM_append_singleton (readOrder3 m') queue_es q ords v hmap_es h_order_q
+
+    have h_abs_refine : absDb3 m' fuel = some ((absDb3 m fuel).getD [] ++ [v]) := by
+      rw [h_abs_m'_val, h_abs_m_eq]
+      simp
+
+    exact ⟨m', free_rest', q :: live_qs, queue_es ++ [q],
+           chains.set (v.1 &&& UInt32.ofNat (nb - 1)).toNat (q :: chains[(v.1 &&& UInt32.ofNat (nb - 1)).toNat]'hb_len),
+           h_exec_full, I_rep_final, h_abs_refine⟩
 
 /-- Master forward simulation theorem for MiniDb derived from schema `miniDb3 cap nb`:
     Executing the generated C program synthesized from `genC (miniDb3 cap nb)` on a well-formed
