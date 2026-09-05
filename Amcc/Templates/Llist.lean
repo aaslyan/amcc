@@ -487,6 +487,352 @@ theorem namesOk (dbC fld : Ident) : NamesOk (names dbC fld) where
   hc := append_ne (by decide)
   tc := append_ne (by decide)
 
+/-! ## Concrete readers & List Decoders
+
+Accessors reading `head`, `tail`, `next`, `prev`, `inlist`, and `count`
+directly from `Mem`. These give a functional interface to the heap
+state of the intrusive list without referencing AST execution. -/
+
+/-- Read the head pointer from memory. Returns `none` if empty (NULL) or unreadable. -/
+def head (m : Mem) (nm : Names) : Option Path :=
+  match readMem m (dbPath nm nm.head) with
+  | some (.ptr p) => some p
+  | _ => none
+
+/-- Read the tail pointer from memory. Returns `none` if empty (NULL) or unreadable. -/
+def tail (m : Mem) (nm : Names) : Option Path :=
+  match readMem m (dbPath nm nm.tail) with
+  | some (.ptr p) => some p
+  | _ => none
+
+/-- Read the forward link of an element from memory. Returns `none` if NULL or unreadable. -/
+def next (m : Mem) (nm : Names) (p : Path) : Option Path :=
+  match readMem m (fldPath p nm.next) with
+  | some (.ptr q) => some q
+  | _ => none
+
+/-- Read the back link of an element from memory. Returns `none` if NULL or unreadable. -/
+def prev (m : Mem) (nm : Names) (p : Path) : Option Path :=
+  match readMem m (fldPath p nm.prev) with
+  | some (.ptr q) => some q
+  | _ => none
+
+/-- Read the membership flag of an element from memory. -/
+def inlist (m : Mem) (nm : Names) (p : Path) : Bool :=
+  match readMem m (fldPath p nm.inlist) with
+  | some (.bool b) => b
+  | _ => false
+
+/-- Read the element count from memory. -/
+def count (m : Mem) (nm : Names) : Nat :=
+  match readMem m (dbPath nm nm.count) with
+  | some (.u32 n) => n.toNat
+  | _ => 0
+
+/-- **`elems`**: Fuel-bounded list decoder for intrusive linked lists.
+Traverses forward links from `cur` up to `fuel` steps.
+Returns `some es` with the complete path sequence on normal termination at NULL,
+or `none` on fuel exhaustion, cycles, or memory corruption. -/
+def elems (m : Mem) (nm : Names) : Nat → Option Path → Option (List Path)
+  | _, none => some []
+  | 0, some _ => none
+  | fuel + 1, some p =>
+    match readMem m (fldPath p nm.next) with
+    | some .null => some [p]
+    | some (.ptr q) => do
+      let rest ← elems m nm fuel (some q)
+      some (p :: rest)
+    | _ => none
+
+/-- **`RepInv`**: Representation invariant for the intrusive doubly-linked list (`Llist`).
+Binds concrete heap memory layout to the abstract sequence `es = elems m nm fuel (head m nm)`. -/
+structure RepInv (m : Mem) (nm : Names) : Prop where
+  /-- Head and tail pointers are simultaneously empty or non-empty -/
+  head_tail  : head m nm = none ↔ tail m nm = none
+  /-- Link integrity: next and prev are inverses along the list -/
+  linked     : ∀ p q, next m nm p = some q → prev m nm q = some p
+  /-- Termination: exists sufficient fuel to decode the list from head -/
+  terminates : ∃ n es, elems m nm n (head m nm) = some es
+  /-- Membership flag soundness: `inlist` is true iff `p` is in the decoded list -/
+  inlist_iff : ∀ es, (∃ n, elems m nm n (head m nm) = some es) →
+                 ∀ p, inlist m nm p = true ↔ p ∈ es
+  /-- Count soundness: stored count equals decoded list length -/
+  count_eq   : ∀ es, (∃ n, elems m nm n (head m nm) = some es) →
+                 count m nm = es.length
+  /-- Tail soundness: tail pointer names the last element of the decoded list -/
+  tail_last  : ∀ es, (∃ n, elems m nm n (head m nm) = some es) →
+                 tail m nm = es.getLast?
+
+theorem elems_none (m : Mem) (nm : Names) (fuel : Nat) :
+    elems m nm fuel none = some [] := by
+  cases fuel <;> rfl
+
+theorem elems_zero_some (m : Mem) (nm : Names) (p : Path) :
+    elems m nm 0 (some p) = none := rfl
+
+theorem elems_mono (m : Mem) (nm : Names) :
+    ∀ (n n' : Nat) (cur : Option Path) (es : List Path),
+      n ≤ n' → elems m nm n cur = some es → elems m nm n' cur = some es := by
+  intro n
+  induction n with
+  | zero =>
+    intro n' cur es _ h
+    cases cur with
+    | none =>
+      cases n' <;> exact h
+    | some p =>
+      cases h
+  | succ n ih =>
+    intro n' cur es hle h
+    cases cur with
+    | none =>
+      cases n' <;> exact h
+    | some p =>
+      cases n' with
+      | zero => omega
+      | succ n' =>
+        have hle' : n ≤ n' := Nat.le_of_succ_le_succ hle
+        simp only [elems] at h ⊢
+        cases hrd : readMem m (fldPath p nm.next) with
+        | none => rw [hrd] at h; simp at h
+        | some v =>
+          rw [hrd] at h
+          cases v with
+          | null =>
+            simp only at h ⊢
+            exact h
+          | ptr q =>
+            simp only [bind, Option.bind_eq_some_iff] at h ⊢
+            obtain ⟨rest, hrest, heq⟩ := h
+            cases heq
+            refine ⟨rest, ih n' (some q) rest hle' hrest, rfl⟩
+          | _ => simp at h
+
+theorem elems_det (m : Mem) (nm : Names) :
+    ∀ (n1 n2 : Nat) (cur : Option Path) (es1 es2 : List Path),
+      elems m nm n1 cur = some es1 → elems m nm n2 cur = some es2 → es1 = es2 := by
+  intro n1 n2 cur es1 es2 h1 h2
+  rcases Nat.le_total n1 n2 with hle | hle
+  · have h1' := elems_mono m nm n1 n2 cur es1 hle h1
+    rw [h1'] at h2
+    exact Option.some.inj h2
+  · have h2' := elems_mono m nm n2 n1 cur es2 hle h2
+    rw [h2'] at h1
+    exact (Option.some.inj h1).symm
+
+theorem elems_implies_reaches (m : Mem) (nm : Names) :
+    ∀ (n : Nat) (cur : Option Path) (es : List Path),
+      elems m nm n cur = some es →
+      Reaches m nm.next (match cur with | some p => .ptr p | none => .null) es := by
+  intro n
+  induction n with
+  | zero =>
+    intro cur es h
+    cases cur with
+    | none =>
+      cases h
+      exact Reaches.nil
+    | some p =>
+      cases h
+  | succ n ih =>
+    intro cur es h
+    cases cur with
+    | none =>
+      cases h
+      exact Reaches.nil
+    | some p =>
+      simp only [elems] at h
+      cases hrd : readMem m (fldPath p nm.next) with
+      | none => rw [hrd] at h; simp at h
+      | some v =>
+        rw [hrd] at h
+        cases v with
+        | null =>
+          simp only at h
+          cases h
+          exact Reaches.cons hrd Reaches.nil
+        | ptr q =>
+          simp only [bind, Option.bind_eq_some_iff] at h
+          obtain ⟨rest, hrest, heq⟩ := h
+          cases heq
+          exact Reaches.cons hrd (ih (some q) rest hrest)
+        | _ => simp at h
+
+theorem reaches_implies_elems (m : Mem) (nm : Names) :
+    ∀ {h : Value} {qs : List Path},
+      Reaches m nm.next h qs →
+      ∀ fuel, fuel ≥ qs.length →
+        elems m nm (fuel + 1) (match h with | .ptr p => some p | _ => none) = some qs := by
+  intro h qs hr
+  induction hr with
+  | nil =>
+    intro fuel _
+    simp only [elems]
+  | @cons p v rest hrd hrc ih =>
+    intro fuel hlen
+    simp only [elems]
+    rw [hrd]
+    cases hrc with
+    | nil =>
+      rfl
+    | @cons q v' rest' hrd' hrc' =>
+      have ih' := ih (fuel - 1) (by
+        simp only [List.length_cons] at hlen ⊢
+        omega)
+      have hfuel : fuel - 1 + 1 = fuel := by
+        simp only [List.length_cons] at hlen ⊢
+        omega
+      rw [hfuel] at ih'
+      dsimp only
+      rw [ih']
+      rfl
+
+theorem reaches_headOf_implies_elems (m : Mem) (nm : Names) :
+    ∀ (qs : List Path),
+      Reaches m nm.next (headOf qs) qs →
+      ∀ fuel, fuel ≥ qs.length →
+        elems m nm (fuel + 1) (match headOf qs with | .ptr p => some p | _ => none) = some qs := by
+  intro qs hr
+  exact reaches_implies_elems m nm hr
+
+theorem elems_nodup (m : Mem) (nm : Names) :
+    ∀ (n : Nat) (cur : Option Path) (es : List Path),
+      elems m nm n cur = some es → es.Nodup := by
+  intro n cur es h
+  have hr := elems_implies_reaches m nm n cur es h
+  exact hr.nodup
+
+theorem elems_nil (m : Mem) (nm : Names) :
+    ∀ (n : Nat) (cur : Option Path),
+      elems m nm n cur = some [] → cur = none := by
+  intro n cur h
+  cases cur with
+  | none => rfl
+  | some p =>
+    cases n with
+    | zero => cases h
+    | succ n =>
+      simp only [elems] at h
+      cases hrd : readMem m (fldPath p nm.next) with
+      | none => rw [hrd] at h; simp at h
+      | some v =>
+        rw [hrd] at h
+        cases v with
+        | null => simp at h
+        | ptr q =>
+          simp only [bind, Option.bind_eq_some_iff] at h
+          obtain ⟨rest, _, heq⟩ := h
+          cases heq
+        | _ => simp at h
+
+theorem elems_head (m : Mem) (nm : Names) :
+    ∀ (n : Nat) (p : Path) (es : List Path),
+      elems m nm n (some p) = some es → es.head? = some p := by
+  intro n p es h
+  cases n with
+  | zero => cases h
+  | succ n =>
+    simp only [elems] at h
+    cases hrd : readMem m (fldPath p nm.next) with
+    | none => rw [hrd] at h; simp at h
+    | some v =>
+      rw [hrd] at h
+      cases v with
+      | null =>
+        simp only at h
+        cases h
+        rfl
+      | ptr q =>
+        simp only [bind, Option.bind_eq_some_iff] at h
+        obtain ⟨rest, _, heq⟩ := h
+        cases heq
+        rfl
+      | _ => simp at h
+
+theorem RepInv.unique_es {m : Mem} {nm : Names} :
+    ∀ n1 n2 es1 es2,
+      elems m nm n1 (head m nm) = some es1 →
+      elems m nm n2 (head m nm) = some es2 →
+      es1 = es2 := by
+  intro n1 n2 es1 es2 h1 h2
+  exact elems_det m nm n1 n2 (head m nm) es1 es2 h1 h2
+
+theorem RepInv.head_eq {m : Mem} {nm : Names} :
+    ∀ n es, elems m nm n (head m nm) = some es → head m nm = es.head? := by
+  intro n es h
+  cases hhd : head m nm with
+  | none =>
+    rw [hhd] at h
+    have hnil : es = [] := by
+      cases n with
+      | zero => simp only [elems] at h; exact Option.some.inj h.symm
+      | succ n => simp only [elems] at h; exact Option.some.inj h.symm
+    rw [hnil]; rfl
+  | some p =>
+    rw [hhd] at h
+    exact (elems_head m nm n p es h).symm
+
+theorem RepInv.tail_eq {m : Mem} {nm : Names} (hinv : RepInv m nm) :
+    ∀ n es, elems m nm n (head m nm) = some es → tail m nm = es.getLast? := by
+  intro n es h
+  exact hinv.tail_last es ⟨n, h⟩
+
+theorem RepInv.count_eq' {m : Mem} {nm : Names} (hinv : RepInv m nm) :
+    ∀ n es, elems m nm n (head m nm) = some es → count m nm = es.length := by
+  intro n es h
+  exact hinv.count_eq es ⟨n, h⟩
+
+theorem RepInv.inlist_eq {m : Mem} {nm : Names} (hinv : RepInv m nm) :
+    ∀ n es, elems m nm n (head m nm) = some es → ∀ p, inlist m nm p = true ↔ p ∈ es := by
+  intro n es h p
+  exact hinv.inlist_iff es ⟨n, h⟩ p
+
+theorem RepInv.nodup {m : Mem} {nm : Names} :
+    ∀ n es, elems m nm n (head m nm) = some es → es.Nodup := by
+  intro n es h
+  exact elems_nodup m nm n (head m nm) es h
+
+/-- **Empty list representation invariant.**
+A memory state with null head, null tail, zero count, and all elements not in list
+satisfies `RepInv`. -/
+theorem RepInv_empty {m : Mem} {nm : Names}
+    (hhd : head m nm = none)
+    (htl : tail m nm = none)
+    (hcnt : count m nm = 0)
+    (hlink : ∀ p q, next m nm p = some q → prev m nm q = some p)
+    (hflg : ∀ p, inlist m nm p = false) :
+    RepInv m nm where
+  head_tail := by rw [hhd, htl]
+  linked := hlink
+  terminates := ⟨0, [], by rw [hhd]; rfl⟩
+  inlist_iff := by
+    intro es ⟨n, hn⟩ p
+    rw [hhd] at hn
+    have heq : es = [] := by
+      cases n with
+      | zero => simp only [elems] at hn; exact Option.some.inj hn.symm
+      | succ n => simp only [elems] at hn; exact Option.some.inj hn.symm
+    subst heq
+    simp [hflg p]
+  count_eq := by
+    intro es ⟨n, hn⟩
+    rw [hhd] at hn
+    have heq : es = [] := by
+      cases n with
+      | zero => simp only [elems] at hn; exact Option.some.inj hn.symm
+      | succ n => simp only [elems] at hn; exact Option.some.inj hn.symm
+    subst heq
+    simp [hcnt]
+  tail_last := by
+    intro es ⟨n, hn⟩
+    rw [hhd] at hn
+    have heq : es = [] := by
+      cases n with
+      | zero => simp only [elems] at hn; exact Option.some.inj hn.symm
+      | succ n => simp only [elems] at hn; exact Option.some.inj hn.symm
+    subst heq
+    simp [htl]
+
 /-! ## The representation invariant
 
 `qs` is the chain, in order. `rows` is the universe of live rows the allocator
@@ -2156,6 +2502,68 @@ example : (genLlist Examples.listDb).map
     = some [("task_row", ["id", "zdl_todo_next", "zdl_todo_prev",
                           "zdl_todo_inlist"]),
             ("TaskDb", ["zdl_todo_head", "zdl_todo_tail", "zdl_todo_n"])] := rfl
+
+/-! ### Decoder Witnesses
+
+Kernel-checked (`rfl`) decodings covering:
+1. Empty list decode
+2. Single-element list decode
+3. Two-element list decode
+4. Cyclic structure fuel-exhaustion -> `none`
+5. Corrupt field type -> `none`
+-/
+
+def testNm : Names := names "TaskDb" "zdl_todo"
+
+def p1 : Path := ⟨.blk 1, []⟩
+def p2 : Path := ⟨.blk 2, []⟩
+
+def mEmpty : Mem :=
+  { glb := [("g_TaskDb", .strct [("zdl_todo_head", .null), ("zdl_todo_tail", .null), ("zdl_todo_n", .u32 0)])]
+  , hp := []
+  , next := 1 }
+
+def mOne : Mem :=
+  { glb := [("g_TaskDb", .strct [("zdl_todo_head", .ptr p1), ("zdl_todo_tail", .ptr p1), ("zdl_todo_n", .u32 1)])]
+  , hp := [(1, .strct [("id", .u64 10), ("zdl_todo_next", .null), ("zdl_todo_prev", .null), ("zdl_todo_inlist", .bool true)])]
+  , next := 2 }
+
+def mTwo : Mem :=
+  { glb := [("g_TaskDb", .strct [("zdl_todo_head", .ptr p1), ("zdl_todo_tail", .ptr p2), ("zdl_todo_n", .u32 2)])]
+  , hp := [ (1, .strct [("id", .u64 10), ("zdl_todo_next", .ptr p2), ("zdl_todo_prev", .null), ("zdl_todo_inlist", .bool true)])
+          , (2, .strct [("id", .u64 20), ("zdl_todo_next", .null), ("zdl_todo_prev", .ptr p1), ("zdl_todo_inlist", .bool true)]) ]
+  , next := 3 }
+
+def mCycle : Mem :=
+  { glb := [("g_TaskDb", .strct [("zdl_todo_head", .ptr p1), ("zdl_todo_tail", .ptr p1), ("zdl_todo_n", .u32 1)])]
+  , hp := [(1, .strct [("id", .u64 10), ("zdl_todo_next", .ptr p1), ("zdl_todo_prev", .null), ("zdl_todo_inlist", .bool true)])]
+  , next := 2 }
+
+def mCorrupt : Mem :=
+  { glb := [("g_TaskDb", .strct [("zdl_todo_head", .ptr p1), ("zdl_todo_tail", .ptr p1), ("zdl_todo_n", .u32 1)])]
+  , hp := [(1, .strct [("id", .u64 10), ("zdl_todo_next", .u32 42), ("zdl_todo_prev", .null), ("zdl_todo_inlist", .bool true)])]
+  , next := 2 }
+
+example : head mEmpty testNm = none := rfl
+example : tail mEmpty testNm = none := rfl
+example : count mEmpty testNm = 0 := rfl
+example : elems mEmpty testNm 5 (head mEmpty testNm) = some [] := rfl
+
+example : head mOne testNm = some p1 := rfl
+example : tail mOne testNm = some p1 := rfl
+example : count mOne testNm = 1 := rfl
+example : elems mOne testNm 5 (head mOne testNm) = some [p1] := rfl
+
+example : head mTwo testNm = some p1 := rfl
+example : tail mTwo testNm = some p2 := rfl
+example : count mTwo testNm = 2 := rfl
+example : elems mTwo testNm 5 (head mTwo testNm) = some [p1, p2] := rfl
+
+example : elems mCycle testNm 0 (head mCycle testNm) = none := rfl
+example : elems mCycle testNm 1 (head mCycle testNm) = none := rfl
+example : elems mCycle testNm 2 (head mCycle testNm) = none := rfl
+
+example : elems mCorrupt testNm 5 (head mCorrupt testNm) = none := rfl
 
 end Checks
 
