@@ -471,15 +471,14 @@ theorem length_flatten_set_cons {α : Type _} : ∀ {chains : List (List α)} {b
     rw [length_flatten_set_cons hb']
     omega
 
-/-- **Successful Insertion for **: If  is a valid row not yet in the index,
-    its key  is fresh, and bucket  has remaining capacity, then
-     succeeds (returns ), correctly links  at the head of bucket ,
-    sets  to , increments count, and preserves  for the updated chains. -/
-theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
-    {mask cap nb n : Nat} {k : UInt32} {rows : List Path} {chains : List (List Path)} {q : Path}
-    (hlook_ins : lookupFun p nm.insert = .ok (insertDef nm elem key mask))
+/-- **Successful Execution of `insertDef.body`**: If `q` is a valid row not yet in the index,
+    its key `k` is fresh, and bucket `b = k & mask` has remaining capacity, then
+    executing `(insertDef nm elem key mask).body` at call-depth `d + 1` succeeds,
+    links `q` at the head of bucket `b`, sets `inhash` to `true`, increments count,
+    and preserves `RepInv` for the updated chains. -/
+theorem exec_insertBody {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
+    {mask cap nb d : Nat} {k : UInt32} {rows : List Path} {chains : List (List Path)} {q : Path}
     (hlook_find : lookupFun p nm.find = .ok (findDef nm elem key mask cap))
-    (hn : p.funs.length = n + 2)
     (hno : NamesOk nm)
     (hkey_next : key ≠ nm.next)
     (hkey_inhash : key ≠ nm.inhash)
@@ -491,14 +490,21 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
     (hb : (k &&& UInt32.ofNat mask).toNat < nb)
     (hfits : (chains[(k &&& UInt32.ofNat mask).toNat]' (by rw [I.nb_len]; exact hb)).length < cap)
     (h_fresh : ∀ q', (k, q') ∉ elems m key chains) :
-    ∃ m', callFun p m nm.insert [.ptr q] = .ok (m', some (.bool true))
-      ∧ RepInv m' nm elem key mask cap nb rows
+    ∃ σ5 : Store,
+      execAt p (execStmt p (d + 1)) (insertDef nm elem key mask).body
+        (m.toStore [(parRow, Value.ptr q), (tmpB, .u32 0), (tmpP, Value.null)])
+        = .ok (σ5, .ret (some (.bool true)))
+      ∧ RepInv σ5.toMem nm elem key mask cap nb rows
           (chains.set (k &&& UInt32.ofNat mask).toNat (q :: chains[(k &&& UInt32.ofNat mask).toNat]'(by rw [I.nb_len]; exact hb)))
-      ∧ readMem m' (fldPath q nm.inhash) = some (.bool true)
-      ∧ readMem m' (fldPath q nm.next) = some (headOf (chains[(k &&& UInt32.ofNat mask).toNat]'(by rw [I.nb_len]; exact hb)))
-      ∧ readMem m' (bucketPath nm (k &&& UInt32.ofNat mask).toNat) = some (.ptr q)
-      ∧ readMem m' (dbPath nm nm.count) = some (.u32 (UInt32.ofNat (chains.flatten.length + 1))) := by
-  have hn_pos : ∃ n', p.funs.length = n' + 1 := ⟨n + 1, hn⟩
+      ∧ readMem σ5.toMem (fldPath q nm.inhash) = some (.bool true)
+      ∧ readMem σ5.toMem (fldPath q nm.next) = some (headOf (chains[(k &&& UInt32.ofNat mask).toNat]'(by rw [I.nb_len]; exact hb)))
+      ∧ readMem σ5.toMem (bucketPath nm (k &&& UInt32.ofNat mask).toNat) = some (.ptr q)
+      ∧ readMem σ5.toMem (dbPath nm nm.count) = some (.u32 (UInt32.ofNat (chains.flatten.length + 1)))
+      ∧ (∀ r, (fldPath q nm.next).overlaps r = false →
+              (fldPath q nm.inhash).overlaps r = false →
+              (bucketPath nm (k &&& UInt32.ofNat mask).toNat).overlaps r = false →
+              (dbPath nm nm.count).overlaps r = false →
+              readMem σ5.toMem r = readMem m r) := by
   have hb_len : (k &&& UInt32.ofNat mask).toNat < chains.length := by rw [I.nb_len]; exact hb
   have B := I.buckets (k &&& UInt32.ofNat mask).toNat hb
   have h_sat : firstSat (keyAt m key k) (chains[(k &&& UInt32.ofNat mask).toNat]'hb_len) = none := by
@@ -514,7 +520,7 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
       have h_in_elems : (k, q') ∈ elems m key chains := mem_elems_iff.mpr ⟨h_flat, hk'⟩
       exact absurd h_in_elems (h_fresh q')
   obtain ⟨σ_find, h_find_body, h_find_mem⟩ :=
-    exec_findBody (p := p) (n := n) (nm := nm) (elem := elem) (key := key)
+    exec_findBody (p := p) (n := d) (nm := nm) (elem := elem) (key := key)
       (mask := mask) (cap := cap) (k := k) B
   rw [h_sat] at h_find_body
   have h_ptrOf : ptrOf none = Value.null := rfl
@@ -559,7 +565,7 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
     rfl
   have harg : evalExpr σ0 (.rd (ptrFld parRow key)) = .ok (.u32 k) := by
     simp only [evalExpr, resolve_ptrFld hlocRow hr_key, readLoc, hr_key, bind, Except.bind]
-  have h_call_step : execAt p (execStmt p (n + 1)) (.call (some tmpP) nm.find [.rd (ptrFld parRow key)]) σ0
+  have h_call_step : execAt p (execStmt p (d + 1)) (.call (some tmpP) nm.find [.rd (ptrFld parRow key)]) σ0
       = .ok (σ0, .normal) := by
     simp only [execAt, hlook_find]
     rw [mapM_evalExpr_singleton, harg]
@@ -569,9 +575,9 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
     dsimp only
     have h_σ0_toMem : σ0.toMem = m := by rw [hσ0]; rfl
     rw [h_σ0_toMem]
-    rw [show execStmt p (n + 1) (findDef nm elem key mask cap).body
+    rw [show execStmt p (d + 1) (findDef nm elem key mask cap).body
             (m.toStore [(parKey, Value.u32 k), (tmpB, .u32 0), (tmpP, .null), (tmpHit, .null), (tmpI, .u32 0)])
-          = execAt p (execStmt p n) (findDef nm elem key mask cap).body
+          = execAt p (execStmt p d) (findDef nm elem key mask cap).body
             (m.toStore [(parKey, Value.u32 k), (tmpB, .u32 0), (tmpP, .null), (tmpHit, .null), (tmpI, .u32 0)]) from rfl]
     rw [h_find_body]
     dsimp only
@@ -596,7 +602,7 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
   have he_b : evalExpr σ0 (.bin .band (.rd (ptrFld parRow key)) (.lit (.u32 (UInt32.ofNat mask))))
       = .ok (.u32 (k &&& UInt32.ofNat mask)) := by
     simp only [evalExpr, resolve_ptrFld hlocRow hr_key, readLoc, hr_key, bind, Except.bind, evalBin]
-  have hS1 : execAt p (execStmt p (n + 1))
+  have hS1 : execAt p (execStmt p (d + 1))
       (.assign (.var tmpB) (.bin .band (.rd (ptrFld parRow key)) (.lit (.u32 (UInt32.ofNat mask))))) σ0
       = .ok (σ1, .normal) := by
     rw [hσ1]; exact step_local (by rw [hσ0]; rfl) he_b
@@ -618,14 +624,14 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
     read_bucket hl1b_ofNat hround hr1_bkt
 
   -- S2: 
-  obtain ⟨σ2, hS2, hl2, hw2, hf2⟩ := step_ptr (p := p) (callee := execStmt p (n + 1))
+  obtain ⟨σ2, hS2, hl2, hw2, hf2⟩ := step_ptr (p := p) (callee := execStmt p (d + 1))
     (x := nm.next) (e := .rd (bucket nm tmpB)) (w := headOf (chains[(k &&& UInt32.ofNat mask).toNat]'hb_len))
     hl1row (by rw [hr1]; exact hq_next_val) he_bkt
   have hl2row : σ2.getLocal parRow = some (.ptr q) := by simp only [Store.getLocal, hl2]; exact hl1row
   have hl2b : σ2.getLocal tmpB = some (.u32 (k &&& UInt32.ofNat mask)) := by simp only [Store.getLocal, hl2]; exact hl1b
 
   -- S3: 
-  obtain ⟨σ3, hS3, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := execStmt p (n + 1))
+  obtain ⟨σ3, hS3, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := execStmt p (d + 1))
     (x := nm.inhash) (e := .lit (.bool true)) (w := .bool true)
     hl2row (by rw [hf2 _ dNF, hr1]; exact hr_inhash) rfl
   have hl3row : σ3.getLocal parRow = some (.ptr q) := by simp only [Store.getLocal, hl3]; exact hl2row
@@ -638,7 +644,7 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
         hr1_bkt]
   have hl3b_nat : σ3.getLocal tmpB = some (.u32 (UInt32.ofNat (k &&& UInt32.ofNat mask).toNat)) := by
     rw [UInt32.ofNat_toNat]; exact hl3b
-  obtain ⟨σ4, hS4, hl4, hw4, hf4⟩ := step_bucket (p := p) (callee := execStmt p (n + 1))
+  obtain ⟨σ4, hS4, hl4, hw4, hf4⟩ := step_bucket (p := p) (callee := execStmt p (d + 1))
     (nm := nm) (i := tmpB) (b := (k &&& UInt32.ofNat mask).toNat)
     (e := .rd (.var parRow)) (w := .ptr q)
     hl3b_nat hround hr3_bkt (read_local' hl3row)
@@ -658,18 +664,18 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
     show Except.ok (Value.u32 (UInt32.ofNat chains.flatten.length + 1)) = Except.ok (Value.u32 (UInt32.ofNat (chains.flatten.length + 1)))
     simp only [UInt32.ofNat_add]
     rfl
-  obtain ⟨σ5, hS5, hl5, hw5, hf5⟩ := step_db (p := p) (callee := execStmt p (n + 1))
+  obtain ⟨σ5, hS5, hl5, hw5, hf5⟩ := step_db (p := p) (callee := execStmt p (d + 1))
     (nm := nm) (x := nm.count)
     (e := .bin .add (.rd (dbFld nm nm.count)) (.lit (.u32 1)))
     (w := .u32 (UInt32.ofNat (chains.flatten.length + 1)))
     hr4_cnt he_cnt
 
   -- Block execution assembly:
-  have hbody : execAt p (execStmt p (n + 1)) (insertDef nm elem key mask).body σ0
+  have hbody : execAt p (execStmt p (d + 1)) (insertDef nm elem key mask).body σ0
       = .ok (σ5, .ret (some (.bool true))) := by
     simp only [insertDef, Stmt.block, Stmt.when]
     rw [execAt_seq']
-    have h_when1 : execAt p (execStmt p (n + 1))
+    have h_when1 : execAt p (execStmt p (d + 1))
         (.cond (.un .lnot (.rd (ptrFld parRow nm.inhash)))
           ((Stmt.call (some tmpP) nm.find [Expr.rd (ptrFld parRow key)]).seq
             (Stmt.cond (Expr.bin BinOp.eq (Expr.rd (LVal.var tmpP)) (Expr.null (Ty.strct elem)))
@@ -701,20 +707,20 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
       simp only [bind, Except.bind]
       rfl
     rw [h_when1]
-    rfl
+    simp only [bind, Except.bind]
 
-  have hframe := buildFrame_insert m nm elem key mask q
-  have hcall := callFun_ret (p := p) (m := m) (fd := insertDef nm elem key mask)
-    (args := [Value.ptr q]) hlook_ins hn hframe (by rw [← hσ0]; exact hbody)
-
-  have h_unch_fld : ∀ r ∈ rows, r ≠ q → ∀ x, readMem σ5.toMem (fldPath r x) = readMem m (fldPath r x) := by
-    intro r hr hne x
-    rw [readMem_toMem,
-        hf5 _ (by rw [overlaps_symm]; exact row_fld_disjoint_count I hr x),
-        hf4 _ (by rw [overlaps_symm]; exact row_fld_disjoint_bucket I hr x hb),
-        hf3 _ (row_disjoint_row I hq_row hr (Ne.symm hne) nm.inhash x),
-        hf2 _ (row_disjoint_row I hq_row hr (Ne.symm hne) nm.next x),
-        hr1, hσ0, readMem_toStore]
+  have h_unch_fld : ∀ r ∈ rows, r ≠ q → ∀ fld : Ident,
+      readMem σ5.toMem (fldPath r fld) = readMem m (fldPath r fld) := by
+    intro r hr hrq fld
+    have dNR : (fldPath q nm.next).overlaps (fldPath r fld) = false :=
+      row_disjoint_row I hq_row hr (Ne.symm hrq) nm.next fld
+    have dFR : (fldPath q nm.inhash).overlaps (fldPath r fld) = false :=
+      row_disjoint_row I hq_row hr (Ne.symm hrq) nm.inhash fld
+    have dBR : (bucketPath nm (k &&& UInt32.ofNat mask).toNat).overlaps (fldPath r fld) = false := by
+      rw [overlaps_symm]; exact row_fld_disjoint_bucket I hr fld hb
+    have dCR : (dbPath nm nm.count).overlaps (fldPath r fld) = false := by
+      rw [overlaps_symm]; exact row_fld_disjoint_count I hr fld
+    rw [readMem_toMem, hf5 _ dCR, hf4 _ dBR, hf3 _ dFR, hf2 _ dNR, hr1, hσ0, readMem_toStore]
 
   have h_unch_key : ∀ r ∈ rows, readMem σ5.toMem (fldPath r key) = readMem m (fldPath r key) := by
     intro r hr
@@ -818,7 +824,7 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
           have hag : ∀ r ∈ chains[b']'(by rw [I.nb_len]; exact hb'),
               readMem σ5.toMem (fldPath r nm.next) = readMem m (fldPath r nm.next) := by
             intro r hr
-            have hr_row := I.sub b' hb' r hr
+            have hr_row := I.sub _ hb' r hr
             have hr_ne : r ≠ q := by
               intro heq; cases heq
               have : q ∈ chains.flatten := by
@@ -831,7 +837,7 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
           rw [h_get]
           intro r hr
           obtain ⟨k', hk'⟩ := B_old.keys r hr
-          have hr_row := I.sub b' hb' r hr
+          have hr_row := I.sub _ hb' r hr
           refine ⟨k', ?_⟩
           rw [h_unch_key r hr_row, hk']
         · -- fits
@@ -860,9 +866,9 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
             = chains[b']'(by rw [I.nb_len]; exact hb') :=
           List.getElem_set_ne (Ne.symm hb_eq) (by rw [List.length_set, I.nb_len]; exact hb')
         rw [h_get] at hr
-        have hr_row := I.sub b' hb' r hr
+        have hr_row := I.sub _ hb' r hr
         rw [h_unch_key r hr_row] at hk'
-        exact I.hash_mod b' hb' r hr k' hk'
+        exact I.hash_mod _ hb' r hr k' hk'
     keys_unique := by
       intro b1 hb1 b2 hb2 q1 hq1 q2 hq2 k' hk1 hk2
       have hb1_len : b1 < (chains.set (k &&& UInt32.ofNat mask).toNat (q :: chains[(k &&& UInt32.ofNat mask).toNat]'hb_len)).length := by
@@ -930,9 +936,7 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
           obtain ⟨idx1, hidx1, rfl⟩ := List.mem_iff_getElem.mp hc1
           obtain ⟨c2, hc2, hq2_c2⟩ := hq2_flat
           obtain ⟨idx2, hidx2, rfl⟩ := List.mem_iff_getElem.mp hc2
-          have hidx1_nb : idx1 < nb := by rw [← I.nb_len]; exact hidx1
-          have hidx2_nb : idx2 < nb := by rw [← I.nb_len]; exact hidx2
-          exact I.keys_unique idx1 hidx1_nb idx2 hidx2_nb q1 hq1_c1 q2 hq2_c2 k' hk1 hk2
+          exact I.keys_unique _ (by rw [← I.nb_len]; exact hidx1) _ (by rw [← I.nb_len]; exact hidx2) q1 hq1_c1 q2 hq2_c2 k' hk1 hk2
     flags := by
       intro r hr
       have hr_flat : r ∈ (chains.set (k &&& UInt32.ofNat mask).toNat (q :: chains[(k &&& UInt32.ofNat mask).toNat]'hb_len)).flatten ↔ r = q ∨ r ∈ chains.flatten :=
@@ -988,7 +992,7 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
       exact I.parent r hr
   }
 
-  refine ⟨σ5.toMem, hcall, hRep, ?_, ?_, ?_, ?_⟩
+  refine ⟨σ5, (hσ0 ▸ hbody), hRep, ?_, ?_, ?_, ?_, ?_⟩
   · -- readMem m' q.inhash = true
     rw [readMem_toMem, hf5 _ (by rw [overlaps_symm]; exact dFC),
         hf4 _ (by rw [overlaps_symm]; exact dFB), hw3]
@@ -1000,6 +1004,48 @@ theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
     rw [readMem_toMem, hf5 _ (by rw [overlaps_symm]; exact dBC), hw4]
   · -- readMem m' count = chains.flatten.length + 1
     rw [readMem_toMem, hw5]
+  · -- frame
+    intro r hrN hrF hrB hrC
+    rw [readMem_toMem, hf5 _ hrC, hf4 _ hrB, hf3 _ hrF, hf2 _ hrN, hr1, hσ0, readMem_toStore]
+
+/-- **Successful Insertion for `InsertMaybe`**: If `q` is a valid row not yet in the index,
+    its key `k` is fresh, and bucket `b = k & mask` has remaining capacity, then
+    `InsertMaybe(q)` succeeds (returns `true`), correctly links `q` at the head of bucket `b`,
+    sets `inhash` to `true`, increments count, and preserves `RepInv` for the updated chains. -/
+theorem insert_success {p : Program} {m : Mem} {nm : Names} {elem key : Ident}
+    {mask cap nb n : Nat} {k : UInt32} {rows : List Path} {chains : List (List Path)} {q : Path}
+    (hlook_ins : lookupFun p nm.insert = .ok (insertDef nm elem key mask))
+    (hlook_find : lookupFun p nm.find = .ok (findDef nm elem key mask cap))
+    (hn : p.funs.length = n + 2)
+    (hno : NamesOk nm)
+    (hkey_next : key ≠ nm.next)
+    (hkey_inhash : key ≠ nm.inhash)
+    (I : RepInv m nm elem key mask cap nb rows chains)
+    (hq_row : q ∈ rows)
+    (hq_not_in : q ∉ chains.flatten)
+    (h_flag : readMem m (fldPath q nm.inhash) = some (.bool false))
+    (hq_key : readMem m (fldPath q key) = some (.u32 k))
+    (hb : (k &&& UInt32.ofNat mask).toNat < nb)
+    (hfits : (chains[(k &&& UInt32.ofNat mask).toNat]' (by rw [I.nb_len]; exact hb)).length < cap)
+    (h_fresh : ∀ q', (k, q') ∉ elems m key chains) :
+    ∃ m', callFun p m nm.insert [.ptr q] = .ok (m', some (.bool true))
+      ∧ RepInv m' nm elem key mask cap nb rows
+          (chains.set (k &&& UInt32.ofNat mask).toNat (q :: chains[(k &&& UInt32.ofNat mask).toNat]'(by rw [I.nb_len]; exact hb)))
+      ∧ readMem m' (fldPath q nm.inhash) = some (.bool true)
+      ∧ readMem m' (fldPath q nm.next) = some (headOf (chains[(k &&& UInt32.ofNat mask).toNat]'(by rw [I.nb_len]; exact hb)))
+      ∧ readMem m' (bucketPath nm (k &&& UInt32.ofNat mask).toNat) = some (.ptr q)
+      ∧ readMem m' (dbPath nm nm.count) = some (.u32 (UInt32.ofNat (chains.flatten.length + 1)))
+      ∧ (∀ r, (fldPath q nm.next).overlaps r = false →
+              (fldPath q nm.inhash).overlaps r = false →
+              (bucketPath nm (k &&& UInt32.ofNat mask).toNat).overlaps r = false →
+              (dbPath nm nm.count).overlaps r = false →
+              readMem m' r = readMem m r) := by
+  obtain ⟨σ5, hbody, hRep, h1, h2, h3, h4, hframe⟩ :=
+    exec_insertBody (d := n) hlook_find hno hkey_next hkey_inhash I hq_row hq_not_in h_flag hq_key hb hfits h_fresh
+  have hframe_call := buildFrame_insert m nm elem key mask q
+  have hcall := callFun_ret (p := p) (m := m) (fd := insertDef nm elem key mask)
+    (args := [Value.ptr q]) hlook_ins hn hframe_call hbody
+  exact ⟨σ5.toMem, hcall, hRep, h1, h2, h3, h4, hframe⟩
 
 end Thash
 end Templates

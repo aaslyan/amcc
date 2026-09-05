@@ -7,6 +7,8 @@ import Amcc.CSubset.Wf
 import Amcc.Dmmeta
 import Amcc.Templates.Pool
 import Amcc.Templates.Llist
+import Amcc.Templates.Thash
+import Amcc.Templates.ThashRefine
 
 namespace Templates
 namespace MiniDb
@@ -76,34 +78,80 @@ def genC (d : Dmmeta.Db) : Option Program := do
     , Llist.inQDef qNm elemN
     , Llist.emptyQDef qNm elemN
     , Llist.sizeDef qNm ]
-  let insDef : FunDef :=
-    { name   := dbN ++ "_Insert"
-    , params := [("id", .scalar .u64), ("qty", .scalar .u64)]
-    , ret    := none
-    , locals := [Llist.ptrLocal "row" elemN]
-    , body   := .block
-        [ .call (some "row") pNm.alloc []
-        , .when (.bin .ne (.rd (.var "row")) (.null (.strct elemN)))
-            (.block [ .assign (Llist.ptrFld "row" "id") (.rd (.var "id"))
-                    , .assign (Llist.ptrFld "row" "qty") (.rd (.var "qty"))
-                    , .call none qNm.insertTail [.rd (.var "row")] ]) ] }
-  let elemExt :=
-    [ (Pool.freeNextName, .ptr (.strct elemN))
-    , (qNm.next, .ptr (.strct elemN))
-    , (qNm.prev, .ptr (.strct elemN))
-    , (qNm.inlist, .scalar .bool) ]
-  let dbExt :=
-    [ (pNm.freeHead, .ptr (.strct elemN))
-    , (pNm.count, .scalar .u32)
-    , (qNm.head, .ptr (.strct elemN))
-    , (qNm.tail, .ptr (.strct elemN))
-    , (qNm.count, .scalar .u32) ]
-  some
-    { structs := Layout.addFields dbN dbExt
-                   (Layout.addFields elemN elemExt
-                     (Dmmeta.genStructs d))
-    , globals := Dmmeta.genGlobals d
-    , funs    := poolDefs ++ queueDefs ++ [insDef] }
+  let hashFld? := dbC.fields.find? (fun f => f.reftype == .Thash)
+  match hashFld? with
+  | none =>
+    let insDef : FunDef :=
+      { name   := dbN ++ "_Insert"
+      , params := [("id", .scalar .u64), ("qty", .scalar .u64)]
+      , ret    := none
+      , locals := [Llist.ptrLocal "row" elemN]
+      , body   := .block
+          [ .call (some "row") pNm.alloc []
+          , .when (.bin .ne (.rd (.var "row")) (.null (.strct elemN)))
+              (.block [ .assign (Llist.ptrFld "row" "id") (.rd (.var "id"))
+                      , .assign (Llist.ptrFld "row" "qty") (.rd (.var "qty"))
+                      , .call none qNm.insertTail [.rd (.var "row")] ]) ] }
+    let elemExt :=
+      [ (Pool.freeNextName, .ptr (.strct elemN))
+      , (qNm.next, .ptr (.strct elemN))
+      , (qNm.prev, .ptr (.strct elemN))
+      , (qNm.inlist, .scalar .bool) ]
+    let dbExt :=
+      [ (pNm.freeHead, .ptr (.strct elemN))
+      , (pNm.count, .scalar .u32)
+      , (qNm.head, .ptr (.strct elemN))
+      , (qNm.tail, .ptr (.strct elemN))
+      , (qNm.count, .scalar .u32) ]
+    some
+      { structs := Layout.addFields dbN dbExt
+                     (Layout.addFields elemN elemExt
+                       (Dmmeta.genStructs d))
+      , globals := Dmmeta.genGlobals d
+      , funs    := poolDefs ++ queueDefs ++ [insDef] }
+  | some hFld =>
+    let hNm := Thash.names dbN (Dmmeta.mangle hFld.name)
+    let nb ← d.inlaryMax? dbC.name hFld.name
+    let mask := nb - 1
+    let thashDefs :=
+      [ Thash.initDef hNm elemN nb
+      , Thash.findDef hNm elemN "id" mask cap
+      , Thash.insertDef hNm elemN "id" mask
+      , Thash.removeDef hNm elemN "id" mask cap
+      , Thash.sizeDef hNm ]
+    let insDef : FunDef :=
+      { name   := dbN ++ "_Insert"
+      , params := [("id", .scalar .u32), ("qty", .scalar .u64)]
+      , ret    := none
+      , locals := [Llist.ptrLocal "row" elemN]
+      , body   := .block
+          [ .call (some "row") pNm.alloc []
+          , .when (.bin .ne (.rd (.var "row")) (.null (.strct elemN)))
+              (.block [ .assign (Llist.ptrFld "row" "id") (.rd (.var "id"))
+                      , .assign (Llist.ptrFld "row" "qty") (.rd (.var "qty"))
+                      , .call none qNm.insertTail [.rd (.var "row")]
+                      , .call none hNm.insert [.rd (.var "row")] ]) ] }
+    let elemExt :=
+      [ (Pool.freeNextName, .ptr (.strct elemN))
+      , (qNm.next, .ptr (.strct elemN))
+      , (qNm.prev, .ptr (.strct elemN))
+      , (qNm.inlist, .scalar .bool)
+      , (hNm.next, .ptr (.strct elemN))
+      , (hNm.inhash, .scalar .bool) ]
+    let dbExt :=
+      [ (pNm.freeHead, .ptr (.strct elemN))
+      , (pNm.count, .scalar .u32)
+      , (qNm.head, .ptr (.strct elemN))
+      , (qNm.tail, .ptr (.strct elemN))
+      , (qNm.count, .scalar .u32)
+      , (hNm.buckets, .arr (.ptr (.strct elemN)) nb)
+      , (hNm.count, .scalar .u32) ]
+    some
+      { structs := Layout.addFields dbN dbExt
+                     (Layout.addFields elemN elemExt
+                       (Dmmeta.genStructs d))
+      , globals := Dmmeta.genGlobals d
+      , funs    := poolDefs ++ queueDefs ++ thashDefs ++ [insDef] }
 
 def elemStructDef : StructDef where
   name   := elemName
@@ -928,7 +976,7 @@ theorem mini_insert_forward_sim
         exact I_pool_alloc.head
       · have hframe_free_chain : ∀ r ∈ free_rest', readMem m' (fldPath r Pool.freeNextName) = readMem m₁ (fldPath r Pool.freeNextName) := by
           intro r hr
-          have hr_in_free : r ∈ q :: free_rest' := List.mem_cons_of_mem q hr
+          have hr_in_free : r ∈ free_rest := hfr ▸ List.mem_cons_of_mem q hr
           have hr_row := I.pool.sub_free r (hfr ▸ hr_in_free)
           have hr_ne_q : r ≠ q := by
             intro heq
@@ -1019,7 +1067,7 @@ theorem mini_insert_forward_sim
     have I_rep_final : DbRepInv m' cap free_rest' (q :: live_qs) (queue_es ++ [q]) := by
       refine ⟨I_pool_final, I_queue_final, ?_, ?_, ?_, I.disj_db⟩
       · intro r hr
-        have hr_in_free : r ∈ q :: free_rest' := List.mem_cons_of_mem q hr
+        have hr_in_free : r ∈ free_rest := hfr ▸ List.mem_cons_of_mem q hr
         have hr_row := I.pool.sub_free r (hfr ▸ hr_in_free)
         have hr_ne_q : r ≠ q := by
           intro heq
@@ -1372,6 +1420,255 @@ theorem mini_insert_forward_sim_of_gen
   have h_eq : p = genMiniDb cap := Option.some.inj (hp.symm.trans (genC_miniDb cap))
   subst h_eq
   exact mini_insert_forward_sim cap fuel m v I hfree hfuel
+
+
+def hashFld : CSubset.Ident := "th_order"
+def hashNm : Thash.Names := Thash.names dbName hashFld
+
+def insertOrderDef3 : FunDef where
+  name   := "MiniDb_Insert"
+  params := [("id", .scalar .u32), ("qty", .scalar .u64)]
+  ret    := none
+  locals := [Llist.ptrLocal "row" elemName]
+  body   := .block
+    [ .call (some "row") poolNm.alloc []
+    , .when (.bin .ne (.rd (.var "row")) (.null (.strct elemName)))
+        (.block [ .assign (Llist.ptrFld "row" "id") (.rd (.var "id"))
+                , .assign (Llist.ptrFld "row" "qty") (.rd (.var "qty"))
+                , .call none queueNm.insertTail [.rd (.var "row")]
+                , .call none hashNm.insert [.rd (.var "row")] ]) ]
+
+def elemStructDef3 : StructDef where
+  name   := elemName
+  fields := [ ("id", .scalar .u32)
+            , ("qty", .scalar .u64)
+            , (Pool.freeNextName, .ptr (.strct elemName))
+            , (queueNm.next, .ptr (.strct elemName))
+            , (queueNm.prev, .ptr (.strct elemName))
+            , (queueNm.inlist, .scalar .bool)
+            , (hashNm.next, .ptr (.strct elemName))
+            , (hashNm.inhash, .scalar .bool) ]
+
+def dbStructDef3 (cap nb : Nat) : StructDef where
+  name   := dbName
+  fields := [ (poolFld, .arr (.strct elemName) cap)
+            , (poolNm.freeHead, .ptr (.strct elemName))
+            , (poolNm.count, .scalar .u32)
+            , (queueNm.head, .ptr (.strct elemName))
+            , (queueNm.tail, .ptr (.strct elemName))
+            , (queueNm.count, .scalar .u32)
+            , (hashNm.buckets, .arr (.ptr (.strct elemName)) nb)
+            , (hashNm.count, .scalar .u32) ]
+
+def genMiniDb3 (cap nb : Nat) : Program where
+  structs := [elemStructDef3, dbStructDef3 cap nb]
+  globals := [dbGlobalDef]
+  funs    := [ Pool.initDef poolNm poolFld cap elemName
+             , Pool.allocDef poolNm elemName
+             , Pool.freeDef poolNm elemName
+             , Pool.sizeDef poolNm
+             , Pool.maxDef poolNm cap
+             , Llist.initDef queueNm elemName
+             , Llist.insertDef queueNm elemName
+             , Llist.insertTailDef queueNm elemName
+             , Llist.removeDef queueNm elemName
+             , Llist.firstDef queueNm elemName
+             , Llist.nextDef queueNm elemName
+             , Llist.prevDef queueNm elemName
+             , Llist.inQDef queueNm elemName
+             , Llist.emptyQDef queueNm elemName
+             , Llist.sizeDef queueNm
+             , Thash.initDef hashNm elemName nb
+             , Thash.findDef hashNm elemName "id" (nb - 1) cap
+             , Thash.insertDef hashNm elemName "id" (nb - 1)
+             , Thash.removeDef hashNm elemName "id" (nb - 1) cap
+             , Thash.sizeDef hashNm
+             , insertOrderDef3 ]
+
+def miniDb3 (cap nb : Nat) : Dmmeta.Db where
+  ctypes :=
+    [ { name   := elemName
+      , fields := [ { name := "id",  arg := "u32", reftype := .Pkey }
+                  , { name := "qty", arg := "u64", reftype := .Val } ] }
+    , { name   := dbName
+      , fields := [ { name := poolFld,  arg := elemName, reftype := .Inlary }
+                  , { name := queueFld, arg := elemName, reftype := .Llist }
+                  , { name := hashFld,  arg := elemName, reftype := .Thash } ] } ]
+  attrs  := [ { ctype := dbName, field := poolFld, data := .inlary cap }
+            , { ctype := dbName, field := hashFld, data := .inlary nb } ]
+  root   := some dbName
+
+theorem genC_miniDb3 (cap nb : Nat) :
+    genC (miniDb3 cap nb) = some (genMiniDb3 cap nb) := rfl
+
+def readOrder3 (m : Mem) (q : Path) : Option (UInt32 × UInt64) :=
+  match readMem m (fldPath q "id"), readMem m (fldPath q "qty") with
+  | some (.u32 id), some (.u64 qty) => some (id, qty)
+  | _, _ => none
+
+structure DbRepInv3 (m : Mem) (cap nb mask : Nat)
+    (free_rest live_qs queue_es : List Path)
+    (chains : List (List Path)) : Prop where
+  pool               : Pool.PoolInv m poolNm poolFld cap free_rest live_qs
+  queue              : Llist.TailListInv m queueNm live_qs queue_es
+  thash              : Thash.RepInv m hashNm elemName "id" mask cap nb (Pool.poolRows poolNm poolFld cap) chains
+  fresh_queue        : ∀ q ∈ free_rest, Pool.RowFresh m q queueNm
+  fresh_hash         : ∀ q ∈ free_rest, readMem m (fldPath q hashNm.inhash) = some (.bool false)
+  orders             : ∀ q ∈ queue_es, (readOrder3 m q).isSome = true
+  payload            : ∀ q ∈ Pool.poolRows poolNm poolFld cap,
+                         (readMem m (fldPath q "id")).isSome = true ∧ (readMem m (fldPath q "qty")).isSome = true
+  disj_db            : ∀ x ∈ [poolNm.freeHead, poolNm.count],
+                       ∀ y ∈ [queueNm.head, queueNm.tail, queueNm.count],
+                       (Pool.dbPath poolNm x).overlaps (Llist.dbPath queueNm y) = false
+  disj_pool_hash     : ∀ x ∈ [poolNm.freeHead, poolNm.count],
+                       ∀ b : Nat, (Pool.dbPath poolNm x).overlaps (Thash.bucketPath hashNm b) = false
+  disj_pool_hash_cnt : ∀ x ∈ [poolNm.freeHead, poolNm.count],
+                       (Pool.dbPath poolNm x).overlaps (Thash.dbPath hashNm hashNm.count) = false
+  disj_queue_hash    : ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count],
+                       ∀ b : Nat, (Llist.dbPath queueNm x).overlaps (Thash.bucketPath hashNm b) = false
+  disj_queue_hash_cnt: ∀ x ∈ [queueNm.head, queueNm.tail, queueNm.count],
+                       (Llist.dbPath queueNm x).overlaps (Thash.dbPath hashNm hashNm.count) = false
+  hash_queue_match   : ∀ q, q ∈ chains.flatten ↔ q ∈ queue_es
+
+def absDb3 (m : Mem) (fuel : Nat) : Option (List (UInt32 × UInt64)) := do
+  let es ← Llist.elems m queueNm fuel (Llist.head m queueNm)
+  es.mapM (readOrder3 m)
+
+theorem queue_names_ok3 : Llist.NamesOk queueNm :=
+  Llist.namesOk dbName queueFld
+
+theorem pool_names_ok3 : Pool.NamesOk poolNm :=
+  ⟨by decide⟩
+
+theorem hash_names_ok3 : Thash.NamesOk hashNm :=
+  Thash.namesOk dbName hashFld
+
+theorem payload_disjoint_hash (q : Path) :
+    (fldPath q "id").overlaps (fldPath q hashNm.next) = false
+    ∧ (fldPath q "id").overlaps (fldPath q hashNm.inhash) = false
+    ∧ (fldPath q "qty").overlaps (fldPath q hashNm.next) = false
+    ∧ (fldPath q "qty").overlaps (fldPath q hashNm.inhash) = false := by
+  have h1 : "id" ≠ hashNm.next := by decide
+  have h2 : "id" ≠ hashNm.inhash := by decide
+  have h3 : "qty" ≠ hashNm.next := by decide
+  have h4 : "qty" ≠ hashNm.inhash := by decide
+  exact ⟨fldPath_ne_disjoint h1, fldPath_ne_disjoint h2, fldPath_ne_disjoint h3, fldPath_ne_disjoint h4⟩
+
+theorem queue_disjoint_hash (q : Path) :
+    (fldPath q queueNm.next).overlaps (fldPath q hashNm.next) = false
+    ∧ (fldPath q queueNm.next).overlaps (fldPath q hashNm.inhash) = false
+    ∧ (fldPath q queueNm.prev).overlaps (fldPath q hashNm.next) = false
+    ∧ (fldPath q queueNm.prev).overlaps (fldPath q hashNm.inhash) = false
+    ∧ (fldPath q queueNm.inlist).overlaps (fldPath q hashNm.next) = false
+    ∧ (fldPath q queueNm.inlist).overlaps (fldPath q hashNm.inhash) = false := by
+  have h1 : queueNm.next ≠ hashNm.next := by decide
+  have h2 : queueNm.next ≠ hashNm.inhash := by decide
+  have h3 : queueNm.prev ≠ hashNm.next := by decide
+  have h4 : queueNm.prev ≠ hashNm.inhash := by decide
+  have h5 : queueNm.inlist ≠ hashNm.next := by decide
+  have h6 : queueNm.inlist ≠ hashNm.inhash := by decide
+  exact ⟨fldPath_ne_disjoint h1, fldPath_ne_disjoint h2, fldPath_ne_disjoint h3,
+         fldPath_ne_disjoint h4, fldPath_ne_disjoint h5, fldPath_ne_disjoint h6⟩
+
+theorem freeNext_disjoint_hash (q : Path) :
+    (fldPath q Pool.freeNextName).overlaps (fldPath q hashNm.next) = false
+    ∧ (fldPath q Pool.freeNextName).overlaps (fldPath q hashNm.inhash) = false := by
+  have h1 : Pool.freeNextName ≠ hashNm.next := by decide
+  have h2 : Pool.freeNextName ≠ hashNm.inhash := by decide
+  exact ⟨fldPath_ne_disjoint h1, fldPath_ne_disjoint h2⟩
+
+theorem poolRows_mem_fld_disjoint_hashDb (cap : Nat) {q : Path} (hq : q ∈ Pool.poolRows poolNm poolFld cap)
+    (fldName : CSubset.Ident) (x : CSubset.Ident) (hx : x ≠ poolFld) :
+    (fldPath q fldName).overlaps (Thash.dbPath hashNm x) = false := by
+  simp [Pool.poolRows, Pool.cellPath] at hq
+  obtain ⟨i, _, rfl⟩ := hq
+  simp [fldPath, Thash.dbPath, Path.overlaps, List.isPrefixOf, hx]
+
+theorem poolRows_mem_fld_disjoint_hashBucket (cap : Nat) {q : Path} (hq : q ∈ Pool.poolRows poolNm poolFld cap)
+    (fldName : CSubset.Ident) (b : Nat) :
+    (fldPath q fldName).overlaps (Thash.bucketPath hashNm b) = false := by
+  simp [Pool.poolRows, Pool.cellPath] at hq
+  obtain ⟨i, _, rfl⟩ := hq
+  have hne : hashNm.buckets ≠ poolFld := by decide
+  simp [fldPath, Thash.bucketPath, Path.overlaps, List.isPrefixOf, hne]
+
+theorem hash_fields_ne_poolFld {x : CSubset.Ident} (hx : x ∈ [hashNm.count]) :
+    x ≠ poolFld := by
+  rcases List.mem_cons.mp hx with rfl | hx1
+  · decide
+  · nomatch hx1
+
+theorem mem_flatten_of_mem_bucket {α : Type _} {chains : List (List α)} {b : Nat} (hb : b < chains.length)
+    {r : α} (hr : r ∈ chains[b]'hb) : r ∈ chains.flatten :=
+  List.mem_flatten.mpr ⟨chains[b]'hb, List.getElem_mem hb, hr⟩
+
+def insertStmt3 (v : UInt32 × UInt64) : Stmt :=
+  .call none "MiniDb_Insert" [.lit (.u32 v.1), .lit (.u64 v.2)]
+
+/-- Master forward simulation theorem for MiniDb with 3 reftypes (Pool + Llist + Thash):
+    Executing the generated C program on a well-formed memory state `m` produces a state `m'`
+    that preserves representation invariant `DbRepInv3` and refines `absDb3` with `v`. -/
+theorem mini_insert_forward_sim3
+    (cap nb fuel : Nat) (m : Mem) (v : UInt32 × UInt64)
+    {free_rest live_qs queue_es : List Path}
+    {chains : List (List Path)}
+    (I : DbRepInv3 m cap nb (nb - 1) free_rest live_qs queue_es chains)
+    (hfree : free_rest ≠ [])
+    (h_fresh : ∀ q', (v.1, q') ∉ Thash.elems m "id" chains)
+    (hb : (v.1 &&& UInt32.ofNat (nb - 1)).toNat < nb)
+    (hfits : (chains[(v.1 &&& UInt32.ofNat (nb - 1)).toNat]'(by rw [I.thash.nb_len]; exact hb)).length < cap)
+    (hfuel : fuel ≥ queue_es.length + cap + 5) :
+    ∃ m' free' live' es' chains',
+      execStmt (genMiniDb3 cap nb) fuel (insertStmt3 v) (m.toStore ∅) = .ok (m'.toStore ∅, .normal)
+      ∧ DbRepInv3 m' cap nb (nb - 1) free' live' es' chains'
+      ∧ absDb3 m' fuel = some ((absDb3 m fuel).getD [] ++ [v]) := by
+  sorry
+
+/-- Master forward simulation theorem for MiniDb derived from schema `miniDb3 cap nb`:
+    Executing the generated C program synthesized from `genC (miniDb3 cap nb)` on a well-formed
+    memory state `m` produces a state `m'` that preserves representation invariant `DbRepInv3`
+    and refines the abstract state `absDb3` with `v`. -/
+theorem mini_insert_forward_sim3_schema
+    (cap nb fuel : Nat) (m : Mem) (v : UInt32 × UInt64)
+    {free_rest live_qs queue_es : List Path}
+    {chains : List (List Path)}
+    (I : DbRepInv3 m cap nb (nb - 1) free_rest live_qs queue_es chains)
+    (hfree : free_rest ≠ [])
+    (h_fresh : ∀ q', (v.1, q') ∉ Thash.elems m "id" chains)
+    (hb : (v.1 &&& UInt32.ofNat (nb - 1)).toNat < nb)
+    (hfits : (chains[(v.1 &&& UInt32.ofNat (nb - 1)).toNat]'(by rw [I.thash.nb_len]; exact hb)).length < cap)
+    (hfuel : fuel ≥ queue_es.length + cap + 5) :
+    ∃ (p : Program),
+      genC (miniDb3 cap nb) = some p ∧
+      ∃ m' free' live' es' chains',
+        execStmt p fuel (insertStmt3 v) (m.toStore ∅) = .ok (m'.toStore ∅, .normal)
+        ∧ DbRepInv3 m' cap nb (nb - 1) free' live' es' chains'
+        ∧ absDb3 m' fuel = some ((absDb3 m fuel).getD [] ++ [v]) := by
+  have hp : genC (miniDb3 cap nb) = some (genMiniDb3 cap nb) := rfl
+  obtain ⟨m', free', live', es', chains', hexec, I', habs⟩ :=
+    mini_insert_forward_sim3 cap nb fuel m v I hfree h_fresh hb hfits hfuel
+  exact ⟨genMiniDb3 cap nb, hp, m', free', live', es', chains', hexec, I', habs⟩
+
+/-- Forward simulation theorem parameterized by any AST `p` matching `genC (miniDb3 cap nb)`. -/
+theorem mini_insert_forward_sim3_of_gen
+    (cap nb fuel : Nat) (m : Mem) (v : UInt32 × UInt64)
+    {free_rest live_qs queue_es : List Path}
+    {chains : List (List Path)}
+    {p : Program} (hp : genC (miniDb3 cap nb) = some p)
+    (I : DbRepInv3 m cap nb (nb - 1) free_rest live_qs queue_es chains)
+    (hfree : free_rest ≠ [])
+    (h_fresh : ∀ q', (v.1, q') ∉ Thash.elems m "id" chains)
+    (hb : (v.1 &&& UInt32.ofNat (nb - 1)).toNat < nb)
+    (hfits : (chains[(v.1 &&& UInt32.ofNat (nb - 1)).toNat]'(by rw [I.thash.nb_len]; exact hb)).length < cap)
+    (hfuel : fuel ≥ queue_es.length + cap + 5) :
+    ∃ m' free' live' es' chains',
+      execStmt p fuel (insertStmt3 v) (m.toStore ∅) = .ok (m'.toStore ∅, .normal)
+      ∧ DbRepInv3 m' cap nb (nb - 1) free' live' es' chains'
+      ∧ absDb3 m' fuel = some ((absDb3 m fuel).getD [] ++ [v]) := by
+  have h_eq : p = genMiniDb3 cap nb := Option.some.inj (hp.symm.trans (genC_miniDb3 cap nb))
+  subst h_eq
+  exact mini_insert_forward_sim3 cap nb fuel m v I hfree h_fresh hb hfits hfuel
+
 
 end MiniDb
 end Templates
