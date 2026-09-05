@@ -45,6 +45,7 @@ import Amcc.Templates.SsimDb
 import Amcc.Templates.Msgcurs
 import Amcc.Templates.Opt
 import Amcc.Templates.ArrayTableChecks
+import Amcc.Templates.MiniDb
 import Amcc.Ssim.Tuple
 import Amcc.Ssim.Schema
 import Amcc.Ssim.Conformance
