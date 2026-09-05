@@ -42,18 +42,18 @@ def GenWellFormed : Prop :=
   ∀ (d : Dmmeta.Db) (p : Program), Dmmeta.check d = [] → genLlist d = some p →
     CSubset.Wf.check p = []
 
-/-! ## The nine names
+/-! ## The ten names
 
-One shared prefix and nine literal suffixes. Every pair cancels the prefix, so
+One shared prefix and ten literal suffixes. Every pair cancels the prefix, so
 `CSubset.append_ne` does all of it — the reversed-prefix argument `UpptrWf`
 needed is for names with *different* prefixes, which cannot arise here. -/
 
 theorem defsFor_names (nm : Names) (elem : CSubset.Ident) :
     (defsFor nm elem).map FunDef.name
-      = [nm.init, nm.insert, nm.remove, nm.first, nm.nextFn, nm.prevFn,
+      = [nm.init, nm.insert, nm.insertTail, nm.remove, nm.first, nm.nextFn, nm.prevFn,
          nm.inQ, nm.emptyQ, nm.size] := rfl
 
-/-- **The nine generated names are pairwise distinct.**
+/-- **The ten generated names are pairwise distinct.**
 
 checked by: `lake build` -/
 theorem names_pairwise (dbC fld : CSubset.Ident) :
@@ -63,10 +63,11 @@ theorem names_pairwise (dbC fld : CSubset.Ident) :
   refine List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_,
     List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_,
     List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_,
-    List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_, by simp⟩⟩⟩⟩⟩⟩⟩⟩ <;>
+    List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_,
+    List.pairwise_cons.mpr ⟨?_, by simp⟩⟩⟩⟩⟩⟩⟩⟩⟩ <;>
   · intro b hb
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
-    rcases hb with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    rcases hb with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
       exact CSubset.append_ne (s := dbC ++ "_" ++ fld) (by decide)
 
 /-! ## The struct table
@@ -81,7 +82,7 @@ theorem elemFields_names (nm : Names) (elem : CSubset.Ident) :
     (elemFields nm elem).map Prod.fst = [nm.next, nm.prev, nm.inlist] := rfl
 
 theorem dbFields_names (nm : Names) (elem : CSubset.Ident) :
-    (dbFields nm elem).map Prod.fst = [nm.head, nm.count] := rfl
+    (dbFields nm elem).map Prod.fst = [nm.head, nm.tail, nm.count] := rfl
 
 /-- Every added field is a pointer, a `bool` or a `u32`: legal sizes, no
 layout dependency, and the only struct mentioned is the element's.
@@ -107,7 +108,7 @@ theorem dbFields_ok (nm : Names) (elem : CSubset.Ident) :
   refine ⟨?_, ?_, ?_⟩ <;>
   · intro fv hfv
     simp only [dbFields, List.mem_cons, List.not_mem_nil, or_false] at hfv
-    rcases hfv with rfl | rfl <;>
+    rcases hfv with rfl | rfl | rfl <;>
       first
         | rfl
         | (intro m hm; simp only [Wf.Ty.allStructs, List.mem_singleton] at hm; exact hm)
@@ -149,11 +150,11 @@ theorem hdist_elem {d : Db} (hchk : check d = []) {dbC : Ctype} {fld : Field}
     rcases hb with rfl | rfl | rfl <;>
       exact Layout.field_ne_generated hchk hmm hgm (by decide)
 
-/-- **The same for the parent's head and count**, over the *already extended*
+/-- **The same for the parent's head, tail and count**, over the *already extended*
 table — so in the self-list case the struct already carries the three links
-and the head and count must differ from those too. All five share the field's
+and the head, tail and count must differ from those too. All six share the field's
 qualified prefix, so that part is `append_ne`; the element's own fields are
-`field_ne_generated` again, with `_head` and `_n` among the reserved
+`field_ne_generated` again, with `_head`, `_tail` and `_n` among the reserved
 suffixes.
 
 checked by: `lake build` -/
@@ -173,7 +174,7 @@ theorem hdist_db {d : Db} (hchk : check d = []) {dbC : Ctype} {fld : Field}
   have hgm : mangle fld.name ∈ fieldCNames d.withBuiltins :=
     Layout.mem_fieldCNames hdb hfld
   obtain ⟨c, hc, _, rfl⟩ := Layout.struct_of_mem hsd0
-  -- the head and count differ from each other, and from every declared field
+  -- the head, tail and count differ from each other, and from every declared field
   have hown : ∀ m ∈ (structOf d.withBuiltins c).fields.map Prod.fst,
       ∀ b ∈ (dbFields (names (mangle dbC.name) (mangle fld.name)) elemN).map Prod.fst,
       m ≠ b := by
@@ -181,16 +182,20 @@ theorem hdist_db {d : Db} (hchk : check d = []) {dbC : Ctype} {fld : Field}
     simp only [dbFields_names, names, List.mem_cons, List.not_mem_nil,
       or_false] at hb
     have hmm := Layout.mem_fieldCNames_of_struct hsd0 hm
-    rcases hb with rfl | rfl <;>
+    rcases hb with rfl | rfl | rfl <;>
       exact Layout.field_ne_generated hchk hmm hgm (by decide)
   have hpair2 : ((dbFields (names (mangle dbC.name) (mangle fld.name)) elemN).map
       Prod.fst).Pairwise (· ≠ ·) := by
     simp only [dbFields_names, names]
-    refine List.pairwise_cons.mpr ⟨?_, by simp⟩
-    intro b hb
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
-    rcases hb with rfl
-    exact CSubset.append_ne (s := mangle fld.name) (by decide)
+    refine List.pairwise_cons.mpr ⟨?_, List.pairwise_cons.mpr ⟨?_, by simp⟩⟩
+    · intro b hb
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+      rcases hb with rfl | rfl <;>
+        exact CSubset.append_ne (s := mangle fld.name) (by decide)
+    · intro b hb
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+      rcases hb with rfl
+      exact CSubset.append_ne (s := mangle fld.name) (by decide)
   have hown0 : ((structOf d.withBuiltins c).fields.map Prod.fst).Pairwise (· ≠ ·) :=
     Layout.fields_distinct (nf := fun f => mangle f.name) (fun _ _ _ => rfl)
       (Layout.mangled_fields_pairwise_mem hqdup hc)
@@ -221,7 +226,7 @@ theorem hdist_db {d : Db} (hchk : check d = []) {dbC : Ctype} {fld : Field}
       or_false] at hm
     simp only [dbFields_names, names, List.mem_cons, List.not_mem_nil,
       or_false] at hb
-    rcases hm with rfl | rfl | rfl <;> rcases hb with rfl | rfl <;>
+    rcases hm with rfl | rfl | rfl <;> rcases hb with rfl | rfl | rfl <;>
       exact CSubset.append_ne (s := mangle fld.name) (by decide)
   by_cases hn : (structOf d.withBuiltins c).name = elemN
   · -- the self-list case: the struct already carries the three links
@@ -300,7 +305,7 @@ def tableOf (d : Db) (dbN elemN : CSubset.Ident) (nm : Names) : List StructDef :
   Layout.addFields dbN (dbFields nm elemN)
     (Layout.addFields elemN (elemFields nm elemN) (genStructs d))
 
-/-- **The element's three links and the parent's head and count resolve.**
+/-- **The element's three links and the parent's head, tail and count resolve.**
 
 checked by: `lake build` -/
 theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
@@ -318,6 +323,7 @@ theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     ∧ ctx.field? elemN nm.prev = some (.ptr (.strct elemN))
     ∧ ctx.field? elemN nm.inlist = some (.scalar .bool)
     ∧ ctx.field? dbN nm.head = some (.ptr (.strct elemN))
+    ∧ ctx.field? dbN nm.tail = some (.ptr (.strct elemN))
     ∧ ctx.field? dbN nm.count = some (.scalar .u32) := by
   intro nm elemN dbN ctx
   have hne' : dbN ≠ elemN := hne
@@ -349,7 +355,7 @@ theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       (fun sd => sd.name == dbN) = some (structOf d.withBuiltins dbC) := by
     rw [Layout.find?_addFields _ hdbase,
       if_neg (fun e => hne' (hdn ▸ eq_of_beq e))]
-  -- outer extension: the parent gains head and count, the element is untouched
+  -- outer extension: the parent gains head, tail and count, the element is untouched
   have helemS : (tableOf d dbN elemN nm).find? (fun sd => sd.name == elemN)
       = some { structOf d.withBuiltins elemC with
                fields := (structOf d.withBuiltins elemC).fields
@@ -376,7 +382,7 @@ theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
         · exact List.mem_filterMap.mpr ⟨dbC, hdb, by simp [hdbs]⟩
         · rw [if_neg (fun e => hne' (hdn ▸ eq_of_beq e))])
       hdn
-  -- and the five field lookups within the extended structs
+  -- and the six field lookups within the extended structs
   have hnext : ((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN).find?
       (fun fv : CSubset.Ident × Ty => fv.1 == nm.next) = some (nm.next, Ty.ptr (.strct elemN)) :=
     NameWf.find?_field (p := (nm.next, Ty.ptr (.strct elemN)))
@@ -393,11 +399,15 @@ theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       (fun fv : CSubset.Ident × Ty => fv.1 == nm.head) = some (nm.head, Ty.ptr (.strct elemN)) :=
     NameWf.find?_field (p := (nm.head, Ty.ptr (.strct elemN)))
       (by simp [dbFields]) hpd
+  have htail : ((structOf d.withBuiltins dbC).fields ++ dbFields nm elemN).find?
+      (fun fv : CSubset.Ident × Ty => fv.1 == nm.tail) = some (nm.tail, Ty.ptr (.strct elemN)) :=
+    NameWf.find?_field (p := (nm.tail, Ty.ptr (.strct elemN)))
+      (by simp [dbFields]) hpd
   have hcnt : ((structOf d.withBuiltins dbC).fields ++ dbFields nm elemN).find?
       (fun fv : CSubset.Ident × Ty => fv.1 == nm.count) = some (nm.count, Ty.scalar .u32) :=
     NameWf.find?_field (p := (nm.count, Ty.scalar .u32))
       (by simp [dbFields]) hpd
-  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
     simp only [Wf.Ctx.field?, Wf.Ctx.struct?, ctx, helemS, hdbS]
   · show (do
       let fv ← ((structOf d.withBuiltins elemC).fields
@@ -425,17 +435,23 @@ theorem field_lookups {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     rfl
   · show (do
       let fv ← ((structOf d.withBuiltins dbC).fields
+        ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.tail)
+      some fv.2) = _
+    rw [htail]
+    rfl
+  · show (do
+      let fv ← ((structOf d.withBuiltins dbC).fields
         ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.count)
       some fv.2) = _
     rw [hcnt]
     rfl
 
-/-- **The same five lookups when the ctype threads itself.**
+/-- **The same six lookups when the ctype threads itself.**
 
 `Examples.selfDb` is that schema: `Dmmeta.check` accepts it and `genLlist`
 emits a `Wf.check`-clean program for it, so `field_lookups`'s `hne` is not a
 hypothesis the assembly can discharge. Both `addFields` calls then land on one
-struct, whose fields are `own ++ elemFields ++ dbFields`, and all five lookups
+struct, whose fields are `own ++ elemFields ++ dbFields`, and all six lookups
 go into that single list — with the `Pairwise` coming from **one** `hdist_db`
 call, at the singly-extended struct.
 
@@ -455,6 +471,7 @@ theorem field_lookups_self {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     ∧ ctx.field? elemN nm.prev = some (.ptr (.strct elemN))
     ∧ ctx.field? elemN nm.inlist = some (.scalar .bool)
     ∧ ctx.field? dbN nm.head = some (.ptr (.strct elemN))
+    ∧ ctx.field? dbN nm.tail = some (.ptr (.strct elemN))
     ∧ ctx.field? dbN nm.count = some (.scalar .u32) := by
   intro nm elemN dbN ctx
   have hen : (structOf d.withBuiltins elemC).name = elemN := Layout.structOf_name _ _
@@ -497,7 +514,7 @@ theorem field_lookups_self {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       (List.mem_map.mpr ⟨structOf d.withBuiltins elemC, hmemE,
         by rw [if_pos (beq_iff_eq.mpr hen)]⟩)
       (hen.trans hne'.symm)
-  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
     simp only [Wf.Ctx.field?, Wf.Ctx.struct?, ctx, tableOf, hbothD, hboth]
   · show (do
       let fv ← (((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN) ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.next)
@@ -524,13 +541,19 @@ theorem field_lookups_self {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
       (by simp [dbFields]) hpw]
     rfl
   · show (do
+      let fv ← (((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN) ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.tail)
+      some fv.2) = _
+    rw [NameWf.find?_field (p := (nm.tail, Ty.ptr (.strct elemN)))
+      (by simp [dbFields]) hpw]
+    rfl
+  · show (do
       let fv ← (((structOf d.withBuiltins elemC).fields ++ elemFields nm elemN) ++ dbFields nm elemN).find? (fun fv : CSubset.Ident × Ty => fv.1 == nm.count)
       some fv.2) = _
     rw [NameWf.find?_field (p := (nm.count, Ty.scalar .u32))
       (by simp [dbFields]) hpw]
     rfl
 
-/-- **The five lookups, either way.** The dispatcher the assembly uses; neither
+/-- **The six lookups, either way.** The dispatcher the assembly uses; neither
 branch is hypothetical, because `Examples.listDb` and `Examples.selfDb` are
 both checked-in schemas.
 
@@ -549,6 +572,7 @@ theorem field_lookups_any {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     ∧ ctx.field? elemN nm.prev = some (.ptr (.strct elemN))
     ∧ ctx.field? elemN nm.inlist = some (.scalar .bool)
     ∧ ctx.field? dbN nm.head = some (.ptr (.strct elemN))
+    ∧ ctx.field? dbN nm.tail = some (.ptr (.strct elemN))
     ∧ ctx.field? dbN nm.count = some (.scalar .u32) := by
   by_cases hne : mangle dbC.name = mangle elemC.name
   · exact field_lookups_self hchk hdb hfld helem hes hne globals funs locals
@@ -584,7 +608,7 @@ theorem checkFun_simple {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
             prevDef nm elemN, inQDef nm elemN, emptyQDef nm elemN, sizeDef nm],
       Wf.checkFun (tableOf d dbN elemN nm) (genGlobals d) earlier fd = [] := by
   intro nm elemN dbN fd hfd
-  obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
+  obtain ⟨hnext, hprev, hinl, hhead, htail, hcnt⟩ :=
     field_lookups_any hchk hdb hdbs hfld helem hes (genGlobals d) earlier []
   -- `Ctx.field?` and `Ctx.global?` do not read `locals`, so each equation
   -- holds for every frame; stated with the `∀` so `simp` can instantiate it
@@ -604,6 +628,9 @@ theorem checkFun_simple {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
   have hfH : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
         dbN nm.head = some (.ptr (.strct elemN)) := fun _ => hhead
+  have hfT : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.tail = some (.ptr (.strct elemN)) := fun _ => htail
   have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
         dbN nm.count = some (.scalar .u32) := fun _ => hcnt
@@ -638,10 +665,10 @@ theorem checkFun_simple {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     simp [hg, hfC, Wf.isValTy, Wf.distinct, Wf.dups,
       Wf.Stmt.alwaysReturns]
 
-/-! ## `Insert` and `Remove`
+/-! ## `Insert`, `InsertTail` and `Remove`
 
-Six and eight statements, with conditionals, and they read and write through
-the `_old` / `_prev` / `_next` pointer locals. Beyond the five field equations
+Six, seven and eight statements, with conditionals, and they read and write through
+the `_old` / `_prev` / `_next` pointer locals. Beyond the six field equations
 that is closed arithmetic on the frame the function fixes, so the shape is the
 same as the seven above with a longer `simp` set. -/
 
@@ -656,7 +683,7 @@ theorem checkFun_insert {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     Wf.checkFun (tableOf d dbN elemN nm) (genGlobals d) earlier
       (insertDef nm elemN) = [] := by
   intro nm elemN dbN
-  obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
+  obtain ⟨hnext, hprev, hinl, hhead, htail, hcnt⟩ :=
     field_lookups_any hchk hdb hdbs hfld helem hes (genGlobals d) earlier []
   have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).global?
@@ -674,12 +701,56 @@ theorem checkFun_insert {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
   have hfH : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
         dbN nm.head = some (.ptr (.strct elemN)) := fun _ => hhead
+  have hfT : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.tail = some (.ptr (.strct elemN)) := fun _ => htail
   have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
         dbN nm.count = some (.scalar .u32) := fun _ => hcnt
   simp only [Wf.checkFun, insertDef, dbFld, ptrFld, ptrLocal, Wf.checkStmt,
     Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block, Stmt.when]
   simp [hg, hfN, hfP, hfI, hfH, hfC, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
+    tmpOld, Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.unTy, Wf.litTy,
+    Wf.inferExpr, Wf.addrChecks, Wf.Ctx.local?, ValTy.toTy]
+
+theorem checkFun_insertTail {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
+    {fld : Field} (hdb : dbC ∈ d.withBuiltins.ctypes) (hdbs : dbC.scalar = none)
+    (hfld : fld ∈ dbC.fields) (hroot : d.root = some dbC.name)
+    (helem : elemC ∈ d.withBuiltins.ctypes) (hes : elemC.scalar = none)
+    {earlier : List FunDef} :
+    let nm := names (mangle dbC.name) (mangle fld.name)
+    let elemN := mangle elemC.name
+    let dbN := mangle dbC.name
+    Wf.checkFun (tableOf d dbN elemN nm) (genGlobals d) earlier
+      (insertTailDef nm elemN) = [] := by
+  intro nm elemN dbN
+  obtain ⟨hnext, hprev, hinl, hhead, htail, hcnt⟩ :=
+    field_lookups_any hchk hdb hdbs hfld helem hes (genGlobals d) earlier []
+  have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).global?
+          nm.dbGlobal = some { name := nm.dbGlobal, ty := .strct dbN } :=
+    fun locals => global_lookup hroot _ _ locals
+  have hfN : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.next = some (.ptr (.strct elemN)) := fun _ => hnext
+  have hfP : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.prev = some (.ptr (.strct elemN)) := fun _ => hprev
+  have hfI : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        elemN nm.inlist = some (.scalar .bool) := fun _ => hinl
+  have hfH : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.head = some (.ptr (.strct elemN)) := fun _ => hhead
+  have hfT : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.tail = some (.ptr (.strct elemN)) := fun _ => htail
+  have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.count = some (.scalar .u32) := fun _ => hcnt
+  simp only [Wf.checkFun, insertTailDef, dbFld, ptrFld, ptrLocal, Wf.checkStmt,
+    Wf.addrChecks, Wf.inferExpr, Wf.inferLVal, ValTy.toTy, Stmt.block, Stmt.when]
+  simp [hg, hfN, hfP, hfI, hfH, hfT, hfC, Wf.isValTy, Wf.distinct, Wf.dups, parRow,
     tmpOld, Wf.binTy, Wf.isPtrTy, Wf.isWord, Wf.unTy, Wf.litTy,
     Wf.inferExpr, Wf.addrChecks, Wf.Ctx.local?, ValTy.toTy]
 
@@ -694,7 +765,7 @@ theorem checkFun_remove {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
     Wf.checkFun (tableOf d dbN elemN nm) (genGlobals d) earlier
       (removeDef nm elemN) = [] := by
   intro nm elemN dbN
-  obtain ⟨hnext, hprev, hinl, hhead, hcnt⟩ :=
+  obtain ⟨hnext, hprev, hinl, hhead, htail, hcnt⟩ :=
     field_lookups_any hchk hdb hdbs hfld helem hes (genGlobals d) earlier []
   have hg : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).global?
@@ -712,6 +783,9 @@ theorem checkFun_remove {d : Db} (hchk : check d = []) {dbC elemC : Ctype}
   have hfH : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
         dbN nm.head = some (.ptr (.strct elemN)) := fun _ => hhead
+  have hfT : ∀ (locals : List (CSubset.Ident × ValTy)),
+      (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
+        dbN nm.tail = some (.ptr (.strct elemN)) := fun _ => htail
   have hfC : ∀ (locals : List (CSubset.Ident × ValTy)),
       (Wf.Ctx.mk (tableOf d dbN elemN nm) (genGlobals d) earlier locals).field?
         dbN nm.count = some (.scalar .u32) := fun _ => hcnt
@@ -786,9 +860,10 @@ theorem genWellFormed : GenWellFormed := by
     have hsimple := checkFun_simple (d := d) (earlier := (defsFor
       (names (mangle dbC.name) (mangle fld.name)) (mangle elemC.name)).take i)
       hchk hdb hdbs hfld hrootC helem hes
-    rcases hmem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hmem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · exact hsimple _ (by simp)
     · exact checkFun_insert hchk hdb hdbs hfld hrootC helem hes
+    · exact checkFun_insertTail hchk hdb hdbs hfld hrootC helem hes
     · exact checkFun_remove hchk hdb hdbs hfld hrootC helem hes
     · exact hsimple _ (by simp)
     · exact hsimple _ (by simp)
@@ -802,7 +877,7 @@ theorem genWellFormed : GenWellFormed := by
 Every law in `Llist.lean` assumes `lookupFun p nm.x = .ok (xDef nm elem)` and a
 depth budget. Before this, a consumer discharged those *per schema*, by
 computing `Wf.check` on its own generated program. `genWellFormed` makes that
-unnecessary: schema acceptance is the only hypothesis, and all nine resolutions
+unnecessary: schema acceptance is the only hypothesis, and all ten resolutions
 come out together. -/
 
 /-- **Schema acceptance is enough to apply every law.** The names and the
@@ -815,15 +890,16 @@ theorem laws_apply {d : Db} {p : Program} (hchk : check d = [])
     ∃ (nm : Names) (elem : CSubset.Ident),
       p.funs = defsFor nm elem
       ∧ (∃ n, p.funs.length = n + 1)
-      ∧ lookupFun p nm.init   = .ok (initDef nm elem)
-      ∧ lookupFun p nm.insert = .ok (insertDef nm elem)
-      ∧ lookupFun p nm.remove = .ok (removeDef nm elem)
-      ∧ lookupFun p nm.first  = .ok (firstDef nm elem)
-      ∧ lookupFun p nm.nextFn = .ok (nextDef nm elem)
-      ∧ lookupFun p nm.prevFn = .ok (prevDef nm elem)
-      ∧ lookupFun p nm.inQ    = .ok (inQDef nm elem)
-      ∧ lookupFun p nm.emptyQ = .ok (emptyQDef nm elem)
-      ∧ lookupFun p nm.size   = .ok (sizeDef nm) := by
+      ∧ lookupFun p nm.init       = .ok (initDef nm elem)
+      ∧ lookupFun p nm.insert     = .ok (insertDef nm elem)
+      ∧ lookupFun p nm.insertTail = .ok (insertTailDef nm elem)
+      ∧ lookupFun p nm.remove     = .ok (removeDef nm elem)
+      ∧ lookupFun p nm.first      = .ok (firstDef nm elem)
+      ∧ lookupFun p nm.nextFn     = .ok (nextDef nm elem)
+      ∧ lookupFun p nm.prevFn     = .ok (prevDef nm elem)
+      ∧ lookupFun p nm.inQ        = .ok (inQDef nm elem)
+      ∧ lookupFun p nm.emptyQ     = .ok (emptyQDef nm elem)
+      ∧ lookupFun p nm.size       = .ok (sizeDef nm) := by
   have hwf : Wf.check p = [] := genWellFormed d p hchk hgen
   simp only [genLlist, bind, Option.bind_eq_some_iff] at hgen
   obtain ⟨_, _, dbC, _, fld, _, elemC, _, hgen⟩ := hgen
@@ -843,6 +919,8 @@ theorem laws_apply {d : Db} {p : Program} (hchk : check d = [])
     hres (initDef (names (mangle dbC.name) (mangle fld.name))
       (mangle elemC.name)) ?_,
     hres (insertDef (names (mangle dbC.name) (mangle fld.name))
+      (mangle elemC.name)) ?_,
+    hres (insertTailDef (names (mangle dbC.name) (mangle fld.name))
       (mangle elemC.name)) ?_,
     hres (removeDef (names (mangle dbC.name) (mangle fld.name))
       (mangle elemC.name)) ?_,

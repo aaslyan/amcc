@@ -24,6 +24,7 @@ typedef struct task_row {
 
 void       TaskDb_zdl_todo_Init(void);
 void       TaskDb_zdl_todo_Insert(struct task_row *row);
+void       TaskDb_zdl_todo_InsertTail(struct task_row *row);
 void       TaskDb_zdl_todo_Remove(struct task_row *row);
 task_row*  TaskDb_zdl_todo_First(void);
 task_row*  TaskDb_zdl_todo_Next(struct task_row *row);
@@ -99,5 +100,20 @@ int main(void) {
   TaskDb_zdl_todo_Insert(&c);
   TaskDb_zdl_todo_Remove(&c);
   chain();                               /* 2 1 | 2 */
+
+  /* Reset rows and test tail insertion: FIFO order. */
+  TaskDb_zdl_todo_Init();
+  a.zdl_todo_inlist = false; a.zdl_todo_next = NULL; a.zdl_todo_prev = NULL;
+  b.zdl_todo_inlist = false; b.zdl_todo_next = NULL; b.zdl_todo_prev = NULL;
+  c.zdl_todo_inlist = false; c.zdl_todo_next = NULL; c.zdl_todo_prev = NULL;
+  TaskDb_zdl_todo_InsertTail(&a);
+  TaskDb_zdl_todo_InsertTail(&b);
+  TaskDb_zdl_todo_InsertTail(&c);
+  chain();                               /* 1 2 3 | 3 */
+  pb(TaskDb_zdl_todo_Prev(&a) == NULL);  /* 1 */
+  pb(TaskDb_zdl_todo_Next(&a) == &b);    /* 1 */
+  pb(TaskDb_zdl_todo_Next(&b) == &c);    /* 1 */
+  pb(TaskDb_zdl_todo_Next(&c) == NULL);  /* 1 */
+  pb(TaskDb_zdl_todo_Prev(&c) == &b);    /* 1 */
   return 0;
 }

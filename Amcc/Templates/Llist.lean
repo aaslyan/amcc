@@ -97,46 +97,51 @@ def tmpNext : Ident := "_next"
 
 structure Names where
   /-- The single global holding the parent ctype. -/
-  dbGlobal : Ident
+  dbGlobal   : Ident
   /-- Head of the list, on the parent. -/
-  head     : Ident
+  head       : Ident
+  /-- Tail of the list, on the parent. -/
+  tail       : Ident
   /-- Element count, on the parent. -/
-  count    : Ident
+  count      : Ident
   /-- Forward link, on the element. -/
-  next     : Ident
+  next       : Ident
   /-- Back link, on the element. -/
-  prev     : Ident
+  prev       : Ident
   /-- Membership flag, on the element. -/
-  inlist   : Ident
-  init     : Ident
-  insert   : Ident
-  remove   : Ident
-  first    : Ident
-  nextFn   : Ident
-  prevFn   : Ident
-  inQ      : Ident
-  emptyQ   : Ident
-  size     : Ident
+  inlist     : Ident
+  init       : Ident
+  insert     : Ident
+  insertTail : Ident
+  remove     : Ident
+  first      : Ident
+  nextFn     : Ident
+  prevFn     : Ident
+  inQ        : Ident
+  emptyQ     : Ident
+  size       : Ident
   deriving Repr, Inhabited, DecidableEq
 
 /-- `amc`'s naming: the link fields are `$name_next` / `$name_prev` on the
 element, the head and count are `$name_head` / `$name_n` on the parent. -/
 def names (dbC : Ident) (fld : Ident) : Names where
-  dbGlobal := "g_" ++ dbC
-  head     := fld ++ "_head"
-  count    := fld ++ "_n"
-  next     := fld ++ "_next"
-  prev     := fld ++ "_prev"
-  inlist   := fld ++ "_inlist"
-  init     := dbC ++ "_" ++ fld ++ "_Init"
-  insert   := dbC ++ "_" ++ fld ++ "_Insert"
-  remove   := dbC ++ "_" ++ fld ++ "_Remove"
-  first    := dbC ++ "_" ++ fld ++ "_First"
-  nextFn   := dbC ++ "_" ++ fld ++ "_Next"
-  prevFn   := dbC ++ "_" ++ fld ++ "_Prev"
-  inQ      := dbC ++ "_" ++ fld ++ "_InLlistQ"
-  emptyQ   := dbC ++ "_" ++ fld ++ "_EmptyQ"
-  size     := dbC ++ "_" ++ fld ++ "_N"
+  dbGlobal   := "g_" ++ dbC
+  head       := fld ++ "_head"
+  tail       := fld ++ "_tail"
+  count      := fld ++ "_n"
+  next       := fld ++ "_next"
+  prev       := fld ++ "_prev"
+  inlist     := fld ++ "_inlist"
+  init       := dbC ++ "_" ++ fld ++ "_Init"
+  insert     := dbC ++ "_" ++ fld ++ "_Insert"
+  insertTail := dbC ++ "_" ++ fld ++ "_InsertTail"
+  remove     := dbC ++ "_" ++ fld ++ "_Remove"
+  first      := dbC ++ "_" ++ fld ++ "_First"
+  nextFn     := dbC ++ "_" ++ fld ++ "_Next"
+  prevFn     := dbC ++ "_" ++ fld ++ "_Prev"
+  inQ        := dbC ++ "_" ++ fld ++ "_InLlistQ"
+  emptyQ     := dbC ++ "_" ++ fld ++ "_EmptyQ"
+  size       := dbC ++ "_" ++ fld ++ "_N"
 
 /-! ## Lvalue shorthands -/
 
@@ -193,6 +198,41 @@ def insertDef (nm : Names) (elem : Ident) : FunDef where
     , .when (.bin .ne (.rd (.var tmpOld)) (.null (.strct elem)))
         (.assign (ptrFld tmpOld nm.prev) (.rd (.var parRow)))
     , .assign (dbFld nm nm.head) (.rd (.var parRow))
+    , .assign (dbFld nm nm.count)
+        (.bin .add (.rd (dbFld nm nm.count)) (.lit (.u32 1))) ]
+
+/-- ```c
+void D_f_InsertTail(E *row) {
+  E *_old = NULL;
+  if (!row->f_inlist) {
+    _old = g_D.f_tail;
+    row->f_next   = NULL;
+    row->f_prev   = _old;
+    row->f_inlist = true;
+    if (_old != NULL) { _old->f_next = row; } else { g_D.f_head = row; }
+    g_D.f_tail = row;
+    g_D.f_n    = g_D.f_n + 1;
+  }
+}
+```
+Tail insertion: inserts at the tail of the intrusive doubly-linked list.
+When the list was empty (`_old == NULL`), sets head to `row`; otherwise
+links `_old->next = row`. In both cases updates `tail = row` and increments
+the element count. -/
+def insertTailDef (nm : Names) (elem : Ident) : FunDef where
+  name   := nm.insertTail
+  params := [(parRow, .ptr (.strct elem))]
+  ret    := none
+  locals := [ptrLocal tmpOld elem]
+  body   := .when (.un .lnot (.rd (ptrFld parRow nm.inlist))) <| .block
+    [ .assign (.var tmpOld) (.rd (dbFld nm nm.tail))
+    , .assign (ptrFld parRow nm.next) (.null (.strct elem))
+    , .assign (ptrFld parRow nm.prev) (.rd (.var tmpOld))
+    , .assign (ptrFld parRow nm.inlist) (.lit (.bool true))
+    , .cond (.bin .ne (.rd (.var tmpOld)) (.null (.strct elem)))
+        (.assign (ptrFld tmpOld nm.next) (.rd (.var parRow)))
+        (.assign (dbFld nm nm.head) (.rd (.var parRow)))
+    , .assign (dbFld nm nm.tail) (.rd (.var parRow))
     , .assign (dbFld nm nm.count)
         (.bin .add (.rd (dbFld nm nm.count)) (.lit (.u32 1))) ]
 
@@ -296,16 +336,16 @@ def sizeDef (nm : Names) : FunDef where
   locals := []
   body   := .ret (some (.rd (dbFld nm nm.count)))
 
-/-- The nine functions for one `Llist` field. -/
+/-- The ten functions for one `Llist` field. -/
 def defsFor (nm : Names) (elem : Ident) : List FunDef :=
-  [ initDef nm elem, insertDef nm elem, removeDef nm elem
+  [ initDef nm elem, insertDef nm elem, insertTailDef nm elem, removeDef nm elem
   , firstDef nm elem, nextDef nm elem, prevDef nm elem
   , inQDef nm elem, emptyQDef nm elem, sizeDef nm ]
 
 /-! ## Assembling a program
 
 The element struct gains the two links and the membership flag; the parent
-struct gains the head and the count. Neither is storage the schema declared —
+struct gains the head, the tail, and the count. Neither is storage the schema declared —
 which is the point of an *intrusive* list. -/
 
 /-- The element struct, with the list's own fields appended. -/
@@ -314,9 +354,11 @@ def elemFields (nm : Names) (elem : Ident) : List (Ident × Ty) :=
   , (nm.prev, .ptr (.strct elem))
   , (nm.inlist, .scalar .bool) ]
 
-/-- ...and what the parent's gains: the head and the count. -/
+/-- ...and what the parent's gains: the head, the tail, and the count. -/
 def dbFields (nm : Names) (elem : Ident) : List (Ident × Ty) :=
-  [(nm.head, .ptr (.strct elem)), (nm.count, .scalar .u32)]
+  [ (nm.head, .ptr (.strct elem))
+  , (nm.tail, .ptr (.strct elem))
+  , (nm.count, .scalar .u32) ]
 
 /-- **The generator.** Emits the list for the first `Llist` field of the parent
 ctype. `none` when the schema declares none — which `Dmmeta.check` reports on
@@ -433,13 +475,17 @@ structure NamesOk (nm : Names) : Prop where
   np : nm.next ≠ nm.prev
   nf : nm.next ≠ nm.inlist
   pf : nm.prev ≠ nm.inlist
+  ht : nm.head ≠ nm.tail
   hc : nm.head ≠ nm.count
+  tc : nm.tail ≠ nm.count
 
 theorem namesOk (dbC fld : Ident) : NamesOk (names dbC fld) where
   np := append_ne (by decide)
   nf := append_ne (by decide)
   pf := append_ne (by decide)
+  ht := append_ne (by decide)
   hc := append_ne (by decide)
+  tc := append_ne (by decide)
 
 /-! ## The representation invariant
 
@@ -2090,25 +2136,26 @@ checked by: `lake build` -/
 example : (genLlist Examples.nestedDb).map (fun p => p.structs.map StructDef.name)
     = some ["pt", "task_row", "TaskDb"] := rfl
 
-/-- The nine operations, in `amc`'s naming.
+/-- The ten operations, in `amc`'s naming.
 
 checked by: `lake build` -/
 example : (genLlist Examples.listDb).map (fun p => p.funs.map FunDef.name)
     = some ["TaskDb_zdl_todo_Init", "TaskDb_zdl_todo_Insert",
+            "TaskDb_zdl_todo_InsertTail",
             "TaskDb_zdl_todo_Remove", "TaskDb_zdl_todo_First",
             "TaskDb_zdl_todo_Next", "TaskDb_zdl_todo_Prev",
             "TaskDb_zdl_todo_InLlistQ", "TaskDb_zdl_todo_EmptyQ",
             "TaskDb_zdl_todo_N"] := rfl
 
-/-- The element carries the links and the flag; the parent carries the head and
-the count. Neither is storage the schema declared.
+/-- The element carries the links and the flag; the parent carries the head,
+the tail, and the count. Neither is storage the schema declared.
 
 checked by: `lake build` -/
 example : (genLlist Examples.listDb).map
     (fun p => p.structs.map (fun sd => (sd.name, sd.fields.map Prod.fst)))
     = some [("task_row", ["id", "zdl_todo_next", "zdl_todo_prev",
                           "zdl_todo_inlist"]),
-            ("TaskDb", ["zdl_todo_head", "zdl_todo_n"])] := rfl
+            ("TaskDb", ["zdl_todo_head", "zdl_todo_tail", "zdl_todo_n"])] := rfl
 
 end Checks
 

@@ -33,6 +33,24 @@ void TaskDb_zdl_todo_Insert(struct task_row *row) {
   }
 }
 
+// --- TaskDb_zdl_todo_InsertTail
+void TaskDb_zdl_todo_InsertTail(struct task_row *row) {
+  struct task_row *_old = NULL;
+  if ((!row->zdl_todo_inlist)) {
+    _old = g_TaskDb.zdl_todo_tail;
+    row->zdl_todo_next = NULL;
+    row->zdl_todo_prev = _old;
+    row->zdl_todo_inlist = true;
+    if ((_old != NULL)) {
+      _old->zdl_todo_next = row;
+    } else {
+      g_TaskDb.zdl_todo_head = row;
+    }
+    g_TaskDb.zdl_todo_tail = row;
+    g_TaskDb.zdl_todo_n = (g_TaskDb.zdl_todo_n + 1u);
+  }
+}
+
 // --- TaskDb_zdl_todo_Remove
 void TaskDb_zdl_todo_Remove(struct task_row *row) {
   struct task_row *_prev = NULL;

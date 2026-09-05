@@ -26,6 +26,7 @@ typedef struct task_row {
 
 typedef struct TaskDb {
   struct task_row *zdl_todo_head;
+  struct task_row *zdl_todo_tail;
   uint32_t zdl_todo_n;
 } TaskDb;
 
@@ -36,6 +37,9 @@ void TaskDb_zdl_todo_Init(void);
 
 // func:TaskDb_zdl_todo_Insert
 void TaskDb_zdl_todo_Insert(struct task_row *row);
+
+// func:TaskDb_zdl_todo_InsertTail
+void TaskDb_zdl_todo_InsertTail(struct task_row *row);
 
 // func:TaskDb_zdl_todo_Remove
 void TaskDb_zdl_todo_Remove(struct task_row *row);

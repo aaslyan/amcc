@@ -85,6 +85,8 @@ inductive Reftype where
   | Bheap
   /-- AVL tree. -/
   | Atree
+  /-- Red-Black tree (self-balancing sorted index). -/
+  | Rbtree
   /-- Array of pointers. -/
   | Ptrary
   /-- Bookkeeping counter over linked records. -/
@@ -143,7 +145,7 @@ def isval : Reftype → Bool
 /-- `dmmeta.reftype.isxref` — the field is an index over another ctype's
 records, maintained as those records come and go. -/
 def isxref : Reftype → Bool
-  | Thash | Llist | Bheap | Atree => true
+  | Thash | Llist | Bheap | Atree | Rbtree => true
   | _ => false
 
 /-- `dmmeta.reftype.usebasepool` — the field obtains memory from a base pool,
@@ -166,7 +168,7 @@ def ispool : Reftype → Bool
 /-- **Does this field contribute to its ctype's layout?**
 
 If so, the `arg` must be a ctype declared *earlier*, which is what makes
-nesting acyclic — the schema-level form of the C subset's obligation 2.
+nest nesting acyclic — the schema-level form of the C subset's obligation 2.
 
 `Val` and `Base` embed the argument outright. `Inlary` embeds a bounded array
 of it. Everything else reaches its argument through a pointer, a pool, or an
@@ -199,7 +201,7 @@ struct field has type `uint64_t *`.
 `Pkey` is deliberately **absent**: a key *is* a machine scalar in the common
 case, and `fieldTy` lowers it to the scalar rather than to a pointer. -/
 def needsRecordArg : Reftype → Bool
-  | Upptr | Ptr | Thash | Llist | Bheap | Atree | Ptrary => true
+  | Upptr | Ptr | Thash | Llist | Bheap | Atree | Rbtree | Ptrary => true
   | _ => false
 
 /-- The reftype's name, for error messages. A plain function rather than
@@ -211,7 +213,7 @@ def name : Reftype → String
   | Tpool => "Tpool" | Lpool => "Lpool" | Blkpool => "Blkpool"
   | Malloc => "Malloc" | Sbrk => "Sbrk" | Delptr => "Delptr"
   | Thash => "Thash" | Llist => "Llist" | Bheap => "Bheap" | Atree => "Atree"
-  | Ptrary => "Ptrary" | Count => "Count"
+  | Rbtree => "Rbtree" | Ptrary => "Ptrary" | Count => "Count"
   | Alias => "Alias" | Bitfld => "Bitfld" | Charset => "Charset"
   | Cppstack => "Cppstack" | Ctype => "Ctype" | Exec => "Exec"
   | Fbuf => "Fbuf" | Global => "Global" | Hook => "Hook" | Opt => "Opt"
@@ -221,17 +223,11 @@ def name : Reftype → String
 /-- The whole vocabulary, in `dmmeta/reftype.ssim`'s order. Written out rather
 than derived because a front end has to turn a *name* back into a reftype, and
 the two directions must not drift: `Checks` below pins that `all` has **all
-thirty-five** entries and that `name` is injective on it, so a new constructor
-that is not added here fails the count.
-
-It was twenty until the attribute join went in, and the fifteen that were
-missing were not *deferred* — they were absent, so the census reported them as
-`unknown reftype`, which reads as "the corpus has a typo" rather than "AMCC
-does not model this". The flags are transcribed from `reftype.ssim` the same
-way the original twenty were. -/
+thirty-six** entries and that `name` is injective on it, so a new constructor
+that is not added here fails the count. -/
 def all : List Reftype :=
   [ Val, Pkey, Base, Upptr, Ptr, Lary, Tary, Inlary, Tpool, Lpool, Blkpool
-  , Malloc, Sbrk, Delptr, Thash, Llist, Bheap, Atree, Ptrary, Count
+  , Malloc, Sbrk, Delptr, Thash, Llist, Bheap, Atree, Rbtree, Ptrary, Count
   , Alias, Bitfld, Charset, Cppstack, Ctype, Exec, Fbuf, Global, Hook, Opt
   , Regx, RegxSql, Smallstr, Varlen, ZSListMT ]
 
@@ -365,7 +361,7 @@ structure Db where
   /-- The database ctype, if there is one: `amc`'s `FDb`, the single global
   whose fields are the pools and the indexes. -/
   root   : Option Ident := none
-  deriving DecidableEq, Repr, Inhabited
+  deriving DecidableEq, Repr, Inhabited, BEq
 
 namespace Db
 
@@ -607,7 +603,7 @@ collision only exists when the stripped prefix is **itself a declared field
 name**, because that is the only way a template generates the colliding name.
 `clashesGenerated` below is that narrower test. -/
 def genSuffixes : List String :=
-  [ "_next", "_prev", "_inlist", "_inhash", "_buckets", "_head", "_n"
+  [ "_next", "_prev", "_inlist", "_inhash", "_buckets", "_head", "_tail", "_n"
   , "_freenext", "_freehead" ]
 
 /-- Strip a suffix, if it is one. Reversed, so the suffix test is a **prefix**
@@ -1108,8 +1104,17 @@ def boundedDb : Db where
   attrs  := [{ ctype := "OrderDb", field := "row", data := .inlary 4 }]
   root   := some "OrderDb"
 
+/-- The dynamic chunk pool table: a database ctype with a Tpool field. -/
+def tpoolDb : Db where
+  ctypes :=
+    [ orderRow
+    , { name   := "OrderDb"
+      , fields := [{ name := "row", arg := "order_row", reftype := .Tpool }] } ]
+  root   := some "OrderDb"
+
 /-- checked by: `lake build` -/
 example : check boundedDb = [] := rfl
+example : check tpoolDb = [] := rfl
 
 /-- An `Inlary` without a declared bound is rejected: there is no capacity to
 emit. -/
@@ -1155,18 +1160,18 @@ example : Reftype.up .Upptr = true := rfl
 example : Reftype.layoutDep .Val = true := rfl
 example : Reftype.layoutDep .Llist = false := rfl
 
-/-- `dmmeta/reftype.ssim` has thirty-five rows, and `Reftype.all` has
-thirty-five entries. A constructor added without a line in `all` fails here.
+/-- `dmmeta/reftype.ssim` has thirty-six rows, and `Reftype.all` has
+thirty-six entries. A constructor added without a line in `all` fails here.
 
 checked by: `lake build` -/
-example : Reftype.all.length = 35 := rfl
+example : Reftype.all.length = 36 := rfl
 
 /-- `name` is injective on the vocabulary, so `ofName?` inverts it — which is
 what the ssim front end needs and what makes a mistyped name a diagnostic
 rather than a wrong reftype.
 
 checked by: `lake build` -/
-example : (Reftype.all.map Reftype.name).eraseDups.length = 35 := rfl
+example : (Reftype.all.map Reftype.name).eraseDups.length = 36 := rfl
 
 /-- checked by: `lake build` -/
 example : Reftype.all.all (fun r => Reftype.ofName? r.name == some r) = true := rfl
