@@ -610,4 +610,96 @@ theorem RowsDisjoint.sublist {qs : List Path} {q : Path}
   fun a ha b hb hab =>
     h a (List.mem_cons_of_mem _ ha) b (List.mem_cons_of_mem _ hb) hab
 
+/-! ## Snoc and tail extensions -/
+
+theorem getLast?_mem : ∀ {α : Type _} {l : List α} {a : α}, l.getLast? = some a → a ∈ l
+  | _, [], _, h => by simp at h
+  | _, [x], _, h => by simp at h; subst h; simp
+  | _, x :: y :: rest, a, h => by
+    have hmem := getLast?_mem (l := y :: rest) h
+    exact List.mem_cons_of_mem x hmem
+
+theorem headOf_snoc (qs : List Path) (q : Path) :
+    headOf (qs ++ [q]) = match qs with | [] => .ptr q | q0 :: _ => .ptr q0 := by
+  cases qs <;> rfl
+
+theorem lastOr_nonempty : ∀ (qs : List Path) (back : Value) (t : Path),
+    qs.getLast? = some t → lastOr qs back = .ptr t
+  | [], _, _, h => by simp at h
+  | [q0], _, t, h => by simp at h; subst h; rfl
+  | q0 :: q1 :: rest, back, t, h => by
+    have hlast : (q1 :: rest).getLast? = some t := h
+    exact lastOr_nonempty (q1 :: rest) (.ptr q0) t hlast
+
+theorem lastOr_eq_getLast? (qs : List Path) :
+    lastOr qs .null = match qs.getLast? with | some t => .ptr t | none => .null := by
+  cases h : qs.getLast? with
+  | none =>
+    have heq : qs = [] := List.getLast?_eq_none_iff.mp h
+    subst heq; rfl
+  | some t =>
+    exact lastOr_nonempty qs .null t h
+
+/-- **Extending a chain at the tail.** -/
+theorem Reaches.snoc {m m' : Mem} {nx : Ident} :
+    ∀ (qs : List Path) (q : Path),
+      Reaches m nx (headOf qs) qs →
+      (∀ r ∈ qs, (∀ tail_node, qs.getLast? = some tail_node → r ≠ tail_node) →
+        readMem m' (fldPath r nx) = readMem m (fldPath r nx)) →
+      (∀ tail_node, qs.getLast? = some tail_node → readMem m' (fldPath tail_node nx) = some (.ptr q)) →
+      readMem m' (fldPath q nx) = some .null →
+      Reaches m' nx (headOf (qs ++ [q])) (qs ++ [q])
+  | [], q, _, _, _, hq => by
+    simp only [headOf, List.nil_append]
+    exact Reaches.cons hq Reaches.nil
+  | [q0], q, _, _, hlast, hq => by
+    have hq0last : [q0].getLast? = some q0 := rfl
+    have hq0next := hlast q0 hq0last
+    simp only [headOf, List.singleton_append]
+    exact Reaches.cons hq0next (Reaches.cons hq Reaches.nil)
+  | q0 :: q1 :: rest, q, hr, hframe, hlast, hq => by
+    cases hr with
+    | @cons _ v _ hrd hrc =>
+      have heq : v = headOf (q1 :: rest) := hrc.head_eq
+      subst heq
+      have hq0_not_last : ∀ tail_node, (q0 :: q1 :: rest).getLast? = some tail_node → q0 ≠ tail_node := by
+        intro tail_node htl he
+        subst he
+        have hmem : q0 ∈ q1 :: rest := getLast?_mem htl
+        have hnd := (Reaches.cons hrd hrc).nodup
+        have hnot := (List.pairwise_cons.mp hnd).1 q0 hmem
+        exact hnot rfl
+      have hrd' : readMem m' (fldPath q0 nx) = some (headOf ((q1 :: rest) ++ [q])) := by
+        rw [hframe q0 (by simp) hq0_not_last, hrd]
+        rfl
+      have ih := Reaches.snoc (q1 :: rest) q hrc (by
+        intro r hr hnot
+        exact hframe r (List.mem_cons_of_mem _ hr) (by
+          intro tail_node htl
+          exact hnot tail_node htl)) (by
+        intro tail_node htl
+        exact hlast tail_node htl) hq
+      simp only [headOf, List.cons_append]
+      exact Reaches.cons hrd' ih
+
+/-- **Extending back-links at the tail.** -/
+theorem Backlinked.snoc {m : Mem} {pv : Ident} (qs : List Path) (q : Path)
+    (hb : Backlinked m pv qs .null)
+    (hq : readMem m (fldPath q pv) = some (lastOr qs .null)) :
+    Backlinked m pv (qs ++ [q]) .null := by
+  have hbq : Backlinked m pv [q] (lastOr qs .null) := ⟨hq, trivial⟩
+  exact Backlinked.append qs .null [q] hb hbq
+
+/-- **Extending membership flags at the tail.** -/
+theorem Flagged.snoc {m m' : Mem} {fl : Ident} {rows qs : List Path} {q : Path}
+    (h : Flagged m fl rows qs) (hq : q ∈ rows)
+    (hnew : readMem m' (fldPath q fl) = some (.bool true))
+    (hag : ∀ r ∈ rows, r ≠ q → readMem m' (fldPath r fl) = readMem m (fldPath r fl)) :
+    Flagged m' fl rows (qs ++ [q]) := by
+  intro r hr
+  by_cases hrq : r = q
+  · subst hrq; simp [hnew]
+  · rw [hag r hr hrq, h r hr]
+    simp [hrq]
+
 end CSubset
