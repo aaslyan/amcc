@@ -545,25 +545,6 @@ def elems (m : Mem) (nm : Names) : Nat → Option Path → Option (List Path)
       some (p :: rest)
     | _ => none
 
-/-- **`RepInv`**: Representation invariant for the intrusive doubly-linked list (`Llist`).
-Binds concrete heap memory layout to the abstract sequence `es = elems m nm fuel (head m nm)`. -/
-structure RepInv (m : Mem) (nm : Names) : Prop where
-  /-- Head and tail pointers are simultaneously empty or non-empty -/
-  head_tail  : head m nm = none ↔ tail m nm = none
-  /-- Link integrity: next and prev are inverses along the list -/
-  linked     : ∀ p q, next m nm p = some q → prev m nm q = some p
-  /-- Termination: exists sufficient fuel to decode the list from head -/
-  terminates : ∃ n es, elems m nm n (head m nm) = some es
-  /-- Membership flag soundness: `inlist` is true iff `p` is in the decoded list -/
-  inlist_iff : ∀ es, (∃ n, elems m nm n (head m nm) = some es) →
-                 ∀ p, inlist m nm p = true ↔ p ∈ es
-  /-- Count soundness: stored count equals decoded list length -/
-  count_eq   : ∀ es, (∃ n, elems m nm n (head m nm) = some es) →
-                 count m nm = es.length
-  /-- Tail soundness: tail pointer names the last element of the decoded list -/
-  tail_last  : ∀ es, (∃ n, elems m nm n (head m nm) = some es) →
-                 tail m nm = es.getLast?
-
 theorem elems_none (m : Mem) (nm : Names) (fuel : Nat) :
     elems m nm fuel none = some [] := by
   cases fuel <;> rfl
@@ -749,8 +730,7 @@ theorem elems_head (m : Mem) (nm : Names) :
         cases heq
         rfl
       | _ => simp at h
-
-theorem RepInv.unique_es {m : Mem} {nm : Names} :
+theorem elems_unique {m : Mem} {nm : Names} :
     ∀ n1 n2 es1 es2,
       elems m nm n1 (head m nm) = some es1 →
       elems m nm n2 (head m nm) = some es2 →
@@ -758,7 +738,7 @@ theorem RepInv.unique_es {m : Mem} {nm : Names} :
   intro n1 n2 es1 es2 h1 h2
   exact elems_det m nm n1 n2 (head m nm) es1 es2 h1 h2
 
-theorem RepInv.head_eq {m : Mem} {nm : Names} :
+theorem elems_head_eq {m : Mem} {nm : Names} :
     ∀ n es, elems m nm n (head m nm) = some es → head m nm = es.head? := by
   intro n es h
   cases hhd : head m nm with
@@ -773,66 +753,10 @@ theorem RepInv.head_eq {m : Mem} {nm : Names} :
     rw [hhd] at h
     exact (elems_head m nm n p es h).symm
 
-theorem RepInv.tail_eq {m : Mem} {nm : Names} (hinv : RepInv m nm) :
-    ∀ n es, elems m nm n (head m nm) = some es → tail m nm = es.getLast? := by
-  intro n es h
-  exact hinv.tail_last es ⟨n, h⟩
-
-theorem RepInv.count_eq' {m : Mem} {nm : Names} (hinv : RepInv m nm) :
-    ∀ n es, elems m nm n (head m nm) = some es → count m nm = es.length := by
-  intro n es h
-  exact hinv.count_eq es ⟨n, h⟩
-
-theorem RepInv.inlist_eq {m : Mem} {nm : Names} (hinv : RepInv m nm) :
-    ∀ n es, elems m nm n (head m nm) = some es → ∀ p, inlist m nm p = true ↔ p ∈ es := by
-  intro n es h p
-  exact hinv.inlist_iff es ⟨n, h⟩ p
-
-theorem RepInv.nodup {m : Mem} {nm : Names} :
+theorem elems_nodup_head {m : Mem} {nm : Names} :
     ∀ n es, elems m nm n (head m nm) = some es → es.Nodup := by
   intro n es h
   exact elems_nodup m nm n (head m nm) es h
-
-/-- **Empty list representation invariant.**
-A memory state with null head, null tail, zero count, and all elements not in list
-satisfies `RepInv`. -/
-theorem RepInv_empty {m : Mem} {nm : Names}
-    (hhd : head m nm = none)
-    (htl : tail m nm = none)
-    (hcnt : count m nm = 0)
-    (hlink : ∀ p q, next m nm p = some q → prev m nm q = some p)
-    (hflg : ∀ p, inlist m nm p = false) :
-    RepInv m nm where
-  head_tail := by rw [hhd, htl]
-  linked := hlink
-  terminates := ⟨0, [], by rw [hhd]; rfl⟩
-  inlist_iff := by
-    intro es ⟨n, hn⟩ p
-    rw [hhd] at hn
-    have heq : es = [] := by
-      cases n with
-      | zero => simp only [elems] at hn; exact Option.some.inj hn.symm
-      | succ n => simp only [elems] at hn; exact Option.some.inj hn.symm
-    subst heq
-    simp [hflg p]
-  count_eq := by
-    intro es ⟨n, hn⟩
-    rw [hhd] at hn
-    have heq : es = [] := by
-      cases n with
-      | zero => simp only [elems] at hn; exact Option.some.inj hn.symm
-      | succ n => simp only [elems] at hn; exact Option.some.inj hn.symm
-    subst heq
-    simp [hcnt]
-  tail_last := by
-    intro es ⟨n, hn⟩
-    rw [hhd] at hn
-    have heq : es = [] := by
-      cases n with
-      | zero => simp only [elems] at hn; exact Option.some.inj hn.symm
-      | succ n => simp only [elems] at hn; exact Option.some.inj hn.symm
-    subst heq
-    simp [htl]
 
 /-! ## The representation invariant
 
@@ -2975,6 +2899,82 @@ theorem remove_correct
   have hhead_eq := head_eq_headOf m' nm (qs.erase q) I'.head
   rw [← hhead_eq] at helems_fuel
   exact ⟨m', hcall, I', helems_fuel⟩
+
+/-- **`llist_fifo_first`**: The first element peeked via `First` matches the head
+of the inductive chain `(q :: rest)` under `TailListInv`.
+
+checked by: `lake build` -/
+theorem llist_fifo_first
+    (hlook : lookupFun p nm.first = .ok (firstDef nm elem))
+    (hn : ∃ n, p.funs.length = n + 1)
+    (I : TailListInv m nm rows (q :: rest)) :
+    callFun p m nm.first [] = .ok (m, some (.ptr q)) := by
+  have hhd : readMem m (dbPath nm nm.head) = some (.ptr q) := by
+    have h := I.head
+    simp [headOf] at h
+    exact h
+  exact first_correct hlook hn hhd
+
+/-- **`llist_fifo`**: Representation invariant soundness for `TailListInv`.
+Connecting the concrete memory layout to decoded list elements `elems`,
+and establishing exact equality for `head` and `tail` projections.
+
+checked by: `lake build` -/
+theorem llist_fifo
+    (m : Mem) (nm : Names) (rows qs : List Path)
+    (I : TailListInv m nm rows qs) :
+    elems m nm (qs.length + 1) (head m nm) = some qs
+    ∧ head m nm = qs.head?
+    ∧ tail m nm = qs.getLast? := by
+  have hhead_eq : head m nm = qs.head? := by
+    have hhd := I.head
+    simp [head]
+    rw [hhd]
+    cases qs with
+    | nil => rfl
+    | cons q rest => rfl
+  have htail_eq : tail m nm = qs.getLast? := by
+    have htl := I.tail
+    simp [tail]
+    rw [htl, lastOr_eq_getLast?]
+    cases qs.getLast? with
+    | none => rfl
+    | some t => rfl
+  have helems : elems m nm (qs.length + 1) (head m nm) = some qs := by
+    have hreach := reaches_headOf_implies_elems m nm qs I.chain qs.length (Nat.le_refl qs.length)
+    have hheadeq := head_eq_headOf m nm qs I.head
+    rw [← hheadeq] at hreach
+    exact hreach
+  exact ⟨helems, hhead_eq, htail_eq⟩
+
+/-- **`llist_fifo_step`**: One full step of FIFO queue processing.
+Reading the head item via `First` returns `q`, and removing `q` via `Remove` transitions
+the representation invariant from `q :: rest` to `rest` while advancing the decoded
+element sequence from `q :: rest` to `rest`.
+
+checked by: `lake build` -/
+theorem llist_fifo_step
+    (hlookF : lookupFun p nm.first = .ok (firstDef nm elem))
+    (hlookR : lookupFun p nm.remove = .ok (removeDef nm elem))
+    (hn : ∃ n, p.funs.length = n + 1)
+    (hno : NamesOk nm)
+    (I : TailListInv m nm rows (q :: rest))
+    (hqrow : q ∈ rows)
+    (hflag : readMem m (fldPath q nm.inlist) = some (.bool true)) :
+    callFun p m nm.first [] = .ok (m, some (.ptr q))
+    ∧ ∃ m', callFun p m nm.remove [.ptr q] = .ok (m', none)
+        ∧ TailListInv m' nm rows rest
+        ∧ elems m' nm (rest.length + 1) (head m' nm) = some rest := by
+  have hfirst : callFun p m nm.first [] = .ok (m, some (.ptr q)) :=
+    llist_fifo_first hlookF hn I
+  have herase : (q :: rest).erase q = rest := by
+    simp [List.erase_cons_head]
+  obtain ⟨m', hcall, I', helems⟩ := remove_correct hlookR hn hno I hqrow hflag
+  rw [herase] at I'
+  have helems_rest : elems m' nm (rest.length + 1) (head m' nm) = some rest := by
+    have ⟨hdec, _, _⟩ := llist_fifo m' nm rows rest I'
+    exact hdec
+  exact ⟨hfirst, m', hcall, I', helems_rest⟩
 
 end Proofs
 
