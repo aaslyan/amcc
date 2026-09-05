@@ -31,6 +31,7 @@ import Amcc.Templates.LlistWf
 import Amcc.Templates.Thash
 import Amcc.Templates.ThashWf
 import Amcc.Templates.ThashFind
+import Amcc.Templates.ThashRefine
 import Amcc.Templates.Smallstr
 import Amcc.Templates.SmallstrWf
 import Amcc.Templates.Bheap
