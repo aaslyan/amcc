@@ -118,6 +118,18 @@ def run (sink : Sink) : String → IO UInt32
   | "smallstr" =>
     emitProgram sink "smallstr" Templates.Smallstr.Examples.strDb
       Templates.Smallstr.genSmallstr
+  | "tpool" =>
+    emitOpt sink "tpool" Dmmeta.Examples.tpoolDb Templates.Tpool.genTpool
+      "schema declares no Tpool field"
+  | "atree" =>
+    emitOpt sink "atree" Templates.Atree.Examples.treeDb Templates.Atree.genAtree
+      "schema declares no Atree field"
+  | "bheap" =>
+    emitOpt sink "bheap" Templates.Bheap.Examples.heapDb Templates.Bheap.genBheap
+      "schema declares no Bheap field"
+  | "lary" =>
+    emitOpt sink "lary" Templates.Lary.Examples.laryDb Templates.Lary.genLary
+      "schema declares no Lary field"
   | other => do
     IO.eprintln s!"amcc: unknown schema {other}"
     return 2
@@ -125,7 +137,7 @@ def run (sink : Sink) : String → IO UInt32
 /-- The schemas `--out all` writes, which is what the smoke test and the
 checked-in goldens under `scripts/gen/` cover. -/
 def allSchemas : List String :=
-  ["orders", "pool", "upptr", "llist", "thash", "smallstr",
+  ["orders", "pool", "tpool", "upptr", "llist", "thash", "atree", "bheap", "lary", "smallstr",
    "llist-nested", "thash-nested", "thash-self"]
 
 /-- Read an ssimfile, check the schema it denotes, and print it back. Exit 0
@@ -152,6 +164,9 @@ def exampleDb? : String → Option Dmmeta.Db
   | "upptr" => some Templates.Upptr.Examples.upDb
   | "llist" => some Templates.Llist.Examples.listDb
   | "thash" => some Templates.Thash.Examples.hashDb
+  | "atree" => some Templates.Atree.Examples.treeDb
+  | "bheap" => some Templates.Bheap.Examples.heapDb
+  | "lary"  => some Templates.Lary.Examples.laryDb
   | "smallstr" => some Templates.Smallstr.Examples.strDb
   | _       => none
 

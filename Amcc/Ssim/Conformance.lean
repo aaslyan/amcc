@@ -56,21 +56,48 @@ def Verdict.detail : Verdict → String
   | .lowered     => ""
   | .rejected r  => r
 
-/-- Which template emits operations for a field of this reftype. The six with
+/-- Which template emits operations for a field of this reftype. The ones with
 a `Dmmeta.fieldTy` lowering but no operations come back `lowered`; everything
 else is outside `Ssim.supported` and is rejected by the same list the reader
 refuses against. -/
 def verdictOfReftype (r : Reftype) : Verdict :=
   match r with
-  | .Pkey   => .generated "ArrayTable (key)"
-  | .Val    => .generated "ArrayTable (value)"
-  | .Inlary => .generated "Pool"
-  | .Upptr  => .generated "Upptr"
-  | .Llist  => .generated "Llist"
-  | .Thash  => .generated "Thash"
-  | .Base   => .lowered
-  | .Ptr    => .lowered
-  | _       => .rejected s!"reftype {r.name}"
+  | .Pkey     => .generated "ArrayTable (key)"
+  | .Val      => .generated "ArrayTable (value)"
+  | .Inlary   => .generated "Pool"
+  | .Upptr    => .generated "Upptr"
+  | .Llist    => .generated "Llist"
+  | .Thash    => .generated "Thash"
+  | .Atree    => .generated "Atree"
+  | .Rbtree   => .generated "Rbtree"
+  | .Bheap    => .generated "Bheap"
+  | .Tpool    => .generated "Tpool"
+  | .Lpool    => .generated "Tpool"
+  | .Blkpool  => .generated "Tpool"
+  | .Malloc   => .generated "Tpool"
+  | .Sbrk     => .generated "Tpool"
+  | .Lary     => .generated "Lary"
+  | .Ptrary   => .generated "Lary (ptr)"
+  | .Tary     => .generated "Lary (tail)"
+  | .Bitfld   => .generated "Bitfld"
+  | .Global   => .generated "Global"
+  | .RegxSql  => .generated "RegxSql"
+  | .Varlen   => .generated "Varlen"
+  | .Charset  => .generated "Charset"
+  | .Hook     => .generated "Hook"
+  | .Cppstack => .generated "Cppstack"
+  | .Fbuf     => .generated "Fbuf"
+  | .Exec     => .generated "Exec"
+  | .Opt      => .generated "Opt"
+  | .Alias    => .generated "Alias"
+  | .Regx     => .generated "Regx"
+  | .Delptr   => .generated "Delptr"
+  | .ZSListMT => .generated "ZSListMT"
+  | .Count    => .lowered
+  | .Ctype    => .lowered
+  | .Base     => .lowered
+  | .Ptr      => .lowered
+  | .Smallstr => .lowered
 
 /-- Sanity: `verdictOfReftype` is `rejected` exactly off `Ssim.supported`, so
 the census and the reader cannot disagree about what is in scope. -/

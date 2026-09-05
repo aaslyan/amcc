@@ -66,13 +66,13 @@ list being in one place. -/
 templates that emit their operations. The remaining twenty-seven of `dmmeta`'s
 thirty-five are rejected by name.
 
-`Smallstr` is **modelled** — `Dmmeta.AttrData.smallstr` and the
-`dmmeta.smallstr` record round-trip — and still absent here, because
-`Dmmeta.fieldTy` cannot lower it: `amc` emits `u8 ch[N+1]; u8 n_ch;` and the C
-subset has no eight-bit scalar. `docs/DIVERGENCE.md` §3.8 is the entry, and
-the line to add here is one line once `u8` lands. -/
+`Smallstr` lowers to its `u8` array for all three `strtype`s, and `rpascal`
+additionally gets operations — so it is supported in both senses the census
+distinguishes. A padded field is *lowered*, not *generated*:
+`Conformance.verdictOfReftype` says which, and `verdict_iff_supported` keeps
+the two lists from drifting. -/
 def supported : List Reftype :=
-  [.Val, .Base, .Pkey, .Upptr, .Ptr, .Inlary, .Thash, .Llist]
+  Reftype.all
 
 /-- Parse a reftype name, refusing the ones no template can emit. The two
 failures are reported differently on purpose: an unknown name is a typo, an

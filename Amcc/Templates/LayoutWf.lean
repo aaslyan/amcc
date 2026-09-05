@@ -440,7 +440,7 @@ theorem fieldTy_shape {full : Db} {owner : String} {f : Field} {t : Ty}
   -- everything with no storage lowering: `fieldTy` returns `none`, so the
   -- hypothesis that it returned `some t` is already false
   | Lary | Tary | Tpool | Lpool | Blkpool | Malloc | Sbrk | Delptr | Thash
-  | Llist | Bheap | Atree | Ptrary | Count
+  | Llist | Bheap | Atree | Rbtree | Ptrary | Count
   | Alias | Bitfld | Charset | Cppstack | Ctype | Exec | Fbuf | Global | Hook
   | Opt | Regx | RegxSql | Varlen | ZSListMT =>
     all_goals (rw [hr] at ht; simp at ht)

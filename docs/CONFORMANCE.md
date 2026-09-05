@@ -11,18 +11,18 @@ and decides nothing.*
 
 ## The headline
 
-**3909 of 5659 fields (69.1%) would be generated**, and
+**4848 of 5659 fields (85.7%) would be generated**, and
 1419 of 1420 ctypes (99.9%) are
 nameable.
 
 The previous measurement said **one**. The difference is entirely
 `Dmmeta.mangle`: `dmmeta` names are namespace-qualified, a dot is not a C
 identifier character, and until the mapping existed 4518 fields with a
-supported reftype were blocked by their *names*. That number is now 3.
+supported reftype were blocked by their *names*. That number is now 64.
 
 What remains is what the first measurement predicted would be second: the
-reftypes. 1140 fields
-(20.1%) have a reftype AMCC has no
+reftypes. 0 fields
+(0.0%) have a reftype AMCC has no
 representation for, and that is now the *only* thing of any size between the
 generator and the corpus.
 
@@ -39,23 +39,23 @@ generator and the corpus.
 
 | reftype verdict | count | share | meaning |
 |---|---|---|---|
-| generated | 3912 | 69.1% | a template emits operations |
-| lowered | 607 | 10.7% | becomes a struct field; no operations |
-| rejected | 1140 | 20.1% | no representation at all |
+| generated | 4912 | 86.8% | a template emits operations |
+| lowered | 747 | 13.2% | becomes a struct field; no operations |
+| rejected | 0 | 0.0% | no representation at all |
 
 ## Fields, by what actually blocks them
 
 | blocker | count | share of all fields |
 |---|---|---|
-| nothing — generated | 3909 | 69.1% |
-| the name only (reftype is supported) | 3 | 0.1% |
-| the reftype | 1140 | 20.1% |
+| nothing — generated | 4848 | 85.7% |
+| the name only (reftype is supported) | 64 | 1.1% |
+| the reftype | 0 | 0.0% |
 
 Broken down, the name-only blockers are:
 
 | reason | fields |
 |---|---|
-| field mangles to a reserved name | 2 |
+| field mangles to a reserved name | 63 |
 | not <ctype>.<field> | 1 |
 
 ---
@@ -64,31 +64,7 @@ Broken down, the name-only blockers are:
 
 | rank | reason | fields blocked |
 |---|---|---|
-| 1 | reftype `Lary` has no representation | 390 |
-| 2 | reftype `Smallstr` has no representation | 140 |
-| 3 | reftype `Ptrary` has no representation | 136 |
-| 4 | reftype `Bitfld` has no representation | 75 |
-| 5 | reftype `Tary` has no representation | 69 |
-| 6 | reftype `Global` has no representation | 60 |
-| 7 | reftype `RegxSql` has no representation | 52 |
-| 8 | reftype `Tpool` has no representation | 40 |
-| 9 | reftype `Varlen` has no representation | 39 |
-| 10 | reftype `Bheap` has no representation | 23 |
-| 11 | reftype `Charset` has no representation | 23 |
-| 12 | reftype `Hook` has no representation | 22 |
-| 13 | reftype `Cppstack` has no representation | 21 |
-| 14 | reftype `Fbuf` has no representation | 11 |
-| 15 | reftype `Lpool` has no representation | 10 |
-| 16 | reftype `Exec` has no representation | 6 |
-| 17 | reftype `Opt` has no representation | 6 |
-| 18 | reftype `Alias` has no representation | 4 |
-| 19 | reftype `Regx` has no representation | 3 |
-| 20 | reftype `Delptr` has no representation | 3 |
-| 21 | reftype `Atree` has no representation | 3 |
-| 22 | reftype `Malloc` has no representation | 2 |
-| 23 | reftype `Sbrk` has no representation | 1 |
-| 24 | reftype `ZSListMT` has no representation | 1 |
-| 25 | the name, after mangling | 3 |
+| 1 | the name, after mangling | 64 |
 
 ---
 

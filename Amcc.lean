@@ -23,6 +23,7 @@ import Amcc.Templates.Layout
 import Amcc.Templates.LayoutWf
 import Amcc.Templates.NameWf
 import Amcc.Templates.Pool
+import Amcc.Templates.Tpool
 import Amcc.Templates.Upptr
 import Amcc.Templates.UpptrWf
 import Amcc.Templates.Llist
@@ -31,6 +32,18 @@ import Amcc.Templates.Thash
 import Amcc.Templates.ThashWf
 import Amcc.Templates.ThashFind
 import Amcc.Templates.Smallstr
+import Amcc.Templates.SmallstrWf
+import Amcc.Templates.Bheap
+import Amcc.Templates.Atree
+import Amcc.Templates.Rbtree
+import Amcc.Spec.Rbtree
+import Amcc.Templates.Lary
+import Amcc.Templates.Cursor
+import Amcc.Templates.Xref
+import Amcc.Templates.SerDe
+import Amcc.Templates.SsimDb
+import Amcc.Templates.Msgcurs
+import Amcc.Templates.Opt
 import Amcc.Templates.ArrayTableChecks
 import Amcc.Ssim.Tuple
 import Amcc.Ssim.Schema
@@ -39,6 +52,7 @@ import Amcc.Ssim.Checks
 import Amcc.Codegen.Split
 import Amcc.Codegen.Print
 import Amcc.Codegen.PrintChecks
+import Amcc.Codegen.ExportLean
 
 /-!
 # AMCC — a verified schema-to-C generator

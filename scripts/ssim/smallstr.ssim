@@ -1,0 +1,4 @@
+dmmeta.ctype  ctype:name_row  comment:""
+dmmeta.field  field:name_row.id  arg:u64  reftype:Pkey  comment:""
+dmmeta.field  field:name_row.ch  arg:char  reftype:Smallstr  comment:""
+dmmeta.smallstr  field:name_row.ch  length:16  strtype:rpascal  pad:"'0'"  strict:Y

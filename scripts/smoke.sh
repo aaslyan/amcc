@@ -101,7 +101,7 @@ echo "smoke: regr  OK — the two schemas that broke the layout compile, headers
 #      this the round trip only says the reader and the printer agree with each
 #      other; with it, the file on disk is the schema the templates are proved
 #      about.
-for name in pool upptr llist thash; do
+for name in pool upptr llist thash smallstr; do
   lake exe amcc --ssim "scripts/ssim/$name.ssim" > "$tmp/$name.ssim"
   diff "scripts/ssim/$name.ssim" "$tmp/$name.ssim"
   lake exe amcc --ssim-of "$name" > "$tmp/$name.of.ssim"
