@@ -1192,7 +1192,7 @@ distinct field names give disjoint paths. -/
 
 section Proofs
 
-variable {p : Program} {n : Nat} {nm : Names} {elem : Ident}
+variable {p : Program} {callee : Stmt → Store → Except Err (Store × Outcome)} {nm : Names} {elem : Ident}
   {rows qs : List Path} {q : Path}
 
 /-- Every write `Insert` performs misses every `next` field on the old chain,
@@ -1248,7 +1248,7 @@ theorem exec_insertBody {σ : Store}
     (hflag : σ.readPath (fldPath q nm.inlist) = some (.bool false))
     (hlocRow : σ.getLocal parRow = some (.ptr q))
     (hlocOld : (σ.getLocal tmpOld).isSome = true) :
-    ∃ σ', execAt p (execStmt p n) (insertDef nm elem).body σ = .ok (σ', .normal)
+    ∃ σ', execAt p (callee) (insertDef nm elem).body σ = .ok (σ', .normal)
       ∧ ListInv σ'.toMem nm rows (q :: qs)
       ∧ σ'.readPath (dbPath nm nm.head) = some (.ptr q)
       ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool true)
@@ -1287,7 +1287,7 @@ theorem exec_insertBody {σ : Store}
   -- S1: `_old = g.head`
   obtain ⟨ov, hov⟩ := Option.isSome_iff_exists.mp hlocOld
   obtain ⟨σ1, hσ1⟩ : ∃ t, t = σ.setLocal tmpOld (headOf qs) := ⟨_, rfl⟩
-  have hS1 : execAt p (execStmt p n)
+  have hS1 : execAt p (callee)
       (.assign (.var tmpOld) (.rd (dbFld nm nm.head))) σ = .ok (σ1, .normal) := by
     rw [hσ1]; exact step_local hov (read_dbFld hhead)
   have hr1 : ∀ pth, σ1.readPath pth = σ.readPath pth := by
@@ -1297,7 +1297,7 @@ theorem exec_insertBody {σ : Store}
   have hl1old : σ1.getLocal tmpOld = some (headOf qs) := by
     rw [hσ1]; exact getLocal_setLocal_self hov
   -- S2: `row->prev = NULL`
-  obtain ⟨σ2, hS2, hl2, hw2, hf2⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σ2, hS2, hl2, hw2, hf2⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.prev) (e := .null (.strct elem)) (w := Value.null)
     hl1row (by rw [hr1]; exact hqprev) rfl
   have hl2row : σ2.getLocal parRow = some (.ptr q) := by
@@ -1305,7 +1305,7 @@ theorem exec_insertBody {σ : Store}
   have hl2old : σ2.getLocal tmpOld = some (headOf qs) := by
     simp only [Store.getLocal, hl2]; exact hl1old
   -- S3: `row->next = _old`
-  obtain ⟨σ3, hS3, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σ3, hS3, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.next) (e := .rd (.var tmpOld)) (w := headOf qs)
     hl2row (by rw [hf2 _ dPN, hr1]; exact hqnext) (read_local' hl2old)
   have hl3row : σ3.getLocal parRow = some (.ptr q) := by
@@ -1313,7 +1313,7 @@ theorem exec_insertBody {σ : Store}
   have hl3old : σ3.getLocal tmpOld = some (headOf qs) := by
     simp only [Store.getLocal, hl3]; exact hl2old
   -- S4: `row->inlist = true`
-  obtain ⟨σ4, hS4, hl4, hw4, hf4⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σ4, hS4, hl4, hw4, hf4⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.inlist) (e := .lit (.bool true)) (w := Value.bool true)
     hl3row (by rw [hf3 _ dNF, hf2 _ dPF, hr1]; exact hflag) rfl
   have hl4row : σ4.getLocal parRow = some (.ptr q) := by
@@ -1330,7 +1330,7 @@ theorem exec_insertBody {σ : Store}
     fun q0 qs0 h e => hqnot (by rw [h, ← e]; simp)
   -- S5: `if (_old != NULL) { _old->prev = row; }`
   obtain ⟨σ5, hS5, hl5, hnew5, hf5⟩ :
-      ∃ σ5, execAt p (execStmt p n)
+      ∃ σ5, execAt p (callee)
           (Stmt.cond (.bin .ne (.rd (.var tmpOld)) (.null (.strct elem)))
             (.assign (ptrFld tmpOld nm.prev) (.rd (.var parRow))) .skip) σ4
             = .ok (σ5, .normal)
@@ -1359,7 +1359,7 @@ theorem exec_insertBody {σ : Store}
         exact Option.isSome_iff_exists.mp h
       have dq0 : ∀ x y, (fldPath q x).overlaps (fldPath q0 y) = false :=
         fun x y => insert_disj I hqrow hq0r hq0q x y
-      obtain ⟨σ5, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := execStmt p n)
+      obtain ⟨σ5, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := callee)
         (ptr := tmpOld) (x := nm.prev) (q := q0) (e := .rd (.var parRow))
         (w := Value.ptr q) (by rw [hl4old, hqs]; rfl)
         (by rw [hf4 _ (dq0 _ _), hf3 _ (dq0 _ _), hf2 _ (dq0 _ _), hr1]; exact hpv0)
@@ -1400,14 +1400,14 @@ theorem exec_insertBody {σ : Store}
       (hrowP q hqrow nm.inlist).2 hParC]
     exact hcount
   -- S6: `g.head = row`
-  obtain ⟨σ6, hS6, hl6, hw6, hf6⟩ := step_db (p := p) (callee := execStmt p n)
+  obtain ⟨σ6, hS6, hl6, hw6, hf6⟩ := step_db (p := p) (callee := callee)
     (x := nm.head) (e := .rd (.var parRow)) (w := Value.ptr q) hhead5
     (read_local' (by simp only [Store.getLocal, hl5]; exact hl4row))
   have hcount6 : σ6.readPath (dbPath nm nm.count)
       = some (.u32 (UInt32.ofNat qs.length)) := by
     rw [hf6 _ dHC]; exact hcount5
   -- S7: `g.n = g.n + 1`
-  obtain ⟨σ7, hS7, hl7, hw7, hf7⟩ := step_db (p := p) (callee := execStmt p n)
+  obtain ⟨σ7, hS7, hl7, hw7, hf7⟩ := step_db (p := p) (callee := callee)
     (x := nm.count) (e := .bin .add (.rd (dbFld nm nm.count)) (.lit (.u32 1)))
     (w := Value.u32 (UInt32.ofNat qs.length + 1)) hcount6
     (by
@@ -1565,7 +1565,7 @@ theorem exec_removeTail {σ : Store} {c : Nat}
     (dPC : (fldPath q nm.prev).overlaps (dbPath nm nm.count) = false)
     (dFC : (fldPath q nm.inlist).overlaps (dbPath nm nm.count) = false)
     (hc : 0 < c) :
-    ∃ σ', execAt p (execStmt p n) (Stmt.block
+    ∃ σ', execAt p (callee) (Stmt.block
         [ .assign (ptrFld parRow nm.next) (.null (.strct elem))
         , .assign (ptrFld parRow nm.prev) (.null (.strct elem))
         , .assign (ptrFld parRow nm.inlist) (.lit (.bool false))
@@ -1583,23 +1583,23 @@ theorem exec_removeTail {σ : Store} {c : Nat}
              (dbPath nm nm.count).overlaps r = false →
              σ'.readPath r = σ.readPath r := by
   obtain ⟨nv, hnv⟩ := Option.isSome_iff_exists.mp hnextS
-  obtain ⟨σa, hEa, hla, hwa, hfa⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σa, hEa, hla, hwa, hfa⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.next) (e := .null (.strct elem)) (w := Value.null) hlocRow hnv rfl
   have hlaRow : σa.getLocal parRow = some (.ptr q) := by
     simp only [Store.getLocal, hla]; exact hlocRow
   obtain ⟨pv, hpv⟩ := Option.isSome_iff_exists.mp hprevS
-  obtain ⟨σb, hEb, hlb, hwb, hfb⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σb, hEb, hlb, hwb, hfb⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.prev) (e := .null (.strct elem)) (w := Value.null) hlaRow
     (by rw [hfa _ dNP]; exact hpv) rfl
   have hlbRow : σb.getLocal parRow = some (.ptr q) := by
     simp only [Store.getLocal, hlb]; exact hlaRow
   obtain ⟨fv, hfv⟩ := Option.isSome_iff_exists.mp hflagS
-  obtain ⟨σc, hEc, hlc, hwc, hfc⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σc, hEc, hlc, hwc, hfc⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.inlist) (e := .lit (.bool false)) (w := Value.bool false) hlbRow
     (by rw [hfb _ dPF, hfa _ dNF]; exact hfv) rfl
   have hcntc : σc.readPath (dbPath nm nm.count) = some (.u32 (UInt32.ofNat c)) := by
     rw [hfc _ dFC, hfb _ dPC, hfa _ dNC]; exact hcnt
-  obtain ⟨σd, hEd, hld, hwd, hfd⟩ := step_db (p := p) (callee := execStmt p n)
+  obtain ⟨σd, hEd, hld, hwd, hfd⟩ := step_db (p := p) (callee := callee)
     (x := nm.count) (e := .bin .sub (.rd (dbFld nm nm.count)) (.lit (.u32 1)))
     (w := Value.u32 (UInt32.ofNat c - 1)) hcntc
     (by
@@ -1643,7 +1643,7 @@ theorem exec_removeHead {σ : Store}
     (hlocRow : σ.getLocal parRow = some (.ptr q))
     (hlocPrev : (σ.getLocal tmpPrev).isSome = true)
     (hlocNext : (σ.getLocal tmpNext).isSome = true) :
-    ∃ σ', execAt p (execStmt p n) (removeDef nm elem).body σ = .ok (σ', .normal)
+    ∃ σ', execAt p (callee) (removeDef nm elem).body σ = .ok (σ', .normal)
       ∧ TailListInv σ'.toMem nm rows (qs.erase q)
       ∧ σ'.readPath (dbPath nm nm.tail) = some (lastOr (qs.erase q) .null)
       ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
@@ -1665,7 +1665,7 @@ theorem exec_removeHead {σ : Store}
   obtain ⟨pv0, hpv0⟩ := Option.isSome_iff_exists.mp hlocPrev
   obtain ⟨nv0, hnv0⟩ := Option.isSome_iff_exists.mp hlocNext
   obtain ⟨σ1, hσ1⟩ : ∃ t, t = σ.setLocal tmpPrev pval := ⟨_, rfl⟩
-  have hA1 : execAt p (execStmt p n)
+  have hA1 : execAt p (callee)
       (.assign (.var tmpPrev) (.rd (ptrFld parRow nm.prev))) σ
       = .ok (σ1, .normal) := by
     rw [hσ1]; exact step_local hpv0 (read_ptrFld hlocRow hpval)
@@ -1678,7 +1678,7 @@ theorem exec_removeHead {σ : Store}
   have hl1next : σ1.getLocal tmpNext = some nv0 := by
     rw [hσ1, getLocal_setLocal_ne (by decide)]; exact hnv0
   obtain ⟨σ2, hσ2⟩ : ∃ t, t = σ1.setLocal tmpNext nval := ⟨_, rfl⟩
-  have hA2 : execAt p (execStmt p n)
+  have hA2 : execAt p (callee)
       (.assign (.var tmpNext) (.rd (ptrFld parRow nm.next))) σ1
       = .ok (σ2, .normal) := by
     rw [hσ2]
@@ -1733,13 +1733,13 @@ theorem exec_removeHead {σ : Store}
     have hpostR : ∀ q1 post0, post = q1 :: post0 → q1 ∈ rows :=
       hpostrows post ⟨[], by simpa using hqs⟩
     -- A3: `g.head = _next`
-    obtain ⟨σ3, hA3w, hl3, hw3, hf3⟩ := step_db (p := p) (callee := execStmt p n)
+    obtain ⟨σ3, hA3w, hl3, hw3, hf3⟩ := step_db (p := p) (callee := callee)
       (x := nm.head) (e := .rd (.var tmpNext)) (w := headOf post)
       (by rw [hr2]; exact hhead) (read_local' hl2next)
     have hg3 : evalExpr σ2 (.bin .ne (.rd (.var tmpPrev)) (.null (.strct elem)))
         = .ok (.bool false) := by
       simp only [evalExpr, resolve, hl2prev, readLoc, bind, Except.bind, evalBin]
-    have hA3 : execAt p (execStmt p n)
+    have hA3 : execAt p (callee)
         (Stmt.cond (.bin .ne (.rd (.var tmpPrev)) (.null (.strct elem)))
           (.assign (ptrFld tmpPrev nm.next) (.rd (.var tmpNext)))
           (.assign (dbFld nm nm.head) (.rd (.var tmpNext)))) σ2
@@ -1753,7 +1753,7 @@ theorem exec_removeHead {σ : Store}
       simp only [Store.getLocal, hl3]; exact hl2next
     -- A4: `if (_next != NULL) { _next->prev = _prev; } else { g.tail = _prev; }`
     obtain ⟨σ4, hA4, hl4, hnew4, htail4, hf4⟩ :
-        ∃ σ4, execAt p (execStmt p n)
+        ∃ σ4, execAt p (callee)
             (Stmt.cond (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
               (.assign (ptrFld tmpNext nm.prev) (.rd (.var tmpPrev)))
               (.assign (dbFld nm nm.tail) (.rd (.var tmpPrev)))) σ3
@@ -1776,7 +1776,7 @@ theorem exec_removeHead {σ : Store}
           simp only [evalExpr, resolve, hln, readLoc, bind, Except.bind, evalBin]
         have htail3 : σ3.readPath (dbPath nm nm.tail) = some (lastOr qs .null) := by
           rw [hf3 _ (dbPath_disjoint hno.ht), hr2]; exact htail
-        obtain ⟨σ4, hS, hl, hw, hf⟩ := step_db (p := p) (callee := execStmt p n)
+        obtain ⟨σ4, hS, hl, hw, hf⟩ := step_db (p := p) (callee := callee)
           (x := nm.tail) (e := .rd (.var tmpPrev)) (w := Value.null)
           htail3 (read_local' hl3prev)
         refine ⟨σ4, ?_, hl, ?_, ?_, ?_⟩
@@ -1791,7 +1791,7 @@ theorem exec_removeHead {σ : Store}
         obtain ⟨pv1, hpv1⟩ : ∃ v, σ.readPath (fldPath q1 nm.prev) = some v := by
           have h := (I.fields q1 hq1r).2.1; rw [RM] at h
           exact Option.isSome_iff_exists.mp h
-        obtain ⟨σ4, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := execStmt p n)
+        obtain ⟨σ4, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := callee)
           (ptr := tmpNext) (x := nm.prev) (q := q1) (e := .rd (.var tmpPrev))
           (w := Value.null) (by simp [hl3next, hpost, headOf])
           (by rw [hf3 _ (parent_ne_row' I hq1r nm.prev).1, hr2]; exact hpv1)
@@ -1833,7 +1833,7 @@ theorem exec_removeHead {σ : Store}
     have hl4row : σ4.getLocal parRow = some (.ptr q) := by
       simp only [Store.getLocal, hl4]; exact hl3row
     obtain ⟨σ5, hT, hl5, hn5, hp5, hf5v, hc5, hfr5⟩ := exec_removeTail
-      (p := p) (n := n) (nm := nm) (elem := elem) (q := q) (σ := σ4)
+      (p := p) (callee := callee) (nm := nm) (elem := elem) (q := q) (σ := σ4)
       (c := qs.length) hl4row (by simp [hq4, hnval]) (by simp [hq4, hpval])
       (by simp [hq4, hflag]) hcnt4 dNP dNF dPF (dqC nm.next) (dqC nm.prev)
       (dqC nm.inlist) hlenpos
@@ -1994,7 +1994,7 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
     (hlocRow : σ.getLocal parRow = some (.ptr q))
     (hlocPrev : (σ.getLocal tmpPrev).isSome = true)
     (hlocNext : (σ.getLocal tmpNext).isSome = true) :
-    ∃ σ', execAt p (execStmt p n) (removeDef nm elem).body σ = .ok (σ', .normal)
+    ∃ σ', execAt p (callee) (removeDef nm elem).body σ = .ok (σ', .normal)
       ∧ TailListInv σ'.toMem nm rows (qs.erase q)
       ∧ σ'.readPath (dbPath nm nm.tail) = some (lastOr (qs.erase q) .null)
       ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
@@ -2033,7 +2033,7 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
   obtain ⟨nv0, hnv0⟩ := Option.isSome_iff_exists.mp hlocNext
   -- A1: `_prev = row->f_prev`
   obtain ⟨σ1, hσ1⟩ : ∃ t, t = σ.setLocal tmpPrev (Value.ptr pp) := ⟨_, rfl⟩
-  have hA1 : execAt p (execStmt p n)
+  have hA1 : execAt p (callee)
       (.assign (.var tmpPrev) (.rd (ptrFld parRow nm.prev))) σ
       = .ok (σ1, .normal) := by
     rw [hσ1]; exact step_local hpv0 (read_ptrFld hlocRow hpmid)
@@ -2047,7 +2047,7 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
     rw [hσ1, getLocal_setLocal_ne (by decide)]; exact hnv0
   -- A2: `_next = row->f_next`
   obtain ⟨σ2, hσ2⟩ : ∃ t, t = σ1.setLocal tmpNext (headOf post) := ⟨_, rfl⟩
-  have hA2 : execAt p (execStmt p n)
+  have hA2 : execAt p (callee)
       (.assign (.var tmpNext) (.rd (ptrFld parRow nm.next))) σ1
       = .ok (σ2, .normal) := by
     rw [hσ2]
@@ -2087,13 +2087,13 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
   obtain ⟨ppn, hppn⟩ : ∃ v, σ.readPath (fldPath pp nm.next) = some v := by
     have h := (I.fields pp hpprow).1; rw [RM] at h
     exact Option.isSome_iff_exists.mp h
-  obtain ⟨σ3, hA3w, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σ3, hA3w, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := callee)
     (ptr := tmpPrev) (x := nm.next) (q := pp) (e := .rd (.var tmpNext))
     (w := headOf post) hl2prev (by rw [hr2]; exact hppn) (read_local' hl2next)
   have hg3 : evalExpr σ2 (.bin .ne (.rd (.var tmpPrev)) (.null (.strct elem)))
       = .ok (.bool true) := by
     simp only [evalExpr, resolve, hl2prev, readLoc, bind, Except.bind, evalBin]
-  have hA3 : execAt p (execStmt p n)
+  have hA3 : execAt p (callee)
       (Stmt.cond (.bin .ne (.rd (.var tmpPrev)) (.null (.strct elem)))
         (.assign (ptrFld tmpPrev nm.next) (.rd (.var tmpNext)))
         (.assign (dbFld nm nm.head) (.rd (.var tmpNext)))) σ2
@@ -2107,7 +2107,7 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
     simp only [Store.getLocal, hl3]; exact hl2next
   -- A4: `if (_next != NULL) { _next->f_prev = _prev; } else { g.tail = _prev; }`
   obtain ⟨σ4, hA4, hl4, hnew4, htail4, hf4⟩ :
-      ∃ σ4, execAt p (execStmt p n)
+      ∃ σ4, execAt p (callee)
           (Stmt.cond (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
             (.assign (ptrFld tmpNext nm.prev) (.rd (.var tmpPrev)))
             (.assign (dbFld nm nm.tail) (.rd (.var tmpPrev)))) σ3
@@ -2130,7 +2130,7 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
         simp only [evalExpr, resolve, hln, readLoc, bind, Except.bind, evalBin]
       have htail3 : σ3.readPath (dbPath nm nm.tail) = some (lastOr qs .null) := by
         rw [hf3 _ (row_ne_parent' I hpprow nm.next).2.1, hr2]; exact htail
-      obtain ⟨σ4, hS, hl, hw, hf⟩ := step_db (p := p) (callee := execStmt p n)
+      obtain ⟨σ4, hS, hl, hw, hf⟩ := step_db (p := p) (callee := callee)
         (x := nm.tail) (e := .rd (.var tmpPrev)) (w := Value.ptr pp)
         htail3 (read_local' hl3prev)
       have hlastOr_pp : lastOr (pre ++ pp :: []) .null = .ptr pp := by
@@ -2148,7 +2148,7 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
       obtain ⟨pv1, hpv1⟩ : ∃ v, σ.readPath (fldPath q1 nm.prev) = some v := by
         have h := (I.fields q1 hq1r).2.1; rw [RM] at h
         exact Option.isSome_iff_exists.mp h
-      obtain ⟨σ4, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := execStmt p n)
+      obtain ⟨σ4, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := callee)
         (ptr := tmpNext) (x := nm.prev) (q := q1) (e := .rd (.var tmpPrev))
         (w := Value.ptr pp) (by simp [hl3next, hpost, headOf])
         (by rw [hf3 _ (fldPath_disjoint (I.disj pp hpprow q1 hq1r hppq1)), hr2]
@@ -2204,7 +2204,7 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
     simp only [Store.getLocal, hl4]; exact hl3row
   -- The tail, shared with the head case.
   obtain ⟨σ5, hT, hl5, hn5, hp5, hf5v, hc5, hfr5⟩ := exec_removeTail
-    (p := p) (n := n) (nm := nm) (elem := elem) (q := q) (σ := σ4)
+    (p := p) (callee := callee) (nm := nm) (elem := elem) (q := q) (σ := σ4)
     (c := qs.length) hl4row (by simp [hq4, hnval]) (by simp [hq4, hpmid])
     (by simp [hq4, hflag]) hcnt4 dNP dNF dPF (dqC nm.next) (dqC nm.prev)
     (dqC nm.inlist) hlenpos
@@ -2419,7 +2419,7 @@ theorem exec_removeBody {σ : Store}
     (hlocRow : σ.getLocal parRow = some (.ptr q))
     (hlocPrev : (σ.getLocal tmpPrev).isSome = true)
     (hlocNext : (σ.getLocal tmpNext).isSome = true) :
-    ∃ σ', execAt p (execStmt p n) (removeDef nm elem).body σ = .ok (σ', .normal)
+    ∃ σ', execAt p (callee) (removeDef nm elem).body σ = .ok (σ', .normal)
       ∧ TailListInv σ'.toMem nm rows (qs.erase q)
       ∧ σ'.readPath (dbPath nm nm.tail) = some (lastOr (qs.erase q) .null)
       ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
@@ -2443,7 +2443,7 @@ theorem insertLinks {nm : Names} {elem : Ident} : InsertLinks nm elem := by
   have hI : ListInv (m.toStore [(parRow, Value.ptr q),
       (tmpOld, Value.null)]).toMem nm rows qs := by rw [Mem.toStore_toMem]; exact I
   obtain ⟨σ', hbody, I', hhead', hflag', hprev', hnext'⟩ :=
-    exec_insertBody (p := p) (n := n) (elem := elem)
+    exec_insertBody (p := p) (callee := execStmt p n) (elem := elem)
       (σ := m.toStore [(parRow, Value.ptr q), (tmpOld, Value.null)])
       hno hI hqrow (by rw [readMem_toStore]; exact hflag) rfl rfl
   refine ⟨σ'.toMem, ?_, I', ?_, ?_, ?_, ?_⟩
@@ -2464,7 +2464,7 @@ theorem removeUnlinks {nm : Names} {elem : Ident} : RemoveUnlinks nm elem := by
       (tmpNext, Value.null)]).toMem nm rows qs := by
     rw [Mem.toStore_toMem]; exact I
   obtain ⟨σ', hbody, I', htail', hflag', hnext', hprev'⟩ :=
-    exec_removeBody (p := p) (n := n) (elem := elem)
+    exec_removeBody (p := p) (callee := execStmt p n) (elem := elem)
       (σ := m.toStore [(parRow, Value.ptr q), (tmpPrev, Value.null),
         (tmpNext, Value.null)])
       hno hI hqrow (by rw [readMem_toStore]; exact hflag) rfl rfl rfl
@@ -2483,12 +2483,16 @@ theorem exec_insertTailBody {σ : Store}
     (hflag : σ.readPath (fldPath q nm.inlist) = some (.bool false))
     (hlocRow : σ.getLocal parRow = some (.ptr q))
     (hlocOld : (σ.getLocal tmpOld).isSome = true) :
-    ∃ σ', execAt p (execStmt p n) (insertTailDef nm elem).body σ = .ok (σ', .normal)
+    ∃ σ', execAt p (callee) (insertTailDef nm elem).body σ = .ok (σ', .normal)
       ∧ TailListInv σ'.toMem nm rows (qs ++ [q])
       ∧ σ'.readPath (dbPath nm nm.tail) = some (.ptr q)
       ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool true)
       ∧ σ'.readPath (fldPath q nm.next) = some .null
-      ∧ σ'.readPath (fldPath q nm.prev) = some (lastOr qs .null) := by
+      ∧ σ'.readPath (fldPath q nm.prev) = some (lastOr qs .null)
+      ∧ (∀ r, (∀ x ∈ [nm.head, nm.tail, nm.count], (dbPath nm x).overlaps r = false) →
+              (∀ y ∈ [nm.next, nm.prev, nm.inlist], (fldPath q y).overlaps r = false) →
+              (∀ tail_node, qs.getLast? = some tail_node → (fldPath tail_node nm.next).overlaps r = false) →
+              σ'.readPath r = σ.readPath r) := by
   have RM : ∀ pth, readMem σ.toMem pth = σ.readPath pth := readMem_toMem σ
   have hqnot : q ∉ qs := fun hmem => by
     have h := (I.flags q hqrow).mpr hmem
@@ -2533,7 +2537,7 @@ theorem exec_insertTailBody {σ : Store}
   -- S1: `_old = g.tail`
   obtain ⟨ov, hov⟩ := Option.isSome_iff_exists.mp hlocOld
   obtain ⟨σ1, hσ1⟩ : ∃ t, t = σ.setLocal tmpOld (lastOr qs .null) := ⟨_, rfl⟩
-  have hS1 : execAt p (execStmt p n)
+  have hS1 : execAt p (callee)
       (.assign (.var tmpOld) (.rd (dbFld nm nm.tail))) σ = .ok (σ1, .normal) := by
     rw [hσ1]; exact step_local hov (read_dbFld htail)
   have hr1 : ∀ pth, σ1.readPath pth = σ.readPath pth := by
@@ -2543,7 +2547,7 @@ theorem exec_insertTailBody {σ : Store}
   have hl1old : σ1.getLocal tmpOld = some (lastOr qs .null) := by
     rw [hσ1]; exact getLocal_setLocal_self hov
   -- S2: `row->next = NULL`
-  obtain ⟨σ2, hS2, hl2, hw2, hf2⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σ2, hS2, hl2, hw2, hf2⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.next) (e := .null (.strct elem)) (w := Value.null)
     hl1row (by rw [hr1]; exact hqnext) rfl
   have hl2row : σ2.getLocal parRow = some (.ptr q) := by
@@ -2551,7 +2555,7 @@ theorem exec_insertTailBody {σ : Store}
   have hl2old : σ2.getLocal tmpOld = some (lastOr qs .null) := by
     simp only [Store.getLocal, hl2]; exact hl1old
   -- S3: `row->prev = _old`
-  obtain ⟨σ3, hS3, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σ3, hS3, hl3, hw3, hf3⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.prev) (e := .rd (.var tmpOld)) (w := lastOr qs .null)
     hl2row (by rw [hf2 _ dNP, hr1]; exact hqprev) (read_local' hl2old)
   have hl3row : σ3.getLocal parRow = some (.ptr q) := by
@@ -2559,7 +2563,7 @@ theorem exec_insertTailBody {σ : Store}
   have hl3old : σ3.getLocal tmpOld = some (lastOr qs .null) := by
     simp only [Store.getLocal, hl3]; exact hl2old
   -- S4: `row->inlist = true`
-  obtain ⟨σ4, hS4, hl4, hw4, hf4⟩ := step_ptr (p := p) (callee := execStmt p n)
+  obtain ⟨σ4, hS4, hl4, hw4, hf4⟩ := step_ptr (p := p) (callee := callee)
     (x := nm.inlist) (e := .lit (.bool true)) (w := Value.bool true)
     hl3row (by rw [hf3 _ dPF, hf2 _ dNF, hr1]; exact hflag) rfl
   have hl4row : σ4.getLocal parRow = some (.ptr q) := by
@@ -2573,7 +2577,7 @@ theorem exec_insertTailBody {σ : Store}
     fun r hr x => row_ne_parent' I hr x
   -- S5: `if (_old != NULL) { _old->next = row; } else { g.head = row; }`
   obtain ⟨σ5, hS5, hl5, hw5_head, hw5_tail_next, hf5⟩ :
-      ∃ σ5, execAt p (execStmt p n)
+      ∃ σ5, execAt p (callee)
           (Stmt.cond (.bin .ne (.rd (.var tmpOld)) (.null (.strct elem)))
             (.assign (ptrFld tmpOld nm.next) (.rd (.var parRow)))
             (.assign (dbFld nm nm.head) (.rd (.var parRow)))) σ4
@@ -2594,7 +2598,7 @@ theorem exec_insertTailBody {σ : Store}
         rw [hf4 _ (hrowP q hqrow nm.inlist).1,
             hf3 _ (hrowP q hqrow nm.prev).1,
             hf2 _ (hrowP q hqrow nm.next).1, hr1, hhead, hnil]; rfl
-      obtain ⟨σ5, hS, hl, hw, hf⟩ := step_db (p := p) (callee := execStmt p n)
+      obtain ⟨σ5, hS, hl, hw, hf⟩ := step_db (p := p) (callee := callee)
         (x := nm.head) (e := .rd (.var parRow)) (w := Value.ptr q) hhead4
         (read_local' hl4row)
       refine ⟨σ5, ?_, hl, ?_, ?_, ?_⟩
@@ -2620,7 +2624,7 @@ theorem exec_insertTailBody {σ : Store}
         fun x y => insert_disj' I hqrow htn_row htn_ne x y
       have hlastOr_some : lastOr qs .null = .ptr tail_node :=
         lastOr_nonempty qs .null tail_node hlast
-      obtain ⟨σ5, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := execStmt p n)
+      obtain ⟨σ5, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := callee)
         (ptr := tmpOld) (x := nm.next) (q := tail_node) (e := .rd (.var parRow))
         (w := Value.ptr q) (by rw [hl4old, hlastOr_some])
         (by rw [hf4 _ (dq_tn _ _), hf3 _ (dq_tn _ _), hf2 _ (dq_tn _ _), hr1]; exact htn_nv)
@@ -2655,7 +2659,7 @@ theorem exec_insertTailBody {σ : Store}
       hf3 _ (hrowP q hqrow nm.prev).2.1,
       hf2 _ (hrowP q hqrow nm.next).2.1, hr1, htail]
   -- S6: `g.tail = row`
-  obtain ⟨σ6, hS6, hl6, hw6, hf6⟩ := step_db (p := p) (callee := execStmt p n)
+  obtain ⟨σ6, hS6, hl6, hw6, hf6⟩ := step_db (p := p) (callee := callee)
     (x := nm.tail) (e := .rd (.var parRow)) (w := Value.ptr q) htail5
     (read_local' (by simp only [Store.getLocal, hl5]; exact hl4row))
   have hcount6 : σ6.readPath (dbPath nm nm.count)
@@ -2666,7 +2670,7 @@ theorem exec_insertTailBody {σ : Store}
       hf3 _ (hrowP q hqrow nm.prev).2.2,
       hf2 _ (hrowP q hqrow nm.next).2.2, hr1, hcount]
   -- S7: `g.n = g.n + 1`
-  obtain ⟨σ7, hS7, hl7, hw7, hf7⟩ := step_db (p := p) (callee := execStmt p n)
+  obtain ⟨σ7, hS7, hl7, hw7, hf7⟩ := step_db (p := p) (callee := callee)
     (x := nm.count) (e := .bin .add (.rd (dbFld nm nm.count)) (.lit (.u32 1)))
     (w := Value.u32 (UInt32.ofNat qs.length + 1)) hcount6
     (by
@@ -2750,7 +2754,7 @@ theorem exec_insertTailBody {σ : Store}
       · subst he; exact fldPath_ne_disjoint (Ne.symm hx)
       · exact fldPath_disjoint (I.disj tail_node htn_row r hr he)
     · exact fldPath_disjoint (I.disj tail_node htn_row r hr (Ne.symm (hne tail_node htl)))
-  refine ⟨σ7, ?_, ?_, htail7, hqflag7, hqnext7, hqprev7⟩
+  refine ⟨σ7, ?_, ?_, htail7, hqflag7, hqnext7, hqprev7, ?_⟩
   · simp only [insertTailDef, Stmt.when]
     rw [execAt_cond', hguard]
     simp only [bind, Except.bind, Stmt.block]
@@ -2761,69 +2765,85 @@ theorem exec_insertTailBody {σ : Store}
     rw [execAt_seq', hS5]; simp only [bind, Except.bind]
     rw [execAt_seq', hS6]; simp only [bind, Except.bind]
     exact hS7
-  refine ⟨?_, I.disj, by rw [RM7]; exact hhead7, ?_, ?_, ?_, ?_, ?_, ?_, I.parent⟩
-  · intro r hr
-    simp only [List.mem_append, List.mem_singleton] at hr
-    rcases hr with h | rfl
-    · exact I.sub r h
-    · exact hqrow
-  · -- tail pointer
-    show readMem σ7.toMem (dbPath nm nm.tail) = _
-    rw [RM7, htail7, lastOr_append_singleton]
-  · -- chain Reaches
-    refine Reaches.snoc qs q I.chain ?_ ?_ (by rw [RM7]; exact hqnext7)
-    · intro r hr hnot_last
-      exact hOther r (I.sub r hr) (fun e => hqnot (e ▸ hr)) nm.next
-        (hNotTailNext r (I.sub r hr) nm.next (Or.inr hnot_last))
-    · intro tail_node htl
-      have htn_mem := getLast?_mem htl
-      have htn_row := I.sub tail_node htn_mem
-      have htn_ne : tail_node ≠ q := fun e => hqnot (e ▸ htn_mem)
-      rw [RM7, hf7 _ (parent_ne_row' I htn_row nm.next).2.2,
-        hf6 _ (parent_ne_row' I htn_row nm.next).2.1]
-      exact hw5_tail_next tail_node htl
-  · -- prev is the inverse
-    refine Backlinked.snoc qs q ?_ (by rw [RM7]; exact hqprev7)
-    refine Backlinked.frame qs .null I.back ?_
-    intro r hr
-    have hr_row := I.sub r hr
-    have hr_ne : r ≠ q := fun e => hqnot (e ▸ hr)
-    exact hOther r hr_row hr_ne nm.prev
-      (hNotTailNext r hr_row nm.prev (Or.inl (Ne.symm hno.np)))
-  · -- the flag
-    refine Flagged.snoc I.flags hqrow (by rw [RM7]; exact hqflag7) ?_
-    intro r hr hrq
-    exact hOther r hr hrq nm.inlist
-      (hNotTailNext r hr nm.inlist (Or.inl (Ne.symm hno.nf)))
-  · -- the count
-    show readMem σ7.toMem (dbPath nm nm.count) = _
-    rw [RM7, hw7, List.length_append, List.length_singleton, uint32_ofNat_succ]
-  · -- every live row still has its three fields
-    intro r hr
-    by_cases hrq : r = q
-    · subst hrq
-      exact ⟨by rw [RM7, hqnext7]; rfl, by rw [RM7, hqprev7]; rfl,
-        by rw [RM7, hqflag7]; rfl⟩
-    · refine ⟨?_, ?_, ?_⟩
-      · match hlast : qs.getLast? with
-        | none =>
-          rw [hOther r hr hrq nm.next (by intro tn htn; rw [hlast] at htn; simp at htn)]
-          exact (I.fields r hr).1
-        | some tail_node =>
-          have htn_mem := getLast?_mem hlast
-          have htn_row := I.sub tail_node htn_mem
-          by_cases htn_eq : r = tail_node
-          · rw [htn_eq, RM7, hf7 _ (parent_ne_row' I htn_row nm.next).2.2,
-              hf6 _ (parent_ne_row' I htn_row nm.next).2.1,
-              hw5_tail_next tail_node hlast]
-            rfl
-          · rw [hOther r hr hrq nm.next (hNotTailNext r hr nm.next (Or.inr (fun tn htn => by
-              rw [hlast] at htn; cases Option.some.inj htn; exact htn_eq)))]
+  · refine ⟨?_, I.disj, by rw [RM7]; exact hhead7, ?_, ?_, ?_, ?_, ?_, ?_, I.parent⟩
+    · intro r hr
+      simp only [List.mem_append, List.mem_singleton] at hr
+      rcases hr with h | rfl
+      · exact I.sub r h
+      · exact hqrow
+    · -- tail pointer
+      show readMem σ7.toMem (dbPath nm nm.tail) = _
+      rw [RM7, htail7, lastOr_append_singleton]
+    · -- chain Reaches
+      refine Reaches.snoc qs q I.chain ?_ ?_ (by rw [RM7]; exact hqnext7)
+      · intro r hr hnot_last
+        exact hOther r (I.sub r hr) (fun e => hqnot (e ▸ hr)) nm.next
+          (hNotTailNext r (I.sub r hr) nm.next (Or.inr hnot_last))
+      · intro tail_node htl
+        have htn_mem := getLast?_mem htl
+        have htn_row := I.sub tail_node htn_mem
+        have htn_ne : tail_node ≠ q := fun e => hqnot (e ▸ htn_mem)
+        rw [RM7, hf7 _ (parent_ne_row' I htn_row nm.next).2.2,
+          hf6 _ (parent_ne_row' I htn_row nm.next).2.1]
+        exact hw5_tail_next tail_node htl
+    · -- prev is the inverse
+      refine Backlinked.snoc qs q ?_ (by rw [RM7]; exact hqprev7)
+      refine Backlinked.frame qs .null I.back ?_
+      intro r hr
+      have hr_row := I.sub r hr
+      have hr_ne : r ≠ q := fun e => hqnot (e ▸ hr)
+      exact hOther r hr_row hr_ne nm.prev
+        (hNotTailNext r hr_row nm.prev (Or.inl (Ne.symm hno.np)))
+    · -- the flag
+      refine Flagged.snoc I.flags hqrow (by rw [RM7]; exact hqflag7) ?_
+      intro r hr hrq
+      exact hOther r hr hrq nm.inlist
+        (hNotTailNext r hr nm.inlist (Or.inl (Ne.symm hno.nf)))
+    · -- the count
+      show readMem σ7.toMem (dbPath nm nm.count) = _
+      rw [RM7, hw7, List.length_append, List.length_singleton, uint32_ofNat_succ]
+    · -- every live row still has its three fields
+      intro r hr
+      by_cases hrq : r = q
+      · subst hrq
+        exact ⟨by rw [RM7, hqnext7]; rfl, by rw [RM7, hqprev7]; rfl,
+          by rw [RM7, hqflag7]; rfl⟩
+      · refine ⟨?_, ?_, ?_⟩
+        · match hlast : qs.getLast? with
+          | none =>
+            rw [hOther r hr hrq nm.next (by intro tn htn; rw [hlast] at htn; simp at htn)]
             exact (I.fields r hr).1
-      · rw [hOther r hr hrq nm.prev (hNotTailNext r hr nm.prev (Or.inl (Ne.symm hno.np)))]
-        exact (I.fields r hr).2.1
-      · rw [hOther r hr hrq nm.inlist (hNotTailNext r hr nm.inlist (Or.inl (Ne.symm hno.nf)))]
-        exact (I.fields r hr).2.2
+          | some tail_node =>
+            have htn_mem := getLast?_mem hlast
+            have htn_row := I.sub tail_node htn_mem
+            by_cases htn_eq : r = tail_node
+            · rw [htn_eq, RM7, hf7 _ (parent_ne_row' I htn_row nm.next).2.2,
+                hf6 _ (parent_ne_row' I htn_row nm.next).2.1,
+                hw5_tail_next tail_node hlast]
+              rfl
+            · rw [hOther r hr hrq nm.next (hNotTailNext r hr nm.next (Or.inr (fun tn htn => by
+                rw [hlast] at htn; cases Option.some.inj htn; exact htn_eq)))]
+              exact (I.fields r hr).1
+        · rw [hOther r hr hrq nm.prev (hNotTailNext r hr nm.prev (Or.inl (Ne.symm hno.np)))]
+          exact (I.fields r hr).2.1
+        · rw [hOther r hr hrq nm.inlist (hNotTailNext r hr nm.inlist (Or.inl (Ne.symm hno.nf)))]
+          exact (I.fields r hr).2.2
+  · intro r hdb hqfld htn
+    have hr7 : σ7.readPath r = σ6.readPath r :=
+      hf7 r (hdb nm.count (by simp))
+    have hr6 : σ6.readPath r = σ5.readPath r :=
+      hf6 r (hdb nm.tail (by simp))
+    have hr5 : σ5.readPath r = σ4.readPath r :=
+      hf5 r (fun _ => hdb nm.head (by simp)) htn
+    have hr4 : σ4.readPath r = σ3.readPath r :=
+      hf4 r (hqfld nm.inlist (by simp))
+    have hr3 : σ3.readPath r = σ2.readPath r :=
+      hf3 r (hqfld nm.prev (by simp))
+    have hr2 : σ2.readPath r = σ1.readPath r :=
+      hf2 r (hqfld nm.next (by simp))
+    have hr1' : σ1.readPath r = σ.readPath r :=
+      hr1 r
+    rw [hr7, hr6, hr5, hr4, hr3, hr2, hr1']
 
 /-- **`InsertTail` links a row at the tail.**
 
@@ -2833,8 +2853,8 @@ theorem insertTailLinks {nm : Names} {elem : Ident} : InsertTailLinks nm elem :=
   obtain ⟨n, hn⟩ := hn
   have hI : TailListInv (m.toStore [(parRow, Value.ptr q),
       (tmpOld, Value.null)]).toMem nm rows qs := by rw [Mem.toStore_toMem]; exact I
-  obtain ⟨σ', hbody, I', htail', hflag', hnext', hprev'⟩ :=
-    exec_insertTailBody (p := p) (n := n) (elem := elem)
+  obtain ⟨σ', hbody, I', htail', hflag', hnext', hprev', _⟩ :=
+    exec_insertTailBody (p := p) (callee := execStmt p n) (elem := elem)
       (σ := m.toStore [(parRow, Value.ptr q), (tmpOld, Value.null)])
       hno hI hqrow (by rw [readMem_toStore]; exact hflag) rfl rfl
   refine ⟨σ'.toMem, ?_, I', ?_, ?_, ?_, ?_⟩
