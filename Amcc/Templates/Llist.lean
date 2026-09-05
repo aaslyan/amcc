@@ -267,8 +267,9 @@ def removeDef (nm : Names) (elem : Ident) : FunDef where
     , .cond (.bin .ne (.rd (.var tmpPrev)) (.null (.strct elem)))
         (.assign (ptrFld tmpPrev nm.next) (.rd (.var tmpNext)))
         (.assign (dbFld nm nm.head) (.rd (.var tmpNext)))
-    , .when (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
+    , .cond (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
         (.assign (ptrFld tmpNext nm.prev) (.rd (.var tmpPrev)))
+        (.assign (dbFld nm nm.tail) (.rd (.var tmpPrev)))
     , .assign (ptrFld parRow nm.next) (.null (.strct elem))
     , .assign (ptrFld parRow nm.prev) (.null (.strct elem))
     , .assign (ptrFld parRow nm.inlist) (.lit (.bool false))
@@ -1248,10 +1249,11 @@ def RemoveUnlinks (nm : Names) (elem : Ident) : Prop :=
   ∀ (p : Program) (m : Mem) (rows qs : List Path) (q : Path),
     lookupFun p nm.remove = .ok (removeDef nm elem) →
     (∃ n, p.funs.length = n + 1) →
-    NamesOk nm → ListInv m nm rows qs → q ∈ rows →
+    NamesOk nm → TailListInv m nm rows qs → q ∈ rows →
     readMem m (fldPath q nm.inlist) = some (.bool true) →
     ∃ m', callFun p m nm.remove [.ptr q] = .ok (m', none)
-      ∧ ListInv m' nm rows (qs.erase q)
+      ∧ TailListInv m' nm rows (qs.erase q)
+      ∧ readMem m' (dbPath nm nm.tail) = some (lastOr (qs.erase q) .null)
       ∧ readMem m' (fldPath q nm.inlist) = some (.bool false)
       ∧ readMem m' (fldPath q nm.next) = some .null
       ∧ readMem m' (fldPath q nm.prev) = some .null
@@ -1711,14 +1713,15 @@ below, and `exec_removeBody` dispatches between the two on the same
 
 checked by: `lake build` -/
 theorem exec_removeHead {σ : Store}
-    (hno : NamesOk nm) (I : ListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
+    (hno : NamesOk nm) (I : TailListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
     (hflag : σ.readPath (fldPath q nm.inlist) = some (.bool true))
     (hphead : σ.readPath (fldPath q nm.prev) = some .null)
     (hlocRow : σ.getLocal parRow = some (.ptr q))
     (hlocPrev : (σ.getLocal tmpPrev).isSome = true)
     (hlocNext : (σ.getLocal tmpNext).isSome = true) :
     ∃ σ', execAt p (execStmt p n) (removeDef nm elem).body σ = .ok (σ', .normal)
-      ∧ ListInv σ'.toMem nm rows (qs.erase q)
+      ∧ TailListInv σ'.toMem nm rows (qs.erase q)
+      ∧ σ'.readPath (dbPath nm nm.tail) = some (lastOr (qs.erase q) .null)
       ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
       ∧ σ'.readPath (fldPath q nm.next) = some .null
       ∧ σ'.readPath (fldPath q nm.prev) = some .null := by
@@ -1771,11 +1774,15 @@ theorem exec_removeHead {σ : Store}
   have dPF : (fldPath q nm.prev).overlaps (fldPath q nm.inlist) = false :=
     fldPath_ne_disjoint hno.pf
   have dqH : ∀ x, (fldPath q x).overlaps (dbPath nm nm.head) = false :=
-    fun x => (row_ne_parent I hqrow x).1
+    fun x => (row_ne_parent' I hqrow x).1
+  have dqT : ∀ x, (fldPath q x).overlaps (dbPath nm nm.tail) = false :=
+    fun x => (row_ne_parent' I hqrow x).2.1
   have dqC : ∀ x, (fldPath q x).overlaps (dbPath nm nm.count) = false :=
-    fun x => (row_ne_parent I hqrow x).2
+    fun x => (row_ne_parent' I hqrow x).2.2
   have hcnt : σ.readPath (dbPath nm nm.count)
       = some (.u32 (UInt32.ofNat qs.length)) := by rw [← RM]; exact I.count
+  have htail : σ.readPath (dbPath nm nm.tail) = some (lastOr qs .null) := by
+    rw [← RM]; exact I.tail
   have hlenpos : 0 < qs.length := List.length_pos_of_mem hqmem
   have hhead : σ.readPath (dbPath nm nm.head) = some (headOf qs) := by
     rw [← RM]; exact I.head
@@ -1820,17 +1827,20 @@ theorem exec_removeHead {σ : Store}
       simp only [Store.getLocal, hl3]; exact hl2prev
     have hl3next : σ3.getLocal tmpNext = some (headOf post) := by
       simp only [Store.getLocal, hl3]; exact hl2next
-    -- A4: `if (_next != NULL) { _next->prev = _prev; }`
-    obtain ⟨σ4, hA4, hl4, hnew4, hf4⟩ :
+    -- A4: `if (_next != NULL) { _next->prev = _prev; } else { g.tail = _prev; }`
+    obtain ⟨σ4, hA4, hl4, hnew4, htail4, hf4⟩ :
         ∃ σ4, execAt p (execStmt p n)
             (Stmt.cond (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
-              (.assign (ptrFld tmpNext nm.prev) (.rd (.var tmpPrev))) .skip) σ3
+              (.assign (ptrFld tmpNext nm.prev) (.rd (.var tmpPrev)))
+              (.assign (dbFld nm nm.tail) (.rd (.var tmpPrev)))) σ3
               = .ok (σ4, .normal)
           ∧ σ4.loc = σ3.loc
           ∧ (∀ q1 post0, post = q1 :: post0 →
               σ4.readPath (fldPath q1 nm.prev) = some Value.null)
-          ∧ (∀ r, (∀ q1 post0, post = q1 :: post0 →
-                (fldPath q1 nm.prev).overlaps r = false) →
+          ∧ σ4.readPath (dbPath nm nm.tail) = some (lastOr post .null)
+          ∧ (∀ r, (dbPath nm nm.tail).overlaps r = false →
+                (∀ q1 post0, post = q1 :: post0 →
+                  (fldPath q1 nm.prev).overlaps r = false) →
               σ4.readPath r = σ3.readPath r) := by
       cases hpost : post with
       | nil =>
@@ -1840,9 +1850,16 @@ theorem exec_removeHead {σ : Store}
             (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
             = .ok (.bool false) := by
           simp only [evalExpr, resolve, hln, readLoc, bind, Except.bind, evalBin]
-        refine ⟨σ3, ?_, rfl, ?_, fun r _ => rfl⟩
-        · rw [execAt_cond', hg]; rfl
+        have htail3 : σ3.readPath (dbPath nm nm.tail) = some (lastOr qs .null) := by
+          rw [hf3 _ (dbPath_disjoint hno.ht), hr2]; exact htail
+        obtain ⟨σ4, hS, hl, hw, hf⟩ := step_db (p := p) (callee := execStmt p n)
+          (x := nm.tail) (e := .rd (.var tmpPrev)) (w := Value.null)
+          htail3 (read_local' hl3prev)
+        refine ⟨σ4, ?_, hl, ?_, ?_, ?_⟩
+        · rw [execAt_cond', hg]; exact hS
         · intro q1 post0 h; simp at h
+        · rw [hw]; rfl
+        · intro r hr _; exact hf r hr
       | cons q1 post0 =>
         have hq1r : q1 ∈ rows := hpostR q1 post0 hpost
         have hq1q : q1 ≠ q :=
@@ -1853,7 +1870,7 @@ theorem exec_removeHead {σ : Store}
         obtain ⟨σ4, hS, hl, hw, hf⟩ := step_ptr (p := p) (callee := execStmt p n)
           (ptr := tmpNext) (x := nm.prev) (q := q1) (e := .rd (.var tmpPrev))
           (w := Value.null) (by simp [hl3next, hpost, headOf])
-          (by rw [hf3 _ (parent_ne_row I hq1r nm.prev).1, hr2]; exact hpv1)
+          (by rw [hf3 _ (parent_ne_row' I hq1r nm.prev).1, hr2]; exact hpv1)
           (read_local' hl3prev)
         have hln : σ3.getLocal tmpNext = some (Value.ptr q1) := by
           simp [hl3next, hpost, headOf]
@@ -1861,27 +1878,33 @@ theorem exec_removeHead {σ : Store}
             (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
             = .ok (.bool true) := by
           simp only [evalExpr, resolve, hln, readLoc, bind, Except.bind, evalBin]
-        refine ⟨σ4, ?_, hl, ?_, ?_⟩
+        have htail4 : σ4.readPath (dbPath nm nm.tail) = some (lastOr (q1 :: post0) .null) := by
+          rw [hf _ (row_ne_parent' I hq1r nm.prev).2.1,
+              hf3 _ (dbPath_disjoint hno.ht), hr2, htail, hqs, hpost,
+              lastOr_cons_cons]
+        refine ⟨σ4, ?_, hl, ?_, ?_, ?_⟩
         · rw [execAt_cond', hg]; exact hS
         · intro q1' post0' h; cases h; exact hw
-        · intro r hr; exact hf r (hr q1 post0 rfl)
+        · exact htail4
+        · intro r _ hr; exact hf r (hr q1 post0 rfl)
     have hUnch34 : ∀ r : Path, (dbPath nm nm.head).overlaps r = false →
+        (dbPath nm nm.tail).overlaps r = false →
         (∀ q1 post0, post = q1 :: post0 →
           (fldPath q1 nm.prev).overlaps r = false) →
         σ4.readPath r = σ.readPath r := by
-      intro r h1 h2
-      rw [hf4 r h2, hf3 r h1, hr2]
+      intro r h1 h2 h3
+      rw [hf4 r h2 h3, hf3 r h1, hr2]
     have hpostD : ∀ x y : Ident, ∀ q1 post0, post = q1 :: post0 →
         (fldPath q1 nm.prev).overlaps (fldPath q x) = false := by
       intro x y q1 post0 h
       exact fldPath_disjoint (I.disj q1 (hpostR q1 post0 h) q hqrow
         (Ne.symm (hqPost q1 (by rw [h]; simp))))
     have hq4 : ∀ x, σ4.readPath (fldPath q x) = σ.readPath (fldPath q x) :=
-      fun x => hUnch34 _ (parent_ne_row I hqrow x).1 (hpostD x x)
+      fun x => hUnch34 _ (parent_ne_row' I hqrow x).1 (parent_ne_row' I hqrow x).2.1 (hpostD x x)
     have hcnt4 : σ4.readPath (dbPath nm nm.count)
         = some (.u32 (UInt32.ofNat qs.length)) := by
-      rw [hUnch34 _ (dbPath_disjoint hno.hc) (fun q1 post0 h =>
-        (row_ne_parent I (hpostR q1 post0 h) nm.prev).2)]
+      rw [hUnch34 _ (dbPath_disjoint hno.hc) (dbPath_disjoint hno.tc) (fun q1 post0 h =>
+        (row_ne_parent' I (hpostR q1 post0 h) nm.prev).2.2)]
       exact hcnt
     have hl4row : σ4.getLocal parRow = some (.ptr q) := by
       simp only [Store.getLocal, hl4]; exact hl3row
@@ -1897,21 +1920,23 @@ theorem exec_removeHead {σ : Store}
         (fldPath q nm.inlist).overlaps r = false →
         (dbPath nm nm.count).overlaps r = false →
         (dbPath nm nm.head).overlaps r = false →
+        (dbPath nm nm.tail).overlaps r = false →
         (∀ q1 post0, post = q1 :: post0 →
           (fldPath q1 nm.prev).overlaps r = false) →
         σ5.readPath r = σ.readPath r := by
-      intro r h1 h2 h3 h4 h5 h6
-      rw [hfr5 r h1 h2 h3 h4]; exact hUnch34 r h5 h6
+      intro r h1 h2 h3 h4 h5 h6 h7
+      rw [hfr5 r h1 h2 h3 h4]; exact hUnch34 r h5 h6 h7
     have hOther5 : ∀ r ∈ rows, r ≠ q → ∀ x : Ident,
         (∀ q1 post0, post = q1 :: post0 →
           (fldPath q1 nm.prev).overlaps (fldPath r x) = false) →
         readMem σ5.toMem (fldPath r x) = readMem σ.toMem (fldPath r x) := by
-      intro r hr hrq x h6
+      intro r hr hrq x h7
       rw [RM5, RM]
-      exact hUnch5 _ (insert_disj I hqrow hr hrq nm.next x)
-        (insert_disj I hqrow hr hrq nm.prev x)
-        (insert_disj I hqrow hr hrq nm.inlist x)
-        (parent_ne_row I hr x).2 (parent_ne_row I hr x).1 h6
+      exact hUnch5 _ (insert_disj' I hqrow hr hrq nm.next x)
+        (insert_disj' I hqrow hr hrq nm.prev x)
+        (insert_disj' I hqrow hr hrq nm.inlist x)
+        (parent_ne_row' I hr x).2.2 (parent_ne_row' I hr x).1
+        (parent_ne_row' I hr x).2.1 h7
     have hNotPrev5 : ∀ r ∈ rows, ∀ x : Ident, x ≠ nm.prev → ∀ q1 post0,
         post = q1 :: post0 →
         (fldPath q1 nm.prev).overlaps (fldPath r x) = false := by
@@ -1922,10 +1947,14 @@ theorem exec_removeHead {σ : Store}
     have hhead5 : σ5.readPath (dbPath nm nm.head) = some (headOf post) := by
       rw [hfr5 _ (dqH nm.next) (dqH nm.prev) (dqH nm.inlist)
         (dbPath_disjoint (Ne.symm hno.hc)),
-        hf4 _ (fun q1 post0 h => (row_ne_parent I (hpostR q1 post0 h) nm.prev).1)]
+        hf4 _ (dbPath_disjoint (Ne.symm hno.ht)) (fun q1 post0 h => (row_ne_parent' I (hpostR q1 post0 h) nm.prev).1)]
       exact hw3
+    have htail5 : σ5.readPath (dbPath nm nm.tail) = some (lastOr post .null) := by
+      rw [hfr5 _ (dqT nm.next) (dqT nm.prev) (dqT nm.inlist)
+        (dbPath_disjoint (Ne.symm hno.tc))]
+      exact htail4
     have herase : qs.erase q = post := by rw [hqs]; exact erase_cons_self q post
-    refine ⟨σ5, ?_, ?_, hf5v, hn5, hp5⟩
+    refine ⟨σ5, ?_, ?_, by rw [herase]; exact htail5, hf5v, hn5, hp5⟩
     · simp only [removeDef, Stmt.when]
       rw [execAt_cond', hguard]
       simp only [bind, Except.bind, Stmt.block]
@@ -1935,7 +1964,7 @@ theorem exec_removeHead {σ : Store}
       rw [execAt_seq', hA4]; simp only [bind, Except.bind]
       exact hT
     rw [herase]
-    refine ⟨?_, I.disj, by rw [RM5]; exact hhead5, ?_, ?_, ?_, ?_, ?_, I.parent⟩
+    refine ⟨?_, I.disj, by rw [RM5]; exact hhead5, by rw [RM5]; exact htail5, ?_, ?_, ?_, ?_, ?_, I.parent⟩
     · intro r hr; exact I.sub r (by rw [hqs]; exact List.mem_cons_of_mem _ hr)
     · refine Reaches.tail (hqs ▸ I.chain) ?_
       intro r hr
@@ -1956,7 +1985,7 @@ theorem exec_removeHead {σ : Store}
              fldPath_disjoint (I.disj q hqrow q1 hq1r (Ne.symm hq1q)),
              fldPath_disjoint (I.disj q hqrow q1 hq1r (Ne.symm hq1q))⟩
           rw [RM5, hfr5 _ dq1.1 dq1.2.1 dq1.2.2
-            (parent_ne_row I hq1r nm.prev).2]
+            (parent_ne_row' I hq1r nm.prev).2.2]
           exact hnew4 q1 post0 hpost
         · have hb := hqs ▸ I.back
           rw [hpost] at hb
@@ -1999,10 +2028,10 @@ theorem exec_removeHead {σ : Store}
           | cons q1 post0 =>
             by_cases hq1r : q1 = r
             · subst hq1r
-              rw [RM5, hfr5 _ (insert_disj I hqrow hr hrq nm.next nm.prev)
-                (insert_disj I hqrow hr hrq nm.prev nm.prev)
-                (insert_disj I hqrow hr hrq nm.inlist nm.prev)
-                (parent_ne_row I hr nm.prev).2, hnew4 q1 post0 hpost]
+              rw [RM5, hfr5 _ (insert_disj' I hqrow hr hrq nm.next nm.prev)
+                (insert_disj' I hqrow hr hrq nm.prev nm.prev)
+                (insert_disj' I hqrow hr hrq nm.inlist nm.prev)
+                (parent_ne_row' I hr nm.prev).2.2, hnew4 q1 post0 hpost]
               rfl
             · have hne5 : ∀ q1' post0', post = q1' :: post0' →
                   (fldPath q1' nm.prev).overlaps (fldPath r nm.prev) = false := by
@@ -2034,7 +2063,7 @@ what `qs.erase q` computes to, and `exec_removeTail` finishes unchanged.
 
 checked by: `lake build` -/
 theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
-    (hno : NamesOk nm) (I : ListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
+    (hno : NamesOk nm) (I : TailListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
     (hflag : σ.readPath (fldPath q nm.inlist) = some (.bool true))
     (hqs : qs = pre ++ pp :: q :: post)
     (hpmid : σ.readPath (fldPath q nm.prev) = some (.ptr pp))
@@ -2042,7 +2071,8 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
     (hlocPrev : (σ.getLocal tmpPrev).isSome = true)
     (hlocNext : (σ.getLocal tmpNext).isSome = true) :
     ∃ σ', execAt p (execStmt p n) (removeDef nm elem).body σ = .ok (σ', .normal)
-      ∧ ListInv σ'.toMem nm rows (qs.erase q)
+      ∧ TailListInv σ'.toMem nm rows (qs.erase q)
+      ∧ σ'.readPath (dbPath nm nm.tail) = some (lastOr (qs.erase q) .null)
       ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
       ∧ σ'.readPath (fldPath q nm.next) = some .null
       ∧ σ'.readPath (fldPath q nm.prev) = some .null := by
@@ -2114,14 +2144,18 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
   have dPF : (fldPath q nm.prev).overlaps (fldPath q nm.inlist) = false :=
     fldPath_ne_disjoint hno.pf
   have dqH : ∀ x, (fldPath q x).overlaps (dbPath nm nm.head) = false :=
-    fun x => (row_ne_parent I hqrow x).1
+    fun x => (row_ne_parent' I hqrow x).1
+  have dqT : ∀ x, (fldPath q x).overlaps (dbPath nm nm.tail) = false :=
+    fun x => (row_ne_parent' I hqrow x).2.1
   have dqC : ∀ x, (fldPath q x).overlaps (dbPath nm nm.count) = false :=
-    fun x => (row_ne_parent I hqrow x).2
+    fun x => (row_ne_parent' I hqrow x).2.2
   have hPPne : ∀ r ∈ rows, r ≠ pp → ∀ x y : Ident,
       (fldPath pp x).overlaps (fldPath r y) = false :=
     fun r hr hrpp x y => fldPath_disjoint (I.disj pp hpprow r hr (Ne.symm hrpp))
   have hcnt : σ.readPath (dbPath nm nm.count)
       = some (.u32 (UInt32.ofNat qs.length)) := by rw [← RM]; exact I.count
+  have htail : σ.readPath (dbPath nm nm.tail) = some (lastOr qs .null) := by
+    rw [← RM]; exact I.tail
   have hlenpos : 0 < qs.length := List.length_pos_of_mem hqmem
   have hhead : σ.readPath (dbPath nm nm.head) = some (headOf qs) := by
     rw [← RM]; exact I.head
@@ -2147,17 +2181,20 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
     simp only [Store.getLocal, hl3]; exact hl2prev
   have hl3next : σ3.getLocal tmpNext = some (headOf post) := by
     simp only [Store.getLocal, hl3]; exact hl2next
-  -- A4: `if (_next != NULL) { _next->f_prev = _prev; }`
-  obtain ⟨σ4, hA4, hl4, hnew4, hf4⟩ :
+  -- A4: `if (_next != NULL) { _next->f_prev = _prev; } else { g.tail = _prev; }`
+  obtain ⟨σ4, hA4, hl4, hnew4, htail4, hf4⟩ :
       ∃ σ4, execAt p (execStmt p n)
           (Stmt.cond (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
-            (.assign (ptrFld tmpNext nm.prev) (.rd (.var tmpPrev))) .skip) σ3
+            (.assign (ptrFld tmpNext nm.prev) (.rd (.var tmpPrev)))
+            (.assign (dbFld nm nm.tail) (.rd (.var tmpPrev)))) σ3
             = .ok (σ4, .normal)
         ∧ σ4.loc = σ3.loc
         ∧ (∀ q1 post0, post = q1 :: post0 →
             σ4.readPath (fldPath q1 nm.prev) = some (Value.ptr pp))
-        ∧ (∀ r, (∀ q1 post0, post = q1 :: post0 →
-              (fldPath q1 nm.prev).overlaps r = false) →
+        ∧ σ4.readPath (dbPath nm nm.tail) = some (lastOr (pre ++ pp :: post) .null)
+        ∧ (∀ r, (dbPath nm nm.tail).overlaps r = false →
+              (∀ q1 post0, post = q1 :: post0 →
+                (fldPath q1 nm.prev).overlaps r = false) →
             σ4.readPath r = σ3.readPath r) := by
     cases hpost : post with
     | nil =>
@@ -2167,9 +2204,19 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
           (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
           = .ok (.bool false) := by
         simp only [evalExpr, resolve, hln, readLoc, bind, Except.bind, evalBin]
-      refine ⟨σ3, ?_, rfl, ?_, fun r _ => rfl⟩
-      · rw [execAt_cond', hg]; rfl
+      have htail3 : σ3.readPath (dbPath nm nm.tail) = some (lastOr qs .null) := by
+        rw [hf3 _ (row_ne_parent' I hpprow nm.next).2.1, hr2]; exact htail
+      obtain ⟨σ4, hS, hl, hw, hf⟩ := step_db (p := p) (callee := execStmt p n)
+        (x := nm.tail) (e := .rd (.var tmpPrev)) (w := Value.ptr pp)
+        htail3 (read_local' hl3prev)
+      have hlastOr_pp : lastOr (pre ++ pp :: []) .null = .ptr pp := by
+        have heq : pre ++ pp :: [] = pre ++ [pp] := rfl
+        rw [heq, lastOr_append_singleton]
+      refine ⟨σ4, ?_, hl, ?_, ?_, ?_⟩
+      · rw [execAt_cond', hg]; exact hS
       · intro q1 post0 h; simp at h
+      · rw [hw, hlastOr_pp]
+      · intro r hr _; exact hf r hr
     | cons q1 post0 =>
       have hq1p : q1 ∈ post := by rw [hpost]; simp
       have hq1r : q1 ∈ rows := hpostRows q1 hq1p
@@ -2189,17 +2236,23 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
           (.bin .ne (.rd (.var tmpNext)) (.null (.strct elem)))
           = .ok (.bool true) := by
         simp only [evalExpr, resolve, hln, readLoc, bind, Except.bind, evalBin]
-      refine ⟨σ4, ?_, hl, ?_, ?_⟩
+      have htail4 : σ4.readPath (dbPath nm nm.tail) = some (lastOr (pre ++ pp :: q1 :: post0) .null) := by
+        rw [hf _ (row_ne_parent' I hq1r nm.prev).2.1,
+            hf3 _ (row_ne_parent' I hpprow nm.next).2.1, hr2, htail, hqs, hpost,
+            lastOr_append_cons_cons]
+      refine ⟨σ4, ?_, hl, ?_, ?_, ?_⟩
       · rw [execAt_cond', hg]; exact hS
       · intro q1' post0' h; cases h; exact hw
-      · intro r hr; exact hf r (hr q1 post0 rfl)
+      · exact htail4
+      · intro r _ hr; exact hf r (hr q1 post0 rfl)
   -- What the relink left alone.
   have hUnch34 : ∀ r : Path, (fldPath pp nm.next).overlaps r = false →
+      (dbPath nm nm.tail).overlaps r = false →
       (∀ q1 post0, post = q1 :: post0 →
         (fldPath q1 nm.prev).overlaps r = false) →
       σ4.readPath r = σ.readPath r := by
-    intro r h1 h2
-    rw [hf4 r h2, hf3 r h1, hr2]
+    intro r h1 h2 h3
+    rw [hf4 r h2 h3, hf3 r h1, hr2]
   have hPostD : ∀ r ∈ rows, ∀ y : Ident, ∀ q1 post0, post = q1 :: post0 →
       q1 ≠ r → (fldPath q1 nm.prev).overlaps (fldPath r y) = false := by
     intro r hr y q1 post0 h hne
@@ -2213,15 +2266,15 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
     · exact fldPath_disjoint (I.disj q1 (hpostRows q1 (by rw [h]; simp)) r hr hq1r)
   have hq4 : ∀ x, σ4.readPath (fldPath q x) = σ.readPath (fldPath q x) := by
     intro x
-    refine hUnch34 _ (fldPath_disjoint (I.disj pp hpprow q hqrow hppq)) ?_
+    refine hUnch34 _ (fldPath_disjoint (I.disj pp hpprow q hqrow hppq)) (parent_ne_row' I hqrow x).2.1 ?_
     intro q1 post0 h
     exact hPostD q hqrow x q1 post0 h
       (Ne.symm (hqPost q1 (by rw [h]; simp)))
   have hcnt4 : σ4.readPath (dbPath nm nm.count)
       = some (.u32 (UInt32.ofNat qs.length)) := by
-    rw [hUnch34 _ (row_ne_parent I hpprow nm.next).2
+    rw [hUnch34 _ (row_ne_parent' I hpprow nm.next).2.2 (dbPath_disjoint hno.tc)
       (fun q1 post0 h =>
-        (row_ne_parent I (hpostRows q1 (by rw [h]; simp)) nm.prev).2)]
+        (row_ne_parent' I (hpostRows q1 (by rw [h]; simp)) nm.prev).2.2)]
     exact hcnt
   have hl4row : σ4.getLocal parRow = some (.ptr q) := by
     simp only [Store.getLocal, hl4]; exact hl3row
@@ -2238,39 +2291,45 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
       (fldPath q nm.inlist).overlaps r = false →
       (dbPath nm nm.count).overlaps r = false →
       (fldPath pp nm.next).overlaps r = false →
+      (dbPath nm nm.tail).overlaps r = false →
       (∀ q1 post0, post = q1 :: post0 →
         (fldPath q1 nm.prev).overlaps r = false) →
       σ5.readPath r = σ.readPath r := by
-    intro r h1 h2 h3 h4 h5 h6
-    rw [hfr5 r h1 h2 h3 h4]; exact hUnch34 r h5 h6
+    intro r h1 h2 h3 h4 h5 h6 h7
+    rw [hfr5 r h1 h2 h3 h4]; exact hUnch34 r h5 h6 h7
   have hFld5 : ∀ r ∈ rows, r ≠ q → ∀ x : Ident,
       (fldPath pp nm.next).overlaps (fldPath r x) = false →
       (∀ q1 post0, post = q1 :: post0 →
         (fldPath q1 nm.prev).overlaps (fldPath r x) = false) →
       readMem σ5.toMem (fldPath r x) = readMem σ.toMem (fldPath r x) := by
-    intro r hr hrq x h5 h6
+    intro r hr hrq x h5 h7
     rw [RM5, RM]
-    exact hUnch5 _ (insert_disj I hqrow hr hrq nm.next x)
-      (insert_disj I hqrow hr hrq nm.prev x)
-      (insert_disj I hqrow hr hrq nm.inlist x)
-      (parent_ne_row I hr x).2 h5 h6
+    exact hUnch5 _ (insert_disj' I hqrow hr hrq nm.next x)
+      (insert_disj' I hqrow hr hrq nm.prev x)
+      (insert_disj' I hqrow hr hrq nm.inlist x)
+      (parent_ne_row' I hr x).2.2 h5 (parent_ne_row' I hr x).2.1 h7
   -- The two values the relink installed, surviving the tail.
   have hppNext5 : σ5.readPath (fldPath pp nm.next) = some (headOf post) := by
-    rw [hfr5 _ (insert_disj I hqrow hpprow hppq nm.next nm.next)
-      (insert_disj I hqrow hpprow hppq nm.prev nm.next)
-      (insert_disj I hqrow hpprow hppq nm.inlist nm.next)
-      (parent_ne_row I hpprow nm.next).2,
-      hf4 _ (hNotPrev5 pp hpprow nm.next hno.np)]
+    rw [hfr5 _ (insert_disj' I hqrow hpprow hppq nm.next nm.next)
+      (insert_disj' I hqrow hpprow hppq nm.prev nm.next)
+      (insert_disj' I hqrow hpprow hppq nm.inlist nm.next)
+      (parent_ne_row' I hpprow nm.next).2.2,
+      hf4 _ (parent_ne_row' I hpprow nm.next).2.1 (hNotPrev5 pp hpprow nm.next hno.np)]
     exact hw3
   have hhead5 : σ5.readPath (dbPath nm nm.head) = some (headOf qs) := by
     rw [hUnch5 _ (dqH nm.next) (dqH nm.prev) (dqH nm.inlist)
-      (dbPath_disjoint (Ne.symm hno.hc)) (row_ne_parent I hpprow nm.next).1
+      (dbPath_disjoint (Ne.symm hno.hc)) (row_ne_parent' I hpprow nm.next).1
+      (dbPath_disjoint (Ne.symm hno.ht))
       (fun q1 post0 h =>
-        (row_ne_parent I (hpostRows q1 (by rw [h]; simp)) nm.prev).1)]
+        (row_ne_parent' I (hpostRows q1 (by rw [h]; simp)) nm.prev).1)]
     exact hhead
+  have htail5 : σ5.readPath (dbPath nm nm.tail) = some (lastOr (pre ++ pp :: post) .null) := by
+    rw [hfr5 _ (dqT nm.next) (dqT nm.prev) (dqT nm.inlist)
+      (dbPath_disjoint (Ne.symm hno.tc))]
+    exact htail4
   have herase : qs.erase q = pre ++ pp :: post := by
     rw [hqs]; exact erase_append_cons_cons pre pp q post hqPre (Ne.symm hppq)
-  refine ⟨σ5, ?_, ?_, hf5v, hn5, hp5⟩
+  refine ⟨σ5, ?_, ?_, by rw [herase]; exact htail5, hf5v, hn5, hp5⟩
   · simp only [removeDef, Stmt.when]
     rw [execAt_cond', hguard]
     simp only [bind, Except.bind, Stmt.block]
@@ -2280,7 +2339,7 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
     rw [execAt_seq', hA4]; simp only [bind, Except.bind]
     exact hT
   rw [herase]
-  refine ⟨?_, I.disj, ?_, ?_, ?_, ?_, ?_, ?_, I.parent⟩
+  refine ⟨?_, I.disj, ?_, by rw [RM5]; exact htail5, ?_, ?_, ?_, ?_, ?_, I.parent⟩
   · -- the shortened chain is still a sublist of the live rows
     intro r hr
     simp only [List.mem_append, List.mem_cons] at hr
@@ -2346,10 +2405,10 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
         have hq1r : q1 ∈ rows := hpostRows q1 hq1p
         have hq1q : q1 ≠ q := Ne.symm (hqPost q1 hq1p)
         refine ⟨?_, ?_⟩
-        · rw [RM5, hfr5 _ (insert_disj I hqrow hq1r hq1q nm.next nm.prev)
-            (insert_disj I hqrow hq1r hq1q nm.prev nm.prev)
-            (insert_disj I hqrow hq1r hq1q nm.inlist nm.prev)
-            (parent_ne_row I hq1r nm.prev).2]
+        · rw [RM5, hfr5 _ (insert_disj' I hqrow hq1r hq1q nm.next nm.prev)
+            (insert_disj' I hqrow hq1r hq1q nm.prev nm.prev)
+            (insert_disj' I hqrow hq1r hq1q nm.inlist nm.prev)
+            (parent_ne_row' I hq1r nm.prev).2.2]
           exact hnew4 q1 post0 hpost
         · have hb2 := B2.2
           rw [hpost] at hb2
@@ -2407,10 +2466,10 @@ theorem exec_removeMiddle {σ : Store} {pp : Path} {pre post : List Path}
           | cons q1 post0 =>
             by_cases hq1r : q1 = r
             · subst hq1r
-              rw [RM5, hfr5 _ (insert_disj I hqrow hr hrq nm.next nm.prev)
-                (insert_disj I hqrow hr hrq nm.prev nm.prev)
-                (insert_disj I hqrow hr hrq nm.inlist nm.prev)
-                (parent_ne_row I hr nm.prev).2, hnew4 q1 post0 hpost]
+              rw [RM5, hfr5 _ (insert_disj' I hqrow hr hrq nm.next nm.prev)
+                (insert_disj' I hqrow hr hrq nm.prev nm.prev)
+                (insert_disj' I hqrow hr hrq nm.inlist nm.prev)
+                (parent_ne_row' I hr nm.prev).2.2, hnew4 q1 post0 hpost]
               rfl
             · rw [hFld5 r hr hrq nm.prev (hPPne r hr hrpp nm.next nm.prev)
                 (by
@@ -2431,13 +2490,14 @@ in O(1).
 
 checked by: `lake build` -/
 theorem exec_removeBody {σ : Store}
-    (hno : NamesOk nm) (I : ListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
+    (hno : NamesOk nm) (I : TailListInv σ.toMem nm rows qs) (hqrow : q ∈ rows)
     (hflag : σ.readPath (fldPath q nm.inlist) = some (.bool true))
     (hlocRow : σ.getLocal parRow = some (.ptr q))
     (hlocPrev : (σ.getLocal tmpPrev).isSome = true)
     (hlocNext : (σ.getLocal tmpNext).isSome = true) :
     ∃ σ', execAt p (execStmt p n) (removeDef nm elem).body σ = .ok (σ', .normal)
-      ∧ ListInv σ'.toMem nm rows (qs.erase q)
+      ∧ TailListInv σ'.toMem nm rows (qs.erase q)
+      ∧ σ'.readPath (dbPath nm nm.tail) = some (lastOr (qs.erase q) .null)
       ∧ σ'.readPath (fldPath q nm.inlist) = some (.bool false)
       ∧ σ'.readPath (fldPath q nm.next) = some .null
       ∧ σ'.readPath (fldPath q nm.prev) = some .null := by
@@ -2476,17 +2536,18 @@ checked by: `lake build` -/
 theorem removeUnlinks {nm : Names} {elem : Ident} : RemoveUnlinks nm elem := by
   intro p m rows qs q hlook hn hno I hqrow hflag
   obtain ⟨n, hn⟩ := hn
-  have hI : ListInv (m.toStore [(parRow, Value.ptr q), (tmpPrev, Value.null),
+  have hI : TailListInv (m.toStore [(parRow, Value.ptr q), (tmpPrev, Value.null),
       (tmpNext, Value.null)]).toMem nm rows qs := by
     rw [Mem.toStore_toMem]; exact I
-  obtain ⟨σ', hbody, I', hflag', hnext', hprev'⟩ :=
+  obtain ⟨σ', hbody, I', htail', hflag', hnext', hprev'⟩ :=
     exec_removeBody (p := p) (n := n) (elem := elem)
       (σ := m.toStore [(parRow, Value.ptr q), (tmpPrev, Value.null),
         (tmpNext, Value.null)])
       hno hI hqrow (by rw [readMem_toStore]; exact hflag) rfl rfl rfl
-  refine ⟨σ'.toMem, ?_, I', ?_, ?_, ?_⟩
+  refine ⟨σ'.toMem, ?_, I', ?_, ?_, ?_, ?_⟩
   · exact callFun_normal (p := p) (m := m) (fd := removeDef nm elem)
       (args := [Value.ptr q]) hlook hn rfl hbody
+  · rw [readMem_toMem]; exact htail'
   · rw [readMem_toMem]; exact hflag'
   · rw [readMem_toMem]; exact hnext'
   · rw [readMem_toMem]; exact hprev'
@@ -2891,6 +2952,29 @@ theorem insertTail_correct
   have hhead_eq := head_eq_headOf m' nm (qs ++ [q]) I'.head
   rw [← hhead_eq] at helems
   exact ⟨m', hcall, I', helems⟩
+
+/-- **`remove_correct`**: Data refinement theorem for intrusive list removal.
+Connecting operational `callFun` execution of `removeDef` on memory `m`
+to fuel-bounded decoder stepping `elems m' nm (qs.length + 1) (head m' nm) = some (qs.erase q)`.
+
+checked by: `lake build` -/
+theorem remove_correct
+    (hlook : lookupFun p nm.remove = .ok (removeDef nm elem))
+    (hn : ∃ n, p.funs.length = n + 1)
+    (hno : NamesOk nm)
+    (I : TailListInv m nm rows qs)
+    (hqrow : q ∈ rows)
+    (hflag : readMem m (fldPath q nm.inlist) = some (.bool true)) :
+    ∃ m', callFun p m nm.remove [.ptr q] = .ok (m', none)
+      ∧ TailListInv m' nm rows (qs.erase q)
+      ∧ elems m' nm (qs.length + 1) (head m' nm) = some (qs.erase q) := by
+  obtain ⟨m', hcall, I', htail', hflag', hnext', hprev'⟩ :=
+    removeUnlinks p m rows qs q hlook hn hno I hqrow hflag
+  have hlen : (qs.erase q).length ≤ qs.length := List.length_erase_le
+  have helems_fuel := reaches_headOf_implies_elems m' nm (qs.erase q) I'.chain qs.length hlen
+  have hhead_eq := head_eq_headOf m' nm (qs.erase q) I'.head
+  rw [← hhead_eq] at helems_fuel
+  exact ⟨m', hcall, I', helems_fuel⟩
 
 end Proofs
 

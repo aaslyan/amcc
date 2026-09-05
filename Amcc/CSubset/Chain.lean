@@ -640,6 +640,31 @@ theorem lastOr_eq_getLast? (qs : List Path) :
   | some t =>
     exact lastOr_nonempty qs .null t h
 
+theorem lastOr_cons_cons (q0 q1 : Path) (rest : List Path) :
+    lastOr (q0 :: q1 :: rest) .null = lastOr (q1 :: rest) .null := by
+  have hlast : (q0 :: q1 :: rest).getLast? = (q1 :: rest).getLast? := rfl
+  rw [lastOr_eq_getLast?, lastOr_eq_getLast?, hlast]
+
+theorem lastOr_append_cons (pre : List Path) (pp : Path) (q1 : Path) (post0 : List Path) :
+    lastOr (pre ++ pp :: q1 :: post0) .null = lastOr (q1 :: post0) .null := by
+  have h1 : (pre ++ pp :: q1 :: post0).getLast? = (q1 :: post0).getLast? := by
+    simp [List.getLast?_append]
+    cases h : (q1 :: post0).getLast? with
+    | none => have heq := List.getLast?_eq_none_iff.mp h; nomatch heq
+    | some t => rfl
+  rw [lastOr_eq_getLast?, lastOr_eq_getLast?, h1]
+
+theorem lastOr_append_cons_cons (pre : List Path) (pp q : Path) (q1 : Path) (post0 : List Path) :
+    lastOr (pre ++ pp :: q :: q1 :: post0) .null = lastOr (pre ++ pp :: q1 :: post0) .null := by
+  rw [lastOr_append_cons pre pp q1 post0]
+  have h2 : (pre ++ pp :: q :: q1 :: post0).getLast? = (q1 :: post0).getLast? := by
+    simp [List.getLast?_append]
+    cases h : (q1 :: post0).getLast? with
+    | none => have heq := List.getLast?_eq_none_iff.mp h; nomatch heq
+    | some t => rfl
+  rw [lastOr_eq_getLast?, h2, ← lastOr_eq_getLast?]
+
+
 /-- **Extending a chain at the tail.** -/
 theorem Reaches.snoc {m m' : Mem} {nx : Ident} :
     ∀ (qs : List Path) (q : Path),
